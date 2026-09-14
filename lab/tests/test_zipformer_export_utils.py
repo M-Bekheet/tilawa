@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from zipformer_ctc_utils import (  # noqa: E402
     ARCH_FLAGS,
+    DEFAULT_TRAIN_SOURCES,
     VOCAB_SIZE,
     compute_T_hop,
     icefall_to_ref_ids,
@@ -157,3 +158,14 @@ def test_arch_flags_reference_cnn_kernels():
     flags = list(ARCH_FLAGS)
     i = flags.index("--cnn-module-kernel")
     assert flags[i + 1] == "31,31,15,15,15,31"
+
+
+def test_default_train_sources_exclude_qurantts():
+    parts = DEFAULT_TRAIN_SOURCES.split(",")
+    assert "qurantts" not in parts
+    assert parts == ["everyayah", "qua", "iqra", "retasy", "tlog"]
+    train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
+    data_py = (ROOT / "scripts" / "zipformer_asr_datamodule.py").read_text()
+    assert train_py.count('sources: str = "everyayah,qua,iqra,retasy,tlog"') == 2
+    assert 'default="everyayah,qua,iqra,retasy,tlog"' in data_py
+    assert "--sources everyayah,qua,qurantts" not in train_py

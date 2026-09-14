@@ -119,7 +119,7 @@ class LibriSpeechAsrDataModule:
         group.add_argument(
             "--sources",
             type=str,
-            default="everyayah,qua,qurantts,iqra,retasy,tlog",
+            default="everyayah,qua,iqra,retasy,tlog",
             help="Comma-separated source keys to mux.",
         )
         group.add_argument(

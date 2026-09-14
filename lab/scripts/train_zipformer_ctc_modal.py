@@ -710,7 +710,7 @@ def _run_export_impl(
 @app.function(
     image=image,
     gpu=_GPU_SPEC,
-    cpu=16,
+    cpu=max(16, 8 * WORLD_SIZE),
     memory=65536,
     timeout=24 * 3600,
     volumes={"/vol": vol},
@@ -720,7 +720,7 @@ def train(
     run_name: str,
     num_epochs: int = 40,
     max_duration: int = 1200,
-    sources: str = "everyayah,qua,qurantts,iqra,retasy,tlog",
+    sources: str = "everyayah,qua,iqra,retasy,tlog",
     smoke: bool = False,
     synthetic: bool = False,
     limit_cuts: int = 0,
@@ -728,6 +728,7 @@ def train(
     chunk_size: int = 24,
     left_context_frames: int = 256,
     avg: int = 10,
+    start_epoch: int = 1,
 ) -> dict:
     import subprocess
     import time
@@ -775,7 +776,7 @@ def train(
         "--num-epochs",
         str(num_epochs),
         "--start-epoch",
-        "1",
+        str(start_epoch),
         "--exp-dir",
         str(exp_dir),
         "--bpe-model",
@@ -862,7 +863,7 @@ def main(
     run_name: str,
     num_epochs: int = 40,
     max_duration: int = 1200,
-    sources: str = "everyayah,qua,qurantts,iqra,retasy,tlog",
+    sources: str = "everyayah,qua,iqra,retasy,tlog",
     smoke: bool = False,
     synthetic: bool = False,
     export_only: bool = False,
@@ -870,16 +871,17 @@ def main(
     avg: int = 10,
     chunk_size: int = 24,
     left_context_frames: int = 256,
+    start_epoch: int = 1,
 ):
     """Train and/or export. Smoke implies 1 epoch, max-duration 200, limit-cuts 800."""
     full_cmd = (
-        "modal run --detach scripts/train_zipformer_ctc_modal.py "
-        "--run-name v1 --num-epochs 40 --max-duration 1200 "
-        "--sources everyayah,qua,qurantts,iqra,retasy,tlog"
+        "ZIPFORMER_GPU=H100:4 modal run --detach scripts/train_zipformer_ctc_modal.py "
+        "--run-name trackA-v1 --num-epochs 40 --max-duration 1200 "
+        "--sources everyayah,qua,iqra,retasy,tlog"
     )
     export_cmd = (
         "modal run --detach scripts/train_zipformer_ctc_modal.py "
-        f"--run-name v1 --export-only --epoch 40 --avg 10 "
+        f"--run-name trackA-v1 --export-only --epoch 40 --avg 10 "
         f"--chunk-size {chunk_size} --left-context-frames {left_context_frames}"
     )
     if export_only:
@@ -904,6 +906,7 @@ def main(
         chunk_size=chunk_size,
         left_context_frames=left_context_frames,
         avg=avg,
+        start_epoch=start_epoch,
     )
     print("train result:", result)
     if smoke:

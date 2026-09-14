@@ -39,6 +39,8 @@ import numpy as np
 VOCAB_SIZE = 251
 REF_BLANK_ID = 250
 ICEFALL_BLANK_ID = 0
+# QuranTTS is NPL-1.2 — not in the shipped mix. Ablate with --sources qurantts.
+DEFAULT_TRAIN_SOURCES = "everyayah,qua,iqra,retasy,tlog"
 # Conv2dSubsampling left context 7 frames + ConvNeXt right pad 3 (×2 at 100 Hz).
 PAD_LENGTH = 7 + 2 * 3  # 13
 # chunk_size at 50 Hz after encoder_embed; 24 → T=61, hop=48 (reference I/O).
