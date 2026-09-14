@@ -658,6 +658,25 @@ def _empty_stats(source: str) -> dict:
     }
 
 
+def patch_hf_list_feature() -> None:
+    """Alias datasets-4 `List` so datasets 3.x can read newer parquet metadata.
+
+    Some QUA mushaf configs (first seen: `ahmed_amer_tvquran`) embed
+    `{"_type": "List", ...}` in Arrow schema metadata. The staging image pins
+    `datasets>=3,<4` to avoid torchcodec; that release only knows `Sequence`.
+    No-op on datasets 4+ where `List` is already registered.
+    """
+    from datasets.features import features as feat_mod
+
+    types = feat_mod._FEATURE_TYPES
+    if "List" in types:
+        return
+    seq = types.get("Sequence")
+    if seq is None:
+        raise RuntimeError("datasets has neither List nor Sequence feature type")
+    types["List"] = seq
+
+
 def _boot_remote() -> None:
     sys.path.insert(0, "/app")
     os.environ.setdefault("HF_HOME", "/vol/hf_cache")
@@ -667,6 +686,7 @@ def _boot_remote() -> None:
     Path("/vol/manifests").mkdir(parents=True, exist_ok=True)
     Path("/vol/licenses").mkdir(parents=True, exist_ok=True)
     Path("/vol/fbank").mkdir(parents=True, exist_ok=True)
+    patch_hf_list_feature()
 
 
 def _print_features(source: str, repo: str, features, splits) -> None:
@@ -688,6 +708,8 @@ def _load_labelers():
 def _stream_ds(repo: str, split: str, name: str | None = None, audio_col: str = "audio"):
     """Streaming HF split with Audio(decode=False) so we never need torchcodec."""
     from datasets import Audio, load_dataset
+
+    patch_hf_list_feature()
 
     # `split="all"` is a reserved keyword in datasets>=3 and cannot be passed
     # as the split= argument even when the config advertises a split named all.
@@ -1296,7 +1318,17 @@ def _prepare_qua(limit: int, force: bool, crash_after: int = 0) -> dict:
         condition = "studio" if "studio" in ctx.lower() else "crowd"
         speaker = str(mushaf.get("name_en") or slug)
         already = int((state.get("split_rows") or {}).get(slug) or 0)
-        ds = skip_hf_stream(_stream_ds(HF_QUA, "train", name=slug), already, f"qua/{slug}")
+        print(f"[qua] mushaf slug={slug} already={already}")
+        try:
+            ds = skip_hf_stream(
+                _stream_ds(HF_QUA, "train", name=slug), already, f"qua/{slug}"
+            )
+        except Exception as e:
+            print(f"[qua/{slug}] load_dataset failed: {type(e).__name__}: {e}")
+            _bump_skip(stats, "mushaf_load_error")
+            failed = stats.setdefault("failed_slugs", [])
+            failed.append(slug)
+            continue
         for row in ds:
             if limit and state["clips_kept"] >= limit:
                 break

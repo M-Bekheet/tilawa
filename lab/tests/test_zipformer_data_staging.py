@@ -106,6 +106,16 @@ def test_parse_sources_csv():
         prep.parse_sources("nope")
 
 
+def test_patch_hf_list_feature_registers_list_type():
+    pytest.importorskip("datasets")
+    prep.patch_hf_list_feature()
+    from datasets.features.features import _FEATURE_TYPES
+
+    assert "List" in _FEATURE_TYPES
+    prep.patch_hf_list_feature()
+    assert "List" in _FEATURE_TYPES
+
+
 def test_load_tokens_txt_roundtrip():
     tokens = prep.load_token_inventory(TOKENS_TXT)
     assert len(tokens) == 251
