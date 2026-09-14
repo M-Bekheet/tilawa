@@ -273,14 +273,31 @@ def empty_progress() -> dict:
     return {"rows_seen": 0, "hours_kept": 0.0, "clips_kept": 0, "split_rows": {}}
 
 
-def load_progress(source: str, manifest_root: Path | str | None = None) -> dict:
+def atomic_write_text(path: Path | str, text: str) -> None:
+    """Write `text` via `<path>.tmp` + fsync + `os.replace` (no truncate-in-place)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def load_progress(source: str, manifest_root: Path | str | None = None) -> dict | None:
+    """Return parsed progress, or None if missing/corrupt (never silently empty)."""
     p = progress_path(source, manifest_root)
     if not p.is_file():
-        return empty_progress()
+        return None
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return empty_progress()
+        print(f"[{source}] corrupt progress {p}; ignoring")
+        return None
+    if not isinstance(data, dict):
+        print(f"[{source}] non-object progress {p}; ignoring")
+        return None
     data.setdefault("rows_seen", 0)
     data.setdefault("hours_kept", 0.0)
     data.setdefault("clips_kept", 0)
@@ -290,14 +307,13 @@ def load_progress(source: str, manifest_root: Path | str | None = None) -> dict:
 
 def save_progress(source: str, payload: dict, manifest_root: Path | str | None = None) -> None:
     p = progress_path(source, manifest_root)
-    p.parent.mkdir(parents=True, exist_ok=True)
     merged = empty_progress()
     merged.update(payload)
     merged["rows_seen"] = int(merged.get("rows_seen") or 0)
     merged["hours_kept"] = float(merged.get("hours_kept") or 0.0)
     merged["clips_kept"] = int(merged.get("clips_kept") or 0)
     merged["split_rows"] = dict(merged.get("split_rows") or {})
-    p.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    atomic_write_text(p, json.dumps(merged, indent=2) + "\n")
 
 
 def append_cut_dict(path: Path | str, cut_dict: dict) -> None:
@@ -310,16 +326,52 @@ def append_cut_dict(path: Path | str, cut_dict: dict) -> None:
         os.fsync(f.fileno())
 
 
+def hours_from_cut_dicts(cut_dicts: list[dict]) -> float:
+    return sum(float(d.get("duration") or 0.0) for d in cut_dicts) / 3600.0
+
+
 def load_cut_dicts(path: Path | str) -> list[dict]:
+    """Load JSONL cut dicts. A torn *final* line is dropped and the file repaired.
+
+    JSONDecodeError on any non-final non-empty line still raises.
+    """
     path = Path(path)
     if not path.is_file():
         return []
+    data = path.read_bytes()
+    records: list[tuple[int, bytes, bool]] = []
+    i = 0
+    while i < len(data):
+        nl = data.find(b"\n", i)
+        if nl == -1:
+            records.append((i, data[i:], False))
+            break
+        records.append((i, data[i:nl], True))
+        i = nl + 1
+    nonempty = [k for k, (_, chunk, _) in enumerate(records) if chunk.strip()]
     out: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    last_good_end = 0
+    for k, (start, chunk, had_nl) in enumerate(records):
+        if not chunk.strip():
+            if had_nl:
+                last_good_end = start + len(chunk) + 1
             continue
-        out.append(json.loads(line))
+        try:
+            out.append(json.loads(chunk.decode("utf-8")))
+        except json.JSONDecodeError:
+            is_last = bool(nonempty) and k == nonempty[-1]
+            if is_last:
+                print(
+                    f"[{path.name}] torn JSONL line at byte offset {start}; "
+                    f"dropping last line and truncating to {last_good_end}"
+                )
+                with path.open("r+b") as f:
+                    f.truncate(last_good_end)
+                    f.flush()
+                    os.fsync(f.fileno())
+                return out
+            raise
+        last_good_end = start + len(chunk) + (1 if had_nl else 0)
     return out
 
 
@@ -386,13 +438,18 @@ def restore_partial_state(
     manifest_root: Path | str | None = None,
     force: bool = False,
 ) -> dict:
-    """Load partial JSONL + progress, or wipe both (and the final cuts) if force."""
+    """Load partial JSONL + progress, or wipe both (and the final cuts) if force.
+
+    `hours_kept` is always recomputed from cut durations (never summed on top of
+    a stale progress value). Missing/corrupt progress with leftover cuts falls
+    back to `rows_seen = clips_kept = len(cuts)`.
+    """
     man = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
     partial = partial_cuts_path(source, man)
     prog = progress_path(source, man)
     final = final_cuts_path(source, man)
     if force:
-        for p in (partial, prog, final, man / f"{source}_stats.json"):
+        for p in (partial, prog, Path(str(prog) + ".tmp"), final, man / f"{source}_stats.json"):
             if p.is_file():
                 p.unlink()
         state = empty_progress()
@@ -400,18 +457,33 @@ def restore_partial_state(
         return state
     cut_dicts = load_cut_dicts(partial)
     progress = load_progress(source, man)
-    hours = float(progress.get("hours_kept") or 0.0)
-    clips = int(progress.get("clips_kept") or 0)
-    if cut_dicts and clips == 0:
-        clips = len(cut_dicts)
-    if cut_dicts and hours == 0.0:
-        hours = sum(float(d.get("duration") or 0.0) for d in cut_dicts) / 3600.0
+    n = len(cut_dicts)
+    hours = hours_from_cut_dicts(cut_dicts)
     state = empty_progress()
+    if progress is None:
+        if n:
+            print(
+                f"[{source}] progress missing/corrupt with {n} partial cuts; "
+                f"rows_seen fallback to clips_kept={n} "
+                f"(skip may be incomplete; duplicates de-duped by id)"
+            )
+        state["cut_dicts"] = cut_dicts
+        state["rows_seen"] = n
+        state["clips_kept"] = n
+        state["hours_kept"] = hours
+        return state
     state.update(progress)
     state["cut_dicts"] = cut_dicts
-    state["rows_seen"] = int(progress.get("rows_seen") or 0)
+    rows_seen = int(progress.get("rows_seen") or 0)
+    if n and rows_seen < n:
+        print(
+            f"[{source}] progress rows_seen={rows_seen} < {n} cuts; "
+            f"raising rows_seen to {n} (skip may be incomplete)"
+        )
+        rows_seen = n
+    state["rows_seen"] = rows_seen
     state["hours_kept"] = hours
-    state["clips_kept"] = clips if clips else len(cut_dicts)
+    state["clips_kept"] = n
     state["split_rows"] = dict(progress.get("split_rows") or {})
     return state
 

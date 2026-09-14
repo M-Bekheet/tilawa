@@ -320,3 +320,58 @@ def test_idx_increments_on_skipped_rows():
     assert (a, b, c) == (0, 1, 0)
     assert split_state["rows_seen"] == 3
     assert split_state["split_rows"] == {"slug_a": 2, "slug_b": 1}
+
+
+def test_torn_last_line_restore_repairs_partial(tmp_path):
+    source = "iqra"
+    good = [
+        {"id": "iqra_00000000_1_1", "duration": 1.0},
+        {"id": "iqra_00000001_1_2", "duration": 2.0},
+        {"id": "iqra_00000002_1_3", "duration": 3.0},
+    ]
+    partial = prep.partial_cuts_path(source, tmp_path)
+    for d in good:
+        prep.append_cut_dict(partial, d)
+    torn_start = partial.stat().st_size
+    with partial.open("ab") as f:
+        f.write(b'{"id": "iqra_00000003_1_4", "duration":')
+    state = prep.restore_partial_state(source, tmp_path)
+    assert [d["id"] for d in state["cut_dicts"]] == [c["id"] for c in good]
+    assert len(state["cut_dicts"]) == 3
+    repaired = partial.read_bytes()
+    assert repaired.endswith(b"\n")
+    assert b"iqra_00000003" not in repaired
+    assert len(repaired) == torn_start
+    again = prep.load_cut_dicts(partial)
+    assert [d["id"] for d in again] == [c["id"] for c in good]
+
+
+def test_corrupt_progress_restore_hours_from_cuts(tmp_path):
+    source = "tlog"
+    cuts = [
+        {"id": "tlog_00000000_1_1", "duration": 2.0},
+        {"id": "tlog_00000001_1_2", "duration": 4.0},
+    ]
+    partial = prep.partial_cuts_path(source, tmp_path)
+    for d in cuts:
+        prep.append_cut_dict(partial, d)
+    prog = prep.progress_path(source, tmp_path)
+    prog.write_text("{not-json", encoding="utf-8")
+    state = prep.restore_partial_state(source, tmp_path)
+    assert len(state["cut_dicts"]) == 2
+    assert state["clips_kept"] == 2
+    assert state["rows_seen"] == 2
+    assert abs(state["hours_kept"] - 6.0 / 3600.0) < 1e-12
+
+    prep.save_progress(
+        source,
+        {"rows_seen": 9, "hours_kept": 99.0, "clips_kept": 2, "split_rows": {}},
+        tmp_path,
+    )
+    assert not Path(str(prog) + ".tmp").exists()
+    loaded = prep.load_progress(source, tmp_path)
+    assert loaded is not None
+    assert loaded["rows_seen"] == 9
+    restored = prep.restore_partial_state(source, tmp_path)
+    assert abs(restored["hours_kept"] - 6.0 / 3600.0) < 1e-12
+    assert restored["rows_seen"] == 9
