@@ -167,7 +167,14 @@ def main() -> None:
             misses += 1
             continue
         ph = entry["aya_phoneme"] if isinstance(entry, dict) else entry
-        gold_ids = tok.encode(ph)
+        ph = str(ph).replace(" ", "")
+        try:
+            gold_ids = tok.encode(ph)
+        except Exception as e:
+            misses += 1
+            if misses <= 5:
+                print(f"gold encode fail {key}: {e}", flush=True)
+            continue
         wav = corpus / sample["file"]
         audio = load_audio(str(wav), sr=16000)
         frames = compute_fbank(audio, sr=16000)

@@ -225,13 +225,50 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 
 **v6-augmented failure detail:** unfiltered TLOG (29K) + teacher pseudo-labels on 75% of samples + MUSAN noise aug, all together. Training metrics looked healthy (val_loss=58.39 at step 6500) but downstream accuracy collapsed. Unfiltered TLOG alone contains ~38% bad samples per the quality filter; the teacher relabeler added an unknown additional error rate on the rest. Streaming export also crashed with an ONNX mutex error (NeMo <2.7 compat).
 
+## Zipformer2-CTC (Quran-Lab v3 reference + fine-tunes)
+
+**2026-09-14 owner decision:** the model we were replicating is public `Quran-Lab/zipformer_p-arabic-v3` (NPL-1.2, licence accepted that day). From-scratch Track A training is cancelled; evaluate the published checkpoints through our tracker, then fine-tune them (separate task). HF names are `zipformer_p_arabic_v3{,.1}{.onnx,.int8.onnx,.pt}` (not the short `v3.onnx` from the brief). Modal snapshot `ap-VfKhHbddvJEY8DbR36LckL` → volume `zipformer-ctc-training` `/vol/reference/`. Local copy (gitignored) `data/prompter/reference/`.
+
+**Identity.** Alketab's vendored `quran_phoneme_zipformer.onnx` (72,705,392 B, site URL `?v=31755836`) is **byte- and param-identical** to `zipformer_p_arabic_v3.1.int8.onnx` (sha256 `31755836528da336…`). It is onnxruntime dynamic-int8 (`onnx.infer=onnxruntime.quant`, MatMul QInt8) of the v3.1 madd fine-tune, not v3 and not fp32. Closest non-identical: v3.1 fp32 shares all 555 unquantized initializer hashes (int8 adds 870 quant/scale/zp tensors). All four ONNX exports match default `zipformer-io.json` (T=61, hop=48, left_context 256, 99 in/99 out) — `PROMPTER_IO` not needed. `tokens.txt` has the same 251 ids; Quran-Lab puts `<blank> 250` on line 1, ours on the last line.
+
+**Their card / export.** ~5,400 effective hours/epoch × 10 epochs; train chunk mix `1000:0.5,640:0.35,320:0.15` (chunk frames 8/16/24); export `chunk_size=max(mix)=24`, `left_context_frames=256`, opset 13, then `quantize_dynamic(..., QInt8, op_types=["MatMul"])`. Published PER on quranic-asr-benchmark v1.1: 1.43% held-out studio / 3.65% phone / 9.10% unseen reciter. `quran_per_eval.py` wants a JSONL of `{audio_filepath, text, source?}`, gold via `quran_text2phoneme.json`, and their private icefall `build_model` — it does not run here. Copies under `experiments/prompter-zipformer/reference_tools/`.
+
+### Tracker eval (our harness; median; scores identical across repeats)
+
+| Model | Size | v1 (53) | v2 (43) | v3 (256) Rec/Prec/Seq | qlab (583) | qlab EA / nufais / tlog | lat v3 / qlab |
+|---|---|---|---|---|---|---|---|
+| **v3.1 fp32** | 251 MB | **53/53** | 42/43 | 96.9 / 96.7 / 96.5 **(247/256)** | **571/583** (97.9%) | 184/184, 193/200, 194/199 | 0.93 s / 0.58 s |
+| v3.1 int8 (vendored) | 69 MB | **53/53** | 42/43 | same 247/256 | same 571/583 | same split | 0.75 s / 0.48 s |
+| v3 fp32 | 251 MB | 52/53 | **43/43** | same 247/256 | same 571/583 | same split | 0.88 s / 0.58 s |
+| v3 int8 | 69 MB | 52/53 | **43/43** | same 247/256 | same 571/583 | same split | 0.75 s / 0.48 s |
+
+v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1.
+
+**PER (ONNX streaming greedy, v3.1 fp32, qlab):** overall **5.56%** (exact 49.1%); everyayah_heldout 2.39%, qul_alnufais 7.78%, tlog_holdout 7.06%. Not comparable 1:1 to the card (different decode, gold is `ordered_quran_phonemes.json` by surah:ayah, torchaudio kaldi fbank). Wrapper: `experiments/prompter-zipformer/reference_tools/per_onnx_wrapper.py`.
+
+Reproduction:
+
+```bash
+cd .worktrees/sota-tilawa
+PROMPTER_DATA_DIR=/Users/rock/ai/projects/offline-tarteel/data/prompter \
+PROMPTER_MODEL=/Users/rock/ai/projects/offline-tarteel/data/prompter/reference/zipformer_p_arabic_v3.1.onnx \
+PROMPTER_CORPUS=/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json \
+PROMPTER_ORT_DIR=/Users/rock/ai/projects/offline-tarteel/web/frontend/node_modules \
+/Users/rock/ai/projects/offline-tarteel/.venv/bin/python -m benchmark.runner --experiment prompter-zipformer --corpus test_corpus_v3
+# full grid: .venv/bin/python experiments/prompter-zipformer/eval_reference_grid.py
+# fetch: modal run scripts/fetch_reference_zipformer_modal.py
+# identity: .venv/bin/python scripts/onnx_compare.py --vendored data/prompter/quran_phoneme_zipformer.onnx --candidates data/prompter/reference/zipformer_p_arabic_v3*.onnx
+```
+
+Raw JSON: `benchmark/results/2026-09-14_16*.json` / `_17*.json` / `_18*.json`; ledger `benchmark/results/qlab_v3_eval_ledger.json`; PER `benchmark/results/v31_fp32_qlab_per.json`.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
 
 **c2c-direct-mixed** — Same CTC re-rank algorithm without TTA, using `web/frontend/public/fastconformer_full_mixed.onnx` (88 MB). This is the model now loaded by the browser worker. Reproduced at 98% recall / 98% precision / 98% sequence accuracy on v1 at 0.72s average latency; TTA recovers the remaining miss.
 
-**prompter-zipformer** — The engine behind https://prompter.alketab.app/ (`@alketab/quran-engine`, recovered from its published source maps and run unmodified under Node via onnxruntime-node; see `experiments/prompter-zipformer/README.md`). Streaming Zipformer2-CTC (72.7 MB fp32) over a 251-token tajweed-phoneme vocab (letters+harakat, madd length as repetition), greedy CTC, then a whole-Quran 5-gram phoneme index + graded-cost semi-global alignment to locate, and a per-surah online DP tracker with per-word verdicts. The wrapper replays the app's Recognize-mode host loop and emits ayahs with ≥50% ok/unsure words; because the live engine refuses to lock on short clips, a whole-ayah nearest-match fallback over the same phoneme distance handles clips where no lock happened (pure engine: 74% v1; with fallback: 100%). Deterministic across runs (no ±3–6 sample jitter). **v1 53/53, v2 42/43, v3 247/256 (96.9% / 96.7% / 96.5%)** vs champion `c2c-direct-mixed-tta` at 241/256 (94.8% / 94.9% / 94.1%) on the same v3 run — it takes all 8 Husary multi-verse samples the champion loses. Remaining v3 misses are textually identical/near-identical ayahs (`55:53→55:13`, `81:19→69:40`, `37:82→26:66`, `30:1→2:1`, `26:122→26:9`, `10:43→10:42`), plus one short crowd clip (`107:1→106:4`) and one over-run (`100:1` → `100:1,100:2`). Takeaways for our stack: (1) a phoneme alphabet that encodes harakat + madd length gives the matcher far more discriminative chars per second than BPE text; (2) locate-then-track with graded substitution costs beats per-chunk `matchVerse()` on multi-verse; (3) k2 streaming Zipformer at 73 MB fp32 would quantize to ~20–25 MB int8 — smaller than our 88 MB champion. Runs at ~5% RTF single-threaded CPU. Engine license unstated; reference-only until clarified.
+**prompter-zipformer** — The engine behind https://prompter.alketab.app/ (`@alketab/quran-engine`, recovered from its published source maps and run unmodified under Node via onnxruntime-node; see `experiments/prompter-zipformer/README.md`). Streaming Zipformer2-CTC over a 251-token tajweed-phoneme vocab (letters+harakat, madd length as repetition), greedy CTC, then a whole-Quran 5-gram phoneme index + graded-cost semi-global alignment to locate, and a per-surah online DP tracker with per-word verdicts. The wrapper replays the app's Recognize-mode host loop and emits ayahs with ≥50% ok/unsure words; because the live engine refuses to lock on short clips, a whole-ayah nearest-match fallback over the same phoneme distance handles clips where no lock happened (pure engine: 74% v1; with fallback: 100%). Deterministic across runs (no ±3–6 sample jitter). **v1 53/53, v2 42/43, v3 247/256 (96.9% / 96.7% / 96.5%), qlab 571/583 (97.9%)**. The 72.7 MB ONNX is **Quran-Lab `zipformer_p_arabic_v3.1.int8.onnx`** (byte-identical, NPL-1.2 accepted 2026-09-14), not fp32 — see `## Zipformer2-CTC (Quran-Lab v3 reference + fine-tunes)`. vs champion `c2c-direct-mixed-tta` at 241/256 (94.8% / 94.9% / 94.1%) on the same v3 run — it takes all 8 Husary multi-verse samples the champion loses. Remaining v3 misses are textually identical/near-identical ayahs (`55:53→55:13`, `81:19→69:40`, `37:82→26:66`, `30:1→2:1`, `26:122→26:9`, `10:43→10:42`), plus one short crowd clip (`107:1→106:4`) and one over-run (`100:1` → `100:1,100:2`). Takeaways for our stack: (1) a phoneme alphabet that encodes harakat + madd length gives the matcher far more discriminative chars per second than BPE text; (2) locate-then-track with graded substitution costs beats per-chunk `matchVerse()` on multi-verse; (3) the shipped 69 MB int8 is already the reference checkpoint — fine-tune that, don't train from scratch. Runs at ~5% RTF single-threaded CPU. Engine JS license still unstated; the acoustic model is NPL-1.2.
 
 **ctc-alignment** — CTC forced alignment with `jonatasgrosman/wav2vec2-large-xlsr-53-arabic` (1.2 GB). Scores verses directly against frame-level logits via the CTC forward algorithm, skipping greedy-decode information loss. Too large (6×) and too slow (5×) for on-device.
 
@@ -276,6 +313,7 @@ Use case: r7 remains the highest-accuracy distillation teacher; r15 is now a pla
 11. **Cyberistic's text CTC rerank moved the batch ceiling.** `c2c-direct-mixed-tta` is now the v1 champion at 100% / 100% / 100% with an 88 MB ONNX. The previous v4-tlog phoneme model remains useful as a historical streaming baseline, but new shipped runtime work should start from `fastconformer_full_mixed.onnx`, `vocab.json`, and `quran_ctc_tokens.json`.
 12. **r7 (Ahmed's 1B wav2vec2 phoneme CTC) is still a strong v3 batch oracle.** 96.1% / 96.1% / 96.1% on v3 (256 samples, full-file batch), but 1 GB is too large to ship and wav2vec2 attention is not streaming-friendly. Use r7/r15 as teacher/verifier candidates, not the browser runtime.
 13. **v3 SeqAcc is mostly a tracker state problem, not a recognizability problem.** Exact-match diagnostics (`web/frontend/test/analyze-v3-stability.ts`) show the v3 gap is dominated by extra emissions: cached streaming exact-fail runs include 124 `extra_after_expected` and 29 `wrong_surah_jump` cases across 768 runs. Comparing those cached streaming outputs against the r7 batch oracle (`web/frontend/test/compare-streaming-oracle.ts --stability-json=... --oracle-results=benchmark/results/r7-v3-batch.json`) shows the first long/medium exact-fail samples are `streaming_tracker_loss`: r7 predicts the exact expected verse while streaming emits expected+extras. The old phoneme ONNX full-file path was too weak to serve as this oracle; it often missed the expected verse on those same long clips. Two tempting runtime invariants were falsified and reverted: consuming the buffer after evidence-backed stale exits, and blocking selected candidates dominated by the current fusion leader. The next tracker attempt needs explicit segment ownership / active-hypothesis comparison, not score-threshold or rank gates.
+14. **Alketab ships Quran-Lab v3.1 int8.** `quran_phoneme_zipformer.onnx` is byte-identical to `Quran-Lab/zipformer_p-arabic-v3` `zipformer_p_arabic_v3.1.int8.onnx` (NPL-1.2). Tracker scores are deterministic; v3.1 vs v3 only swap one v1/v2 crowd clip. Fine-tune v3.1 rather than training Zipformer CTC from scratch.
 
 ## Methodology
 

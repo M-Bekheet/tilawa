@@ -79,8 +79,10 @@ def run_one(model_key: str, corpus: str) -> dict:
     env["PROMPTER_MODEL"] = str(model)
     env["PROMPTER_CORPUS"] = str(MAIN / "data" / "prompter" / "quran.json")
     env["PROMPTER_ORT_DIR"] = str(MAIN / "web" / "frontend" / "node_modules")
+    env["PYTHONUNBUFFERED"] = "1"
     cmd = [
         str(PY),
+        "-u",
         "-m",
         "benchmark.runner",
         "--experiment",
@@ -89,16 +91,23 @@ def run_one(model_key: str, corpus: str) -> dict:
         corpus,
     ]
     print(f"\n>>> {model_key} {corpus}  {datetime.now().isoformat(timespec='seconds')}", flush=True)
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
         cwd=str(ROOT),
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
+        bufsize=1,
     )
-    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    sys.stdout.write(proc.stdout or "")
-    sys.stderr.write(proc.stderr or "")
+    chunks: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        chunks.append(line)
+    rc = proc.wait()
+    out = "".join(chunks)
     m = SAVED_RE.search(out)
     result_path = m.group(1).strip() if m else ""
     metrics = {}
@@ -118,8 +127,8 @@ def run_one(model_key: str, corpus: str) -> dict:
     return {
         "model": model_key,
         "corpus": corpus,
-        "ok": proc.returncode == 0 and bool(result_path),
-        "returncode": proc.returncode,
+        "ok": rc == 0 and bool(result_path),
+        "returncode": rc,
         "result_path": result_path,
         "metrics": metrics,
         "ts": datetime.now().isoformat(timespec="seconds"),

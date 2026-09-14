@@ -168,8 +168,9 @@ def transcribe(audio_path: str) -> str:
 
 
 def model_size() -> int:
+    p = Path(os.environ.get("PROMPTER_MODEL", str(MODEL_PATH)))
     try:
-        return MODEL_PATH.stat().st_size
+        return p.stat().st_size
     except OSError:
         return 72_705_392
 
