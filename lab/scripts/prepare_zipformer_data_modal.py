@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -258,15 +259,31 @@ def progress_path(source: str, manifest_root: Path | str | None = None) -> Path:
     return root / f"{source}_progress.json"
 
 
+def partial_cuts_path(source: str, manifest_root: Path | str | None = None) -> Path:
+    root = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
+    return root / f"{source}_cuts.partial.jsonl"
+
+
+def final_cuts_path(source: str, manifest_root: Path | str | None = None) -> Path:
+    root = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
+    return root / f"{source}_cuts.jsonl.gz"
+
+
+def empty_progress() -> dict:
+    return {"rows_seen": 0, "hours_kept": 0.0, "clips_kept": 0, "split_rows": {}}
+
+
 def load_progress(source: str, manifest_root: Path | str | None = None) -> dict:
     p = progress_path(source, manifest_root)
     if not p.is_file():
-        return {"rows_seen": 0, "split_rows": {}}
+        return empty_progress()
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"rows_seen": 0, "split_rows": {}}
+        return empty_progress()
     data.setdefault("rows_seen", 0)
+    data.setdefault("hours_kept", 0.0)
+    data.setdefault("clips_kept", 0)
     data.setdefault("split_rows", {})
     return data
 
@@ -274,7 +291,129 @@ def load_progress(source: str, manifest_root: Path | str | None = None) -> dict:
 def save_progress(source: str, payload: dict, manifest_root: Path | str | None = None) -> None:
     p = progress_path(source, manifest_root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    merged = empty_progress()
+    merged.update(payload)
+    merged["rows_seen"] = int(merged.get("rows_seen") or 0)
+    merged["hours_kept"] = float(merged.get("hours_kept") or 0.0)
+    merged["clips_kept"] = int(merged.get("clips_kept") or 0)
+    merged["split_rows"] = dict(merged.get("split_rows") or {})
+    p.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+
+
+def append_cut_dict(path: Path | str, cut_dict: dict) -> None:
+    """Append one lhotse cut-dict JSON line and flush (no lhotse required)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(cut_dict, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def load_cut_dicts(path: Path | str) -> list[dict]:
+    path = Path(path)
+    if not path.is_file():
+        return []
+    out: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out.append(json.loads(line))
+    return out
+
+
+def cut_id_of(cut_dict: dict) -> str:
+    return str(cut_dict.get("id") or cut_dict.get("cut_id") or "")
+
+
+def finalize_cut_dicts(cut_dicts: list[dict]) -> list[dict]:
+    """Prefix+suffix in order; first id wins (no duplicates)."""
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for d in cut_dicts:
+        cid = cut_id_of(d)
+        if cid and cid in seen:
+            continue
+        if cid:
+            seen.add(cid)
+        merged.append(d)
+    return merged
+
+
+def remove_partial_cuts(source: str, manifest_root: Path | str | None = None) -> None:
+    p = partial_cuts_path(source, manifest_root)
+    if p.is_file():
+        p.unlink()
+
+
+def consume_row(state: dict, split: str | None = None) -> int:
+    """Mark one HF row as seen. Always increment, including skipped rows.
+
+    Returns the clip-id idx for this row: per-`split` count when `split` is
+    set (everyayah split / QUA mushaf slug), else global `rows_seen`.
+    """
+    if split is not None:
+        sr = state.setdefault("split_rows", {})
+        key = str(split)
+        idx = int(sr.get(key) or 0)
+        sr[key] = idx + 1
+        state["rows_seen"] = int(state.get("rows_seen") or 0) + 1
+        return idx
+    idx = int(state.get("rows_seen") or 0)
+    state["rows_seen"] = idx + 1
+    return idx
+
+
+def persist_progress(source: str, state: dict, manifest_root: Path | str | None = None) -> None:
+    extra = {
+        k: state[k]
+        for k in state
+        if k not in {"cut_dicts", "rows_seen", "hours_kept", "clips_kept", "split_rows"}
+    }
+    payload = {
+        "rows_seen": int(state.get("rows_seen") or 0),
+        "hours_kept": float(state.get("hours_kept") or 0.0),
+        "clips_kept": int(state.get("clips_kept") or 0),
+        "split_rows": dict(state.get("split_rows") or {}),
+    }
+    payload.update(extra)
+    save_progress(source, payload, manifest_root)
+
+
+def restore_partial_state(
+    source: str,
+    manifest_root: Path | str | None = None,
+    force: bool = False,
+) -> dict:
+    """Load partial JSONL + progress, or wipe both (and the final cuts) if force."""
+    man = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
+    partial = partial_cuts_path(source, man)
+    prog = progress_path(source, man)
+    final = final_cuts_path(source, man)
+    if force:
+        for p in (partial, prog, final, man / f"{source}_stats.json"):
+            if p.is_file():
+                p.unlink()
+        state = empty_progress()
+        state["cut_dicts"] = []
+        return state
+    cut_dicts = load_cut_dicts(partial)
+    progress = load_progress(source, man)
+    hours = float(progress.get("hours_kept") or 0.0)
+    clips = int(progress.get("clips_kept") or 0)
+    if cut_dicts and clips == 0:
+        clips = len(cut_dicts)
+    if cut_dicts and hours == 0.0:
+        hours = sum(float(d.get("duration") or 0.0) for d in cut_dicts) / 3600.0
+    state = empty_progress()
+    state.update(progress)
+    state["cut_dicts"] = cut_dicts
+    state["rows_seen"] = int(progress.get("rows_seen") or 0)
+    state["hours_kept"] = hours
+    state["clips_kept"] = clips if clips else len(cut_dicts)
+    state["split_rows"] = dict(progress.get("split_rows") or {})
+    return state
 
 
 def skip_hf_stream(ds, n: int, label: str = ""):
@@ -633,14 +772,15 @@ def _phoneme_text(corpus, tokenizer, OOVError, surah: int, ayah: int, ayah_end: 
     return phonemes
 
 
-def _save_cuts(source: str, recordings, supervisions) -> None:
-    from lhotse import CutSet, RecordingSet, SupervisionSet
+def _save_cuts(source: str, cut_dicts: list, manifest_root: Path | str | None = None) -> None:
+    from lhotse import CutSet
 
-    recs = RecordingSet.from_recordings(recordings)
-    sups = SupervisionSet.from_segments(supervisions)
-    cuts = CutSet.from_manifests(recordings=recs, supervisions=sups)
-    out = Path(f"/vol/manifests/{source}_cuts.jsonl.gz")
+    merged = finalize_cut_dicts(list(cut_dicts or []))
+    cuts = CutSet.from_dicts(merged)
+    out = final_cuts_path(source, manifest_root)
+    out.parent.mkdir(parents=True, exist_ok=True)
     cuts.to_file(str(out))
+    remove_partial_cuts(source, manifest_root)
     print(f"[{source}] wrote {out} ({len(cuts)} cuts)")
 
 
@@ -650,23 +790,52 @@ def _write_stats(stats: dict) -> None:
     print(f"[{stats['source']}] stats: {json.dumps(stats, default=str)}")
 
 
-def _maybe_skip_existing(source: str, force: bool, stats: dict) -> dict | None:
-    cuts = Path(f"/vol/manifests/{source}_cuts.jsonl.gz")
-    if cuts.is_file() and not force:
-        print(f"[{source}] {cuts} exists; skip (pass --force to redo)")
+def _sync_stats(stats: dict, state: dict) -> None:
+    stats["clips"] = int(state.get("clips_kept") or 0)
+    stats["hours"] = float(state.get("hours_kept") or 0.0)
+
+
+def _begin_or_skip(source: str, force: bool, stats: dict) -> tuple[dict | None, dict | None]:
+    """Return (state, None) to ingest, or (None, skip_stats) if already complete.
+
+    A leftover `*_cuts.partial.jsonl` means a crash mid-run: resume even if a
+    stale final gzip exists. `--force` deletes partial + progress + final + audio.
+    """
+    if force:
+        state = restore_partial_state(source, force=True)
+        audio_dir = Path("/vol/audio") / source
+        if audio_dir.is_dir():
+            shutil.rmtree(audio_dir)
+        vol.commit()
+        print(f"[{source}] --force: cleared partial, progress, final cuts, and {audio_dir}")
+        return state, None
+    partial = partial_cuts_path(source)
+    final = final_cuts_path(source)
+    if final.is_file() and not partial.is_file():
+        print(f"[{source}] {final} exists; skip (pass --force to redo)")
         existing = Path(f"/vol/manifests/{source}_stats.json")
         if existing.is_file():
             try:
                 loaded = json.loads(existing.read_text(encoding="utf-8"))
                 loaded["skipped_existing"] = True
                 _write_stats(loaded)
-                return loaded
+                return None, loaded
             except json.JSONDecodeError:
                 pass
         stats["skipped_existing"] = True
         _write_stats(stats)
-        return stats
-    return None
+        return None, stats
+    state = restore_partial_state(source, force=False)
+    n = len(state["cut_dicts"])
+    if n:
+        _sync_stats(stats, state)
+        stats["reused_flac"] = n
+        stats["prefix_restored"] = n
+        print(
+            f"[{source}] resume prefix_cuts={n} rows_seen={state['rows_seen']} "
+            f"hours_kept={state['hours_kept']:.4f} clips_kept={state['clips_kept']}"
+        )
+    return state, None
 
 
 def _commit(every_n: int, n: int) -> None:
@@ -675,24 +844,77 @@ def _commit(every_n: int, n: int) -> None:
         print(f"  volume commit at {n} clips")
 
 
-def _append_cut(recordings, supervisions, *, clip_id, flac_path, phonemes, speaker, custom):
-    from lhotse import Recording, SupervisionSegment
+def _maybe_crash_after(crash_after: int, limit: int, clips_kept: int) -> None:
+    """Hidden test knob: raise after N kept clips when `--limit` is also set."""
+    if crash_after > 0 and limit > 0 and int(clips_kept) >= crash_after:
+        vol.commit()
+        raise RuntimeError(f"crash-after {crash_after} (kept {clips_kept} clips)")
+
+
+def _finish_row(
+    source: str,
+    state: dict,
+    stats: dict,
+    crash_after: int,
+    limit: int,
+    *,
+    kept: bool,
+    commit_every: int = 25,
+    manifest_root: Path | str | None = None,
+) -> None:
+    persist_progress(source, state, manifest_root)
+    _sync_stats(stats, state)
+    if kept:
+        _maybe_crash_after(crash_after, limit, int(state.get("clips_kept") or 0))
+        _commit(commit_every, int(state.get("clips_kept") or 0))
+
+
+def _finalize_source(source: str, state: dict, stats: dict) -> dict:
+    _sync_stats(stats, state)
+    n_prefix = int(stats.get("prefix_restored") or 0)
+    n_reused = int(stats.get("reused_flac") or 0)
+    if state.get("cut_dicts"):
+        _save_cuts(source, state["cut_dicts"])
+        print(
+            f"[{source}] finalize cuts={stats['clips']} "
+            f"prefix_restored={n_prefix} reused_flac={n_reused} "
+            f"new_flac={max(int(stats['clips']) - n_reused, 0)}"
+        )
+    _write_stats(stats)
+    vol.commit()
+    return stats
+
+
+def _append_cut(state, source, *, clip_id, flac_path, phonemes, speaker, custom, duration: float, manifest_root=None):
+    """Write one MonoCut.to_dict() line immediately, then bump hours/clips."""
+    from lhotse import MonoCut, Recording, SupervisionSegment
 
     rec = Recording.from_file(str(flac_path), recording_id=clip_id)
-    recordings.append(rec)
-    supervisions.append(
-        SupervisionSegment(
-            id=clip_id,
-            recording_id=clip_id,
-            start=0.0,
-            duration=rec.duration,
-            channel=0,
-            text=phonemes,
-            language="quran-phonemes",
-            speaker=speaker or "unknown",
-            custom=custom,
-        )
+    cut = MonoCut(
+        id=clip_id,
+        start=0.0,
+        duration=rec.duration,
+        channel=0,
+        recording=rec,
+        supervisions=[
+            SupervisionSegment(
+                id=clip_id,
+                recording_id=clip_id,
+                start=0.0,
+                duration=rec.duration,
+                channel=0,
+                text=phonemes,
+                language="quran-phonemes",
+                speaker=speaker or "unknown",
+                custom=custom,
+            )
+        ],
     )
+    cut_dict = cut.to_dict()
+    append_cut_dict(partial_cuts_path(source, manifest_root), cut_dict)
+    state.setdefault("cut_dicts", []).append(cut_dict)
+    state["clips_kept"] = int(state.get("clips_kept") or 0) + 1
+    state["hours_kept"] = float(state.get("hours_kept") or 0.0) + float(duration) / 3600.0
 
 
 def _ingest_clip(
@@ -710,11 +932,11 @@ def _ingest_clip(
     corpus,
     tokenizer,
     OOVError,
-    recordings,
-    supervisions,
+    state: dict,
     extra_custom: dict | None = None,
     split: str | None = None,
     audio_root: Path | str | None = None,
+    manifest_root: Path | str | None = None,
 ) -> bool:
     decision = duration_decision(duration)
     if decision.startswith("skip_"):
@@ -750,16 +972,17 @@ def _ingest_clip(
     if extra_custom:
         custom.update(extra_custom)
     _append_cut(
-        recordings,
-        supervisions,
+        state,
+        source,
         clip_id=clip_id,
         flac_path=flac_path,
         phonemes=phonemes,
         speaker=str(speaker or "unknown"),
         custom=custom,
+        duration=duration,
+        manifest_root=manifest_root,
     )
-    stats["clips"] += 1
-    stats["hours"] += duration / 3600.0
+    _sync_stats(stats, state)
     return True
 
 
@@ -794,7 +1017,7 @@ def _audio_for_clip(
 # ---------------------------------------------------------------------------
 
 
-def _prepare_everyayah(limit: int, force: bool) -> dict:
+def _prepare_everyayah(limit: int, force: bool, crash_after: int = 0) -> dict:
     from datasets import load_dataset, load_dataset_builder
 
     stats = _empty_stats("everyayah")
@@ -802,11 +1025,10 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
         f"[everyayah] splits={list(EVERYAYAH_SPLITS)} "
         "(never test: q-lab everyayah_heldout is curated test shards)"
     )
-    skipped = _maybe_skip_existing("everyayah", force, stats)
+    state, skipped = _begin_or_skip("everyayah", force, stats)
     if skipped is not None:
         return skipped
     corpus, tokenizer, db, OOVError = _load_labelers()
-    recordings, supervisions = [], []
 
     curated_ok = False
     try:
@@ -822,24 +1044,20 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
         stats["hf_repo"] = HF_EVERYAYAH_CURATED
         stats["split"] = "+".join(EVERYAYAH_SPLITS)
         stats["features"] = str(feats)
-        progress = {} if force else load_progress("everyayah")
-        split_rows = dict(progress.get("split_rows") or {})
         for split in EVERYAYAH_SPLITS:
-            if limit and stats["clips"] >= limit:
+            if limit and state["clips_kept"] >= limit:
                 break
             ds = _stream_ds(HF_EVERYAYAH_CURATED, split)
-            already = 0 if force else int(split_rows.get(split) or 0)
+            already = int((state.get("split_rows") or {}).get(split) or 0)
             ds = skip_hf_stream(ds, already, f"everyayah/{split}")
-            idx = already
             for row in ds:
-                if limit and stats["clips"] >= limit:
+                if limit and state["clips_kept"] >= limit:
                     break
+                idx = consume_row(state, split=split)
                 sa = pick_surah_ayah(row)
                 if sa is None:
                     _bump_skip(stats, "no_surah_ayah")
-                    idx += 1
-                    split_rows[split] = idx
-                    save_progress("everyayah", {"split_rows": split_rows, "rows_seen": idx})
+                    _finish_row("everyayah", state, stats, crash_after, limit, kept=False)
                     continue
                 surah, ayah = sa
                 wav, dur = _audio_for_clip(
@@ -853,11 +1071,9 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
                     split=split,
                 )
                 if dur is None:
-                    idx += 1
-                    split_rows[split] = idx
-                    save_progress("everyayah", {"split_rows": split_rows, "rows_seen": idx})
+                    _finish_row("everyayah", state, stats, crash_after, limit, kept=False)
                     continue
-                _ingest_clip(
+                kept = _ingest_clip(
                     source="everyayah",
                     idx=idx,
                     wav=wav,
@@ -871,32 +1087,26 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
                     corpus=corpus,
                     tokenizer=tokenizer,
                     OOVError=OOVError,
-                    recordings=recordings,
-                    supervisions=supervisions,
+                    state=state,
                     split=split,
                 )
-                idx += 1
-                split_rows[split] = idx
-                save_progress("everyayah", {"split_rows": split_rows, "rows_seen": idx})
-                _commit(25, stats["clips"])
+                _finish_row("everyayah", state, stats, crash_after, limit, kept=kept)
     else:
         builder = load_dataset_builder(HF_EVERYAYAH)
         _print_features("everyayah", HF_EVERYAYAH, builder.info.features, builder.info.splits)
         stats["hf_repo"] = HF_EVERYAYAH
         stats["split"] = "train"
         stats["features"] = str(builder.info.features)
-        progress = {} if force else load_progress("everyayah")
-        already = 0 if force else int(progress.get("rows_seen") or 0)
+        already = int(state.get("rows_seen") or 0)
         ds = skip_hf_stream(_stream_ds(HF_EVERYAYAH, "train"), already, "everyayah")
-        idx = already
         for row in ds:
-            if limit and stats["clips"] >= limit:
+            if limit and state["clips_kept"] >= limit:
                 break
+            idx = consume_row(state)
             hit = _match_ayah(db, row.get("text") or "")
             if hit is None:
                 _bump_skip(stats, "low_match")
-                idx += 1
-                save_progress("everyayah", {"rows_seen": idx})
+                _finish_row("everyayah", state, stats, crash_after, limit, kept=False)
                 continue
             wav, dur = _audio_for_clip(
                 source="everyayah",
@@ -908,10 +1118,9 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
                 stats=stats,
             )
             if dur is None:
-                idx += 1
-                save_progress("everyayah", {"rows_seen": idx})
+                _finish_row("everyayah", state, stats, crash_after, limit, kept=False)
                 continue
-            _ingest_clip(
+            kept = _ingest_clip(
                 source="everyayah",
                 idx=idx,
                 wav=wav,
@@ -925,31 +1134,23 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
                 corpus=corpus,
                 tokenizer=tokenizer,
                 OOVError=OOVError,
-                recordings=recordings,
-                supervisions=supervisions,
+                state=state,
             )
-            idx += 1
-            save_progress("everyayah", {"rows_seen": idx})
-            _commit(25, stats["clips"])
+            _finish_row("everyayah", state, stats, crash_after, limit, kept=kept)
 
-    if recordings:
-        _save_cuts("everyayah", recordings, supervisions)
-    _write_stats(stats)
-    vol.commit()
-    return stats
+    return _finalize_source("everyayah", state, stats)
 
 
-def _prepare_qua(limit: int, force: bool) -> dict:
+def _prepare_qua(limit: int, force: bool, crash_after: int = 0) -> dict:
     from datasets import load_dataset, load_dataset_builder
 
     stats = _empty_stats("qua")
     stats["hf_repo"] = HF_QUA
     print("[qua] dropping catalog rows whose slug/name contains nufais (q-lab qul_alnufais held-out)")
-    skipped = _maybe_skip_existing("qua", force, stats)
+    state, skipped = _begin_or_skip("qua", force, stats)
     if skipped is not None:
         return skipped
     corpus, tokenizer, _db, OOVError = _load_labelers()
-    recordings, supervisions = [], []
 
     catalog_builder = load_dataset_builder(HF_QUA, "mushafs")
     _print_features("qua/mushafs", HF_QUA, catalog_builder.info.features, catalog_builder.info.splits)
@@ -991,10 +1192,9 @@ def _prepare_qua(limit: int, force: bool) -> dict:
         )
 
     printed_ayah_schema = False
-    idx = 0
     for mushaf in kept:
         slug = str(mushaf["slug"])
-        if limit and stats["clips"] >= limit:
+        if limit and state["clips_kept"] >= limit:
             break
         if not printed_ayah_schema:
             b = load_dataset_builder(HF_QUA, slug)
@@ -1004,13 +1204,16 @@ def _prepare_qua(limit: int, force: bool) -> dict:
         ctx = str(mushaf.get("recording_context") or "")
         condition = "studio" if "studio" in ctx.lower() else "crowd"
         speaker = str(mushaf.get("name_en") or slug)
-        ds = _stream_ds(HF_QUA, "train", name=slug)
+        already = int((state.get("split_rows") or {}).get(slug) or 0)
+        ds = skip_hf_stream(_stream_ds(HF_QUA, "train", name=slug), already, f"qua/{slug}")
         for row in ds:
-            if limit and stats["clips"] >= limit:
+            if limit and state["clips_kept"] >= limit:
                 break
+            idx = consume_row(state, split=slug)
             sa = pick_surah_ayah(row)
             if sa is None:
                 _bump_skip(stats, "no_surah_ayah")
+                _finish_row("qua", state, stats, crash_after, limit, kept=False, commit_every=50)
                 continue
             surah, ayah = sa
             wav, dur = _audio_for_clip(
@@ -1021,16 +1224,17 @@ def _prepare_qua(limit: int, force: bool) -> dict:
                 audio_obj=row.get("audio"),
                 force=force,
                 stats=stats,
+                split=slug,
             )
             if dur is None:
-                idx += 1
+                _finish_row("qua", state, stats, crash_after, limit, kept=False, commit_every=50)
                 continue
             extra = {
                 "recording_context": ctx,
                 "slug": slug,
                 "riwayah": mushaf.get("riwayah"),
             }
-            _ingest_clip(
+            kept_clip = _ingest_clip(
                 source="qua",
                 idx=idx,
                 wav=wav,
@@ -1044,31 +1248,25 @@ def _prepare_qua(limit: int, force: bool) -> dict:
                 corpus=corpus,
                 tokenizer=tokenizer,
                 OOVError=OOVError,
-                recordings=recordings,
-                supervisions=supervisions,
+                state=state,
                 extra_custom=extra,
+                split=slug,
             )
-            idx += 1
-            _commit(50, stats["clips"])
+            _finish_row("qua", state, stats, crash_after, limit, kept=kept_clip, commit_every=50)
 
-    if recordings:
-        _save_cuts("qua", recordings, supervisions)
-    _write_stats(stats)
-    vol.commit()
-    return stats
+    return _finalize_source("qua", state, stats)
 
 
-def _prepare_qurantts(limit: int, force: bool) -> dict:
+def _prepare_qurantts(limit: int, force: bool, crash_after: int = 0) -> dict:
     from datasets import load_dataset, load_dataset_builder
     from huggingface_hub import hf_hub_download
 
     stats = _empty_stats("qurantts")
     stats["hf_repo"] = HF_QURANTTS
-    skipped = _maybe_skip_existing("qurantts", force, stats)
+    state, skipped = _begin_or_skip("qurantts", force, stats)
     if skipped is not None:
         return skipped
     corpus, tokenizer, _db, OOVError = _load_labelers()
-    recordings, supervisions = [], []
 
     lic_path = hf_hub_download(HF_QURANTTS, "LICENSE", repo_type="dataset")
     lic_text = Path(lic_path).read_text(encoding="utf-8")
@@ -1092,21 +1290,27 @@ def _prepare_qurantts(limit: int, force: bool) -> dict:
         if cfg
         else load_dataset(HF_QURANTTS, split=split, streaming=True)
     )
-    for idx, row in enumerate(ds):
-        if limit and stats["clips"] >= limit:
+    already = int(state.get("rows_seen") or 0)
+    ds = skip_hf_stream(ds, already, "qurantts")
+    for row in ds:
+        if limit and state["clips_kept"] >= limit:
             break
+        idx = consume_row(state)
         fn = row.get("file_name") or row.get("path") or ""
         sa = pick_surah_ayah(row) or parse_surah_ayah_filename(fn)
         if sa is None:
             _bump_skip(stats, "no_surah_ayah")
+            _finish_row("qurantts", state, stats, crash_after, limit, kept=False)
             continue
         surah, ayah = sa
         listed = float(row.get("duration_s") or 0)
         if listed > MAX_DURATION_S:
             _bump_skip(stats, "skip_long")
+            _finish_row("qurantts", state, stats, crash_after, limit, kept=False)
             continue
         if not fn:
             _bump_skip(stats, "no_file_name")
+            _finish_row("qurantts", state, stats, crash_after, limit, kept=False)
             continue
         clip_id = make_clip_id("qurantts", idx, surah, ayah)
         flac_path = flac_clip_path("qurantts", clip_id)
@@ -1119,8 +1323,9 @@ def _prepare_qurantts(limit: int, force: bool) -> dict:
             except Exception as e:
                 print(f"[qurantts] audio fail {fn}: {e}")
                 _bump_skip(stats, "audio_error")
+                _finish_row("qurantts", state, stats, crash_after, limit, kept=False)
                 continue
-        _ingest_clip(
+        kept = _ingest_clip(
             source="qurantts",
             idx=idx,
             wav=wav,
@@ -1134,20 +1339,15 @@ def _prepare_qurantts(limit: int, force: bool) -> dict:
             corpus=corpus,
             tokenizer=tokenizer,
             OOVError=OOVError,
-            recordings=recordings,
-            supervisions=supervisions,
+            state=state,
             extra_custom={"riwaya": row.get("riwaya"), "file_name": fn},
         )
-        _commit(25, stats["clips"])
+        _finish_row("qurantts", state, stats, crash_after, limit, kept=kept)
 
-    if recordings:
-        _save_cuts("qurantts", recordings, supervisions)
-    _write_stats(stats)
-    vol.commit()
-    return stats
+    return _finalize_source("qurantts", state, stats)
 
 
-def _prepare_iqra(limit: int, force: bool) -> dict:
+def _prepare_iqra(limit: int, force: bool, crash_after: int = 0) -> dict:
     from datasets import load_dataset, load_dataset_builder
 
     stats = _empty_stats("iqra")
@@ -1157,25 +1357,23 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
         "(Iqra_train is MSA + Quran mix; non-Quran is the drop, not a norm bug); "
         "first 200 rows also score search(top_k=1) and hamza-stripped normalize"
     )
-    skipped = _maybe_skip_existing("iqra", force, stats)
+    state, skipped = _begin_or_skip("iqra", force, stats)
     if skipped is not None:
         return skipped
     corpus, tokenizer, db, OOVError = _load_labelers()
-    recordings, supervisions = [], []
     builder = load_dataset_builder(HF_IQRA)
     _print_features("iqra", HF_IQRA, builder.info.features, builder.info.splits)
     stats["features"] = str(builder.info.features)
     stats["split"] = "train"
-    progress = {} if force else load_progress("iqra")
-    already = 0 if force else int(progress.get("rows_seen") or 0)
+    already = int(state.get("rows_seen") or 0)
     ds = skip_hf_stream(_stream_ds(HF_IQRA, "train"), already, "iqra")
     diag_n = 0
     diag_keep = {"baseline": 0, "search": 0, "hamza": 0, "multi_ayah": 0}
     diag_miss_printed = 0
-    idx = already
     for row in ds:
-        if limit and stats["clips"] >= limit:
+        if limit and state["clips_kept"] >= limit:
             break
+        idx = consume_row(state)
         sentence = str(row.get("sentence") or "")
         tashkeel = str(row.get("tashkeel_sentence") or "")
         if diag_n < 200:
@@ -1207,8 +1405,7 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
         hit = match_iqra_row(db, sentence, tashkeel)
         if hit is None:
             _bump_skip(stats, "low_match")
-            idx += 1
-            save_progress("iqra", {"rows_seen": idx})
+            _finish_row("iqra", state, stats, crash_after, limit, kept=False)
             continue
         ayah_end = hit.get("ayah_end") or int(hit["ayah"])
         if ayah_end != int(hit["ayah"]):
@@ -1223,10 +1420,9 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
             stats=stats,
         )
         if dur is None:
-            idx += 1
-            save_progress("iqra", {"rows_seen": idx})
+            _finish_row("iqra", state, stats, crash_after, limit, kept=False)
             continue
-        _ingest_clip(
+        kept = _ingest_clip(
             source="iqra",
             idx=idx,
             wav=wav,
@@ -1240,12 +1436,9 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
             corpus=corpus,
             tokenizer=tokenizer,
             OOVError=OOVError,
-            recordings=recordings,
-            supervisions=supervisions,
+            state=state,
         )
-        idx += 1
-        save_progress("iqra", {"rows_seen": idx})
-        _commit(25, stats["clips"])
+        _finish_row("iqra", state, stats, crash_after, limit, kept=kept)
     if diag_n and diag_n < 200:
         def _rate_partial(k: str) -> str:
             return f"{diag_keep[k]}/{diag_n} ({100.0 * diag_keep[k] / max(diag_n, 1):.1f}%)"
@@ -1263,46 +1456,38 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
         "keep_hamza": diag_keep["hamza"],
         "multi_ayah_kept": diag_keep["multi_ayah"],
     }
-    if recordings:
-        _save_cuts("iqra", recordings, supervisions)
-    _write_stats(stats)
-    vol.commit()
-    return stats
+    return _finalize_source("iqra", state, stats)
 
 
-def _prepare_retasy(limit: int, force: bool) -> dict:
+def _prepare_retasy(limit: int, force: bool, crash_after: int = 0) -> dict:
     from datasets import load_dataset, load_dataset_builder
 
     stats = _empty_stats("retasy")
     stats["hf_repo"] = HF_RETASY
-    skipped = _maybe_skip_existing("retasy", force, stats)
+    state, skipped = _begin_or_skip("retasy", force, stats)
     if skipped is not None:
         return skipped
     corpus, tokenizer, db, OOVError = _load_labelers()
-    recordings, supervisions = [], []
     builder = load_dataset_builder(HF_RETASY)
     _print_features("retasy", HF_RETASY, builder.info.features, builder.info.splits)
     stats["features"] = str(builder.info.features)
     stats["split"] = "train"
-    progress = {} if force else load_progress("retasy")
-    already = 0 if force else int(progress.get("rows_seen") or 0)
+    already = int(state.get("rows_seen") or 0)
     ds = skip_hf_stream(_stream_ds(HF_RETASY, "train"), already, "retasy")
-    idx = already
     for row in ds:
-        if limit and stats["clips"] >= limit:
+        if limit and state["clips_kept"] >= limit:
             break
+        idx = consume_row(state)
         label = row.get("final_label")
         if not retasy_keep(label):
             reason = "bad_label" if label in BAD_RETASY_LABELS else "not_correct"
             _bump_skip(stats, reason)
-            idx += 1
-            save_progress("retasy", {"rows_seen": idx})
+            _finish_row("retasy", state, stats, crash_after, limit, kept=False)
             continue
         hit = _match_ayah(db, row.get("Aya") or "")
         if hit is None:
             _bump_skip(stats, "low_match")
-            idx += 1
-            save_progress("retasy", {"rows_seen": idx})
+            _finish_row("retasy", state, stats, crash_after, limit, kept=False)
             continue
         wav, dur = _audio_for_clip(
             source="retasy",
@@ -1314,10 +1499,9 @@ def _prepare_retasy(limit: int, force: bool) -> dict:
             stats=stats,
         )
         if dur is None:
-            idx += 1
-            save_progress("retasy", {"rows_seen": idx})
+            _finish_row("retasy", state, stats, crash_after, limit, kept=False)
             continue
-        _ingest_clip(
+        kept = _ingest_clip(
             source="retasy",
             idx=idx,
             wav=wav,
@@ -1331,21 +1515,14 @@ def _prepare_retasy(limit: int, force: bool) -> dict:
             corpus=corpus,
             tokenizer=tokenizer,
             OOVError=OOVError,
-            recordings=recordings,
-            supervisions=supervisions,
+            state=state,
             extra_custom={"final_label": label},
         )
-        idx += 1
-        save_progress("retasy", {"rows_seen": idx})
-        _commit(25, stats["clips"])
-    if recordings:
-        _save_cuts("retasy", recordings, supervisions)
-    _write_stats(stats)
-    vol.commit()
-    return stats
+        _finish_row("retasy", state, stats, crash_after, limit, kept=kept)
+    return _finalize_source("retasy", state, stats)
 
 
-def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
+def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float, crash_after: int = 0) -> dict:
     from datasets import load_dataset, load_dataset_builder
 
     stats = _empty_stats("tlog")
@@ -1355,29 +1532,26 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
     holdout = excl["tlog_ids"]
     sample = sorted(holdout)[:3]
     print(f"[tlog] q-lab tlog_holdout exclusion: {len(holdout)} ids sample={sample}")
-    skipped = _maybe_skip_existing("tlog", force, stats)
+    state, skipped = _begin_or_skip("tlog", force, stats)
     if skipped is not None:
         return skipped
     corpus, tokenizer, _db, OOVError = _load_labelers()
-    recordings, supervisions = [], []
     builder = load_dataset_builder(HF_TLOG)
     _print_features("tlog", HF_TLOG, builder.info.features, builder.info.splits)
     stats["features"] = str(builder.info.features)
     stats["split"] = "clean"
-    progress = {} if force else load_progress("tlog")
-    already = 0 if force else int(progress.get("rows_seen") or 0)
+    already = int(state.get("rows_seen") or 0)
     ds = skip_hf_stream(_stream_ds(HF_TLOG, "clean"), already, "tlog")
-    idx = already
     for row in ds:
-        if limit and stats["clips"] >= limit:
+        if limit and state["clips_kept"] >= limit:
             break
-        if tlog_max_hours > 0 and stats["hours"] >= tlog_max_hours:
+        if tlog_max_hours > 0 and float(state.get("hours_kept") or 0.0) >= tlog_max_hours:
             _bump_skip(stats, "hours_cap")
             break
+        idx = consume_row(state)
         if not row.get("is_clean", True):
             _bump_skip(stats, "unclean")
-            idx += 1
-            save_progress("tlog", {"rows_seen": idx})
+            _finish_row("tlog", state, stats, crash_after, limit, kept=False, commit_every=50)
             continue
         audio = row.get("audio") or {}
         path = ""
@@ -1392,13 +1566,11 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
             if int((stats.get("skipped") or {}).get("unmapped") or 0) < 3:
                 print(f"[tlog] unmapped path={path!r} audio_keys={list(audio) if isinstance(audio, dict) else type(audio)}")
             _bump_skip(stats, "unmapped")
-            idx += 1
-            save_progress("tlog", {"rows_seen": idx})
+            _finish_row("tlog", state, stats, crash_after, limit, kept=False, commit_every=50)
             continue
         if tlog_holdout_key(path) in holdout:
             _bump_skip(stats, "qlab_holdout")
-            idx += 1
-            save_progress("tlog", {"rows_seen": idx})
+            _finish_row("tlog", state, stats, crash_after, limit, kept=False, commit_every=50)
             continue
         surah, ayah = parsed
         wav, dur = _audio_for_clip(
@@ -1411,10 +1583,9 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
             stats=stats,
         )
         if dur is None:
-            idx += 1
-            save_progress("tlog", {"rows_seen": idx})
+            _finish_row("tlog", state, stats, crash_after, limit, kept=False, commit_every=50)
             continue
-        _ingest_clip(
+        kept = _ingest_clip(
             source="tlog",
             idx=idx,
             wav=wav,
@@ -1428,53 +1599,46 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
             corpus=corpus,
             tokenizer=tokenizer,
             OOVError=OOVError,
-            recordings=recordings,
-            supervisions=supervisions,
+            state=state,
         )
-        idx += 1
-        save_progress("tlog", {"rows_seen": idx})
-        _commit(50, stats["clips"])
-    if recordings:
-        _save_cuts("tlog", recordings, supervisions)
-    _write_stats(stats)
-    vol.commit()
-    return stats
+        _finish_row("tlog", state, stats, crash_after, limit, kept=kept, commit_every=50)
+    return _finalize_source("tlog", state, stats)
 
 
 @app.function(**_FN_KW)
-def prepare_everyayah(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0):
+def prepare_everyayah(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0, crash_after: int = 0):
     _boot_remote()
-    return _prepare_everyayah(limit, force)
+    return _prepare_everyayah(limit, force, crash_after=crash_after)
 
 
 @app.function(**_FN_KW)
-def prepare_qua(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0):
+def prepare_qua(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0, crash_after: int = 0):
     _boot_remote()
-    return _prepare_qua(limit, force)
+    return _prepare_qua(limit, force, crash_after=crash_after)
 
 
 @app.function(**_FN_KW)
-def prepare_qurantts(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0):
+def prepare_qurantts(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0, crash_after: int = 0):
     _boot_remote()
-    return _prepare_qurantts(limit, force)
+    return _prepare_qurantts(limit, force, crash_after=crash_after)
 
 
 @app.function(**_FN_KW)
-def prepare_iqra(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0):
+def prepare_iqra(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0, crash_after: int = 0):
     _boot_remote()
-    return _prepare_iqra(limit, force)
+    return _prepare_iqra(limit, force, crash_after=crash_after)
 
 
 @app.function(**_FN_KW)
-def prepare_retasy(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0):
+def prepare_retasy(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0, crash_after: int = 0):
     _boot_remote()
-    return _prepare_retasy(limit, force)
+    return _prepare_retasy(limit, force, crash_after=crash_after)
 
 
 @app.function(**_FN_KW)
-def prepare_tlog(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0):
+def prepare_tlog(limit: int = 0, force: bool = False, tlog_max_hours: float = 100.0, crash_after: int = 0):
     _boot_remote()
-    return _prepare_tlog(limit, force, tlog_max_hours)
+    return _prepare_tlog(limit, force, tlog_max_hours, crash_after=crash_after)
 
 
 @app.function(**_FN_KW)
@@ -1530,8 +1694,8 @@ def summarize():
     )
     vol.commit()
     print()
-    print(f"{'source':<12} {'clips':>8} {'hours':>10} {'oov':>6} {'license_ok':>12}  skipped")
-    print("-" * 80)
+    print(f"{'source':<12} {'clips':>8} {'hours':>10} {'oov':>6} {'reused':>8} {'license_ok':>12}  skipped")
+    print("-" * 88)
     for src in ALL_SOURCES:
         r = summary.get(src)
         if not r:
@@ -1541,7 +1705,8 @@ def summarize():
         skip_s = ",".join(f"{k}={v}" for k, v in skipped.items()) or "—"
         print(
             f"{src:<12} {r.get('clips', 0):8d} {float(r.get('hours') or 0):10.3f} "
-            f"{r.get('oov', 0):6d} {str(r.get('license_ok', True)):>12}  {skip_s}"
+            f"{r.get('oov', 0):6d} {int(r.get('reused_flac') or 0):8d} "
+            f"{str(r.get('license_ok', True)):>12}  {skip_s}"
         )
     print()
     print("wrote /vol/manifests/summary.json")
@@ -1567,19 +1732,27 @@ def main(
     tlog_max_hours: float = 100.0,
     summary_only: bool = False,
     no_speed_perturb: bool = False,
+    crash_after: int = 0,
 ):
     if summary_only:
         summarize.remote()
         return
     selected = parse_sources(sources)
-    print(f"staging sources={selected} limit={limit} force={force} skip_fbank={skip_fbank}")
+    print(
+        f"staging sources={selected} limit={limit} force={force} "
+        f"skip_fbank={skip_fbank} crash_after={crash_after}"
+    )
     handles = {
-        src: PREPARE_FNS[src].spawn(limit, force, tlog_max_hours) for src in selected
+        src: PREPARE_FNS[src].spawn(limit, force, tlog_max_hours, crash_after)
+        for src in selected
     }
     for src, handle in handles.items():
         try:
             stats = handle.get()
-            print(f"DONE {src}: clips={stats.get('clips')} hours={stats.get('hours')}")
+            print(
+                f"DONE {src}: clips={stats.get('clips')} hours={stats.get('hours')} "
+                f"reused_flac={stats.get('reused_flac')}"
+            )
         except Exception as e:
             print(f"FAILED {src}: {type(e).__name__}: {e}")
     if not skip_fbank:

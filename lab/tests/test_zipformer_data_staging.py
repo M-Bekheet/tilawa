@@ -225,3 +225,98 @@ def test_skip_hf_stream_uses_skip_when_present():
     assert ds.n == 12
     assert prep.skip_hf_stream(ds, 0) is ds
     assert prep.skip_hf_stream([1, 2, 3], 5) == [1, 2, 3]
+
+
+def test_restore_partial_returns_prefix_cuts_and_hours(tmp_path):
+    source = "tlog"
+    cuts = [
+        {"id": "tlog_00000000_1_1", "duration": 2.0},
+        {"id": "tlog_00000001_1_2", "duration": 3.5},
+        {"id": "tlog_00000002_1_3", "duration": 1.5},
+    ]
+    partial = prep.partial_cuts_path(source, tmp_path)
+    for d in cuts:
+        prep.append_cut_dict(partial, d)
+    hours = (2.0 + 3.5 + 1.5) / 3600.0
+    prep.save_progress(
+        source,
+        {"rows_seen": 10, "hours_kept": hours, "clips_kept": 3, "split_rows": {}},
+        tmp_path,
+    )
+    state = prep.restore_partial_state(source, tmp_path, force=False)
+    assert [d["id"] for d in state["cut_dicts"]] == [c["id"] for c in cuts]
+    assert state["hours_kept"] == hours
+    assert state["clips_kept"] == 3
+    assert state["rows_seen"] == 10
+
+    wiped = prep.restore_partial_state(source, tmp_path, force=True)
+    assert wiped["cut_dicts"] == []
+    assert wiped["hours_kept"] == 0.0
+    assert wiped["clips_kept"] == 0
+    assert not partial.is_file()
+    assert not prep.progress_path(source, tmp_path).is_file()
+
+
+def test_crash_resume_finalize_prefix_plus_suffix_no_duplicates(tmp_path):
+    source = "retasy"
+    prefix = [{"id": f"retasy_{i:08d}_1_1", "duration": 1.0} for i in range(12)]
+    partial = prep.partial_cuts_path(source, tmp_path)
+    for d in prefix:
+        prep.append_cut_dict(partial, d)
+    prep.save_progress(
+        source,
+        {"rows_seen": 100, "hours_kept": 12 / 3600.0, "clips_kept": 12, "split_rows": {}},
+        tmp_path,
+    )
+
+    state = prep.restore_partial_state(source, tmp_path)
+    assert len(state["cut_dicts"]) == 12
+    assert state["clips_kept"] == 12
+    assert state["hours_kept"] == 12 / 3600.0
+
+    suffix = [{"id": f"retasy_{i:08d}_1_1", "duration": 1.0} for i in range(12, 30)]
+    for d in suffix:
+        prep.append_cut_dict(partial, d)
+        state["cut_dicts"].append(d)
+        state["clips_kept"] += 1
+        state["hours_kept"] += 1.0 / 3600.0
+    prep.append_cut_dict(partial, prefix[0])
+    state["cut_dicts"].append(prefix[0])
+
+    from_file = prep.load_cut_dicts(partial)
+    final = prep.finalize_cut_dicts(from_file)
+    ids = [d["id"] for d in final]
+    assert ids == [f"retasy_{i:08d}_1_1" for i in range(30)]
+    assert len(ids) == len(set(ids)) == 30
+    assert abs(state["hours_kept"] - 30 / 3600.0) < 1e-12
+
+    prep.remove_partial_cuts(source, tmp_path)
+    assert not partial.is_file()
+
+
+def test_idx_increments_on_skipped_rows():
+    """QUA used to skip `idx += 1` on no_surah_ayah; clip ids drifted vs a clean run."""
+    rows = [
+        {"kind": "no_surah_ayah"},
+        {"kind": "no_surah_ayah"},
+        {"kind": "keep"},
+        {"kind": "dur_none"},
+        {"kind": "keep"},
+    ]
+    state = prep.empty_progress()
+    kept_idx = []
+    for row in rows:
+        idx = prep.consume_row(state)
+        if row["kind"] in ("no_surah_ayah", "dur_none"):
+            continue
+        kept_idx.append(idx)
+    assert state["rows_seen"] == 5
+    assert kept_idx == [2, 4]
+
+    split_state = prep.empty_progress()
+    a = prep.consume_row(split_state, split="slug_a")
+    b = prep.consume_row(split_state, split="slug_a")
+    c = prep.consume_row(split_state, split="slug_b")
+    assert (a, b, c) == (0, 1, 0)
+    assert split_state["rows_seen"] == 3
+    assert split_state["split_rows"] == {"slug_a": 2, "slug_b": 1}
