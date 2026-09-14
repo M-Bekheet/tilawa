@@ -346,6 +346,31 @@ def test_torn_last_line_restore_repairs_partial(tmp_path):
     assert [d["id"] for d in again] == [c["id"] for c in good]
 
 
+def test_torn_utf8_tail_restore_repairs_partial(tmp_path):
+    source = "qua"
+    good = [
+        {"id": "qua_00000000_1_1", "duration": 1.0, "text": "سُ"},
+        {"id": "qua_00000001_1_2", "duration": 2.0},
+    ]
+    partial = prep.partial_cuts_path(source, tmp_path)
+    for d in good:
+        prep.append_cut_dict(partial, d)
+    torn_start = partial.stat().st_size
+    torn = b'{"id": "qua_00000002_1_3", "text": "' + "سُ".encode()[:-1]
+    with pytest.raises(UnicodeDecodeError):
+        torn.decode("utf-8")
+    with partial.open("ab") as f:
+        f.write(torn)
+    state = prep.restore_partial_state(source, tmp_path)
+    assert [d["id"] for d in state["cut_dicts"]] == [c["id"] for c in good]
+    assert len(state["cut_dicts"]) == 2
+    repaired = partial.read_bytes()
+    assert repaired.endswith(b"\n")
+    assert len(repaired) == torn_start
+    again = prep.load_cut_dicts(partial)
+    assert [d["id"] for d in again] == [c["id"] for c in good]
+
+
 def test_corrupt_progress_restore_hours_from_cuts(tmp_path):
     source = "tlog"
     cuts = [

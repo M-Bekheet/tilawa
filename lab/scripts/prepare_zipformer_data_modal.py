@@ -333,7 +333,9 @@ def hours_from_cut_dicts(cut_dicts: list[dict]) -> float:
 def load_cut_dicts(path: Path | str) -> list[dict]:
     """Load JSONL cut dicts. A torn *final* line is dropped and the file repaired.
 
-    JSONDecodeError on any non-final non-empty line still raises.
+    JSONDecodeError or UnicodeDecodeError (mid-codepoint crash on
+    ensure_ascii=False Arabic) on the last non-empty line: drop, warn, truncate.
+    The same errors on any earlier line still raise.
     """
     path = Path(path)
     if not path.is_file():
@@ -358,12 +360,12 @@ def load_cut_dicts(path: Path | str) -> list[dict]:
             continue
         try:
             out.append(json.loads(chunk.decode("utf-8")))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             is_last = bool(nonempty) and k == nonempty[-1]
             if is_last:
                 print(
-                    f"[{path.name}] torn JSONL line at byte offset {start}; "
-                    f"dropping last line and truncating to {last_good_end}"
+                    f"[{path.name}] torn JSONL line at byte offset {start} "
+                    f"({type(exc).__name__}); dropping last line and truncating to {last_good_end}"
                 )
                 with path.open("r+b") as f:
                     f.truncate(last_good_end)
