@@ -451,7 +451,14 @@ def restore_partial_state(
     prog = progress_path(source, man)
     final = final_cuts_path(source, man)
     if force:
-        for p in (partial, prog, Path(str(prog) + ".tmp"), final, man / f"{source}_stats.json"):
+        for p in (
+            partial,
+            prog,
+            Path(str(prog) + ".tmp"),
+            final,
+            man / f"{source}_stats.json",
+            man / f"{source}_cuts_fbank.jsonl.gz",
+        ):
             if p.is_file():
                 p.unlink()
         state = empty_progress()
@@ -618,13 +625,16 @@ image = (
     )
 )
 
+# Full EveryAyah/QUA ingest is many hours; 24h is Modal's typical max.
+# 32 cores match fbank num_jobs. Resume without --force if a source times out.
+FBANK_NUM_JOBS = 32
 _FN_KW = dict(
     image=image,
     volumes={"/vol": vol},
     secrets=[modal.Secret.from_name("huggingface")],
-    cpu=16,
-    memory=32768,
-    timeout=12 * 3600,
+    cpu=32,
+    memory=65536,
+    timeout=24 * 3600,
 )
 
 
@@ -873,15 +883,22 @@ def _begin_or_skip(source: str, force: bool, stats: dict) -> tuple[dict | None, 
     """Return (state, None) to ingest, or (None, skip_stats) if already complete.
 
     A leftover `*_cuts.partial.jsonl` means a crash mid-run: resume even if a
-    stale final gzip exists. `--force` deletes partial + progress + final + audio.
+    stale final gzip exists. `--force` deletes partial + progress + final + audio
+    + fbank dir + `*_cuts_fbank.jsonl.gz` (smoke leftovers must not skip fbank).
     """
     if force:
         state = restore_partial_state(source, force=True)
         audio_dir = Path("/vol/audio") / source
         if audio_dir.is_dir():
             shutil.rmtree(audio_dir)
+        fbank_dir = Path("/vol/fbank") / source
+        if fbank_dir.is_dir():
+            shutil.rmtree(fbank_dir)
         vol.commit()
-        print(f"[{source}] --force: cleared partial, progress, final cuts, and {audio_dir}")
+        print(
+            f"[{source}] --force: cleared partial, progress, final cuts, "
+            f"fbank gzip, {audio_dir}, and {fbank_dir}"
+        )
         return state, None
     partial = partial_cuts_path(source)
     final = final_cuts_path(source)
@@ -933,7 +950,7 @@ def _finish_row(
     limit: int,
     *,
     kept: bool,
-    commit_every: int = 25,
+    commit_every: int = 100,
     manifest_root: Path | str | None = None,
 ) -> None:
     persist_progress(source, state, manifest_root)
@@ -1741,12 +1758,12 @@ def compute_fbank(source: str, no_speed_perturb: bool = False, force: bool = Fal
     storage = Path(f"/vol/fbank/{source}")
     storage.mkdir(parents=True, exist_ok=True)
     extractor = Fbank(FbankConfig(**LHOTSE_FBANK_CONFIG))
-    print(f"[fbank/{source}] extract → {storage} ({len(cuts)} cuts, num_jobs=16)")
+    print(f"[fbank/{source}] extract → {storage} ({len(cuts)} cuts, num_jobs={FBANK_NUM_JOBS})")
     cuts = cuts.compute_and_store_features(
         extractor=extractor,
         storage_path=str(storage),
         storage_type=LilcomChunkyWriter,
-        num_jobs=16,
+        num_jobs=FBANK_NUM_JOBS,
     )
     cuts.to_file(str(out_path))
     print(f"[fbank/{source}] wrote {out_path}")

@@ -257,6 +257,16 @@ def test_restore_partial_returns_prefix_cuts_and_hours(tmp_path):
     assert not prep.progress_path(source, tmp_path).is_file()
 
 
+def test_force_wipe_also_removes_fbank_gzip(tmp_path):
+    source = "everyayah"
+    fbank = tmp_path / f"{source}_cuts_fbank.jsonl.gz"
+    fbank.write_bytes(b"smoke-leftover")
+    (tmp_path / f"{source}_cuts.jsonl.gz").write_bytes(b"cuts")
+    prep.restore_partial_state(source, tmp_path, force=True)
+    assert not fbank.is_file()
+    assert not (tmp_path / f"{source}_cuts.jsonl.gz").is_file()
+
+
 def test_crash_resume_finalize_prefix_plus_suffix_no_duplicates(tmp_path):
     source = "retasy"
     prefix = [{"id": f"retasy_{i:08d}_1_1", "duration": 1.0} for i in range(12)]
