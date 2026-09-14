@@ -911,7 +911,7 @@ def train(
     import time
 
     sys.path.insert(0, "/app")
-    from zipformer_ctc_utils import icefall_train_flags
+    from zipformer_ctc_utils import icefall_train_flags, resolve_train_sources
 
     t0 = time.time()
     work = Path("/vol/work")
@@ -919,42 +919,16 @@ def train(
     Path("/vol/exp").mkdir(parents=True, exist_ok=True)
     Path("/vol/manifests").mkdir(parents=True, exist_ok=True)
 
-    src_list = [s.strip() for s in sources.split(",") if s.strip()]
-    if smoke and not synthetic:
-        missing = [
-            s
-            for s in src_list
-            if not (Path("/vol/manifests") / f"{s}_cuts_fbank.jsonl.gz").is_file()
-        ]
-        if missing:
-            print(f"smoke cuts missing {missing}; falling back to --synthetic")
-            synthetic = True
-    if not synthetic:
-        present = [
-            s
-            for s in src_list
-            if (Path("/vol/manifests") / f"{s}_cuts_fbank.jsonl.gz").is_file()
-        ]
-        if not present:
-            avail = sorted(Path("/vol/manifests").glob("*_cuts_fbank.jsonl.gz"))
-            print(f"requested sources {src_list} have no fbank cuts; available={avail}")
-            if avail:
-                fallback = avail[0].name.removesuffix("_cuts_fbank.jsonl.gz")
-                print(f"using staged source {fallback!r}")
-                src_list = [fallback]
-                sources = fallback
-            else:
-                print("no staged cuts; falling back to --synthetic")
-                synthetic = True
-        elif len(present) < len(src_list):
-            missing = [s for s in src_list if s not in present]
-            print(f"dropping unstaged sources {missing}; training on {present}")
-            src_list = present
-            sources = ",".join(present)
+    src_list, synthetic = resolve_train_sources(
+        sources,
+        Path("/vol/manifests"),
+        smoke=smoke,
+        synthetic=synthetic,
+    )
+    sources = ",".join(src_list)
     if synthetic:
+        print("using synthetic cuts (explicit --synthetic or --smoke fallback)")
         _build_synthetic_cuts(20)
-        src_list = ["synthetic"]
-        sources = "synthetic"
         if smoke and limit_cuts <= 0:
             limit_cuts = 800
 

@@ -28,9 +28,11 @@ from zipformer_ctc_utils import (  # noqa: E402
     inverse_permute_ctc_head,
     io_inputs_match,
     io_json_from_session,
+    missing_fbank_sources,
     permute_ctc_head,
     ref_to_icefall_ids,
     remap_quranlab_key,
+    resolve_train_sources,
     write_icefall_tokens,
 )
 
@@ -227,6 +229,43 @@ def test_arch_flags_reference_cnn_kernels():
     assert flags[i + 1] == "31,31,15,15,15,31"
     j = flags.index("--pos-dim")
     assert flags[j + 1] == "192"
+
+
+def test_resolve_train_sources_full_run_fails_loud(tmp_path: Path):
+    (tmp_path / "retasy_cuts_fbank.jsonl.gz").write_bytes(b"")
+    requested = "everyayah,qua,iqra,retasy,tlog"
+    assert missing_fbank_sources(requested, tmp_path) == [
+        "everyayah",
+        "qua",
+        "iqra",
+        "tlog",
+    ]
+    with pytest.raises(FileNotFoundError, match=r"missing staged fbank cuts") as exc:
+        resolve_train_sources(requested, tmp_path)
+    msg = str(exc.value)
+    assert "everyayah" in msg and "tlog" in msg
+    assert "retasy" not in missing_fbank_sources(requested, tmp_path)
+    assert "dropping unstaged" not in msg
+
+    for src in requested.split(","):
+        (tmp_path / f"{src}_cuts_fbank.jsonl.gz").write_bytes(b"")
+    got, use_syn = resolve_train_sources(requested, tmp_path)
+    assert got == ["everyayah", "qua", "iqra", "retasy", "tlog"]
+    assert use_syn is False
+    still_real, still_syn = resolve_train_sources(requested, tmp_path, smoke=True)
+    assert still_real == got and still_syn is False
+
+    smoke_src, smoke_syn = resolve_train_sources(
+        requested, tmp_path / "empty", smoke=True
+    )
+    assert smoke_src == ["synthetic"] and smoke_syn is True
+    syn_src, syn_flag = resolve_train_sources(requested, tmp_path / "empty", synthetic=True)
+    assert syn_src == ["synthetic"] and syn_flag is True
+
+    train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
+    assert "resolve_train_sources" in train_py
+    assert "dropping unstaged sources" not in train_py
+    assert "falling back to --synthetic" not in train_py
 
 
 def test_default_train_sources_exclude_qurantts():

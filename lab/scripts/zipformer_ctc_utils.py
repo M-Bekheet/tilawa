@@ -261,6 +261,59 @@ def icefall_train_flags(
     ]
 
 
+def parse_source_list(sources: str | Sequence[str]) -> list[str]:
+    if isinstance(sources, str):
+        return [s.strip() for s in sources.split(",") if s.strip()]
+    return [str(s).strip() for s in sources if str(s).strip()]
+
+
+def fbank_cuts_name(source: str) -> str:
+    return f"{source}_cuts_fbank.jsonl.gz"
+
+
+def missing_fbank_sources(
+    sources: str | Sequence[str],
+    manifest_dir: str | Path,
+) -> list[str]:
+    """Requested sources whose ``{source}_cuts_fbank.jsonl.gz`` is absent."""
+    root = Path(manifest_dir)
+    return [
+        s
+        for s in parse_source_list(sources)
+        if not (root / fbank_cuts_name(s)).is_file()
+    ]
+
+
+def resolve_train_sources(
+    sources: str | Sequence[str],
+    manifest_dir: str | Path,
+    *,
+    smoke: bool = False,
+    synthetic: bool = False,
+) -> tuple[list[str], bool]:
+    """Return ``(src_list, use_synthetic)``.
+
+    Full runs (not ``--smoke``, not ``--synthetic``) fail loud if any
+    requested source is missing. Never drop a subset and never fall
+    through to synthetic. Smoke may fall back to synthetic. Explicit
+    ``synthetic=True`` skips the check.
+    """
+    src_list = parse_source_list(sources)
+    if synthetic:
+        return ["synthetic"], True
+    missing = missing_fbank_sources(src_list, manifest_dir)
+    if not missing:
+        return src_list, False
+    if smoke:
+        return ["synthetic"], True
+    avail = sorted(p.name for p in Path(manifest_dir).glob("*_cuts_fbank.jsonl.gz"))
+    raise FileNotFoundError(
+        "missing staged fbank cuts for sources "
+        f"{missing}; requested={src_list} available={avail}. "
+        "Wait for prepare to finish, or pass --synthetic / --smoke."
+    )
+
+
 def compute_T_hop(chunk_size: int, pad_length: int = PAD_LENGTH) -> tuple[int, int]:
     """Return ``(T, hop)`` for icefall streaming Zipformer export.
 
