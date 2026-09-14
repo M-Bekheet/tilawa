@@ -598,7 +598,7 @@ image = (
     .apt_install("ffmpeg", "libsndfile1")
     .pip_install(
         "lhotse",
-        "datasets>=3.0,<4.0",
+        "datasets>=4.0,<5.0",
         "huggingface_hub[hf_transfer]",
         "hf_transfer",
         "soundfile",
@@ -659,12 +659,12 @@ def _empty_stats(source: str) -> dict:
 
 
 def patch_hf_list_feature() -> None:
-    """Alias datasets-4 `List` so datasets 3.x can read newer parquet metadata.
+    """Alias datasets-4 `List` so older `datasets` 3.x can read parquet metadata.
 
     Some QUA mushaf configs (first seen: `ahmed_amer_tvquran`) embed
-    `{"_type": "List", ...}` in Arrow schema metadata. The staging image pins
-    `datasets>=3,<4` to avoid torchcodec; that release only knows `Sequence`.
-    No-op on datasets 4+ where `List` is already registered.
+    `{"_type": "List", ...}` in Arrow schema metadata. No-op on datasets 4+
+    where `List` is already registered. Staging image now pins datasets 4.x
+    (Audio still `decode=False` so torchcodec is not required).
     """
     from datasets.features import features as feat_mod
 
@@ -1318,13 +1318,19 @@ def _prepare_qua(limit: int, force: bool, crash_after: int = 0) -> dict:
         condition = "studio" if "studio" in ctx.lower() else "crowd"
         speaker = str(mushaf.get("name_en") or slug)
         already = int((state.get("split_rows") or {}).get(slug) or 0)
-        print(f"[qua] mushaf slug={slug} already={already}")
+        print(f"[qua] mushaf slug={slug} already={already}", flush=True)
         try:
+            b = load_dataset_builder(HF_QUA, slug)
+            splits = getattr(b.info, "splits", None) or {}
+            n_ex = int(getattr(splits.get("train"), "num_examples", 0) or 0)
+            if n_ex and already >= n_ex:
+                print(f"[qua/{slug}] already complete ({already}/{n_ex}); skip load", flush=True)
+                continue
             ds = skip_hf_stream(
                 _stream_ds(HF_QUA, "train", name=slug), already, f"qua/{slug}"
             )
         except Exception as e:
-            print(f"[qua/{slug}] load_dataset failed: {type(e).__name__}: {e}")
+            print(f"[qua/{slug}] load_dataset failed: {type(e).__name__}: {e}", flush=True)
             _bump_skip(stats, "mushaf_load_error")
             failed = stats.setdefault("failed_slugs", [])
             failed.append(slug)
