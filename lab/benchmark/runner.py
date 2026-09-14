@@ -61,6 +61,7 @@ EXPERIMENT_REGISTRY = {
     "c2c-direct-mixed-streaming-v3": EXPERIMENTS_DIR / "c2c-direct-mixed-streaming-v3" / "run.py",
     "c2c-direct-mixed-streaming-v4": EXPERIMENTS_DIR / "c2c-direct-mixed-streaming-v4" / "run.py",
     "c2c-direct-trie": EXPERIMENTS_DIR / "c2c-direct-trie" / "run.py",
+    "prompter-zipformer": EXPERIMENTS_DIR / "prompter-zipformer" / "run.py",
 }
 
 NEW_MODELS_PATH = EXPERIMENTS_DIR / "new-models" / "run.py"
@@ -389,6 +390,7 @@ def save_results(
     mode: str = "full",
     category: str | None = None,
     chunk_seconds: float = 3.0,
+    corpus: str = "test_corpus",
 ):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -429,6 +431,7 @@ def save_results(
             "mode": mode,
             "category": category,
             "chunk_seconds": effective_chunk,
+            "corpus": corpus,
             "source_file": path.name,
         }
 
@@ -488,9 +491,21 @@ def main():
         default=3.0,
         help="Chunk duration in seconds for streaming mode (default: 3.0)",
     )
+    parser.add_argument(
+        "--corpus",
+        type=str,
+        default="test_corpus",
+        help="Corpus dir under benchmark/ (test_corpus, test_corpus_v2, test_corpus_v3)",
+    )
+    parser.add_argument("--limit", type=int, default=0, help="Only the first N samples (0 = all)")
     args = parser.parse_args()
 
+    global CORPUS_DIR
+    CORPUS_DIR = Path(__file__).parent / args.corpus
+
     samples = load_manifest()
+    if args.limit > 0:
+        samples = samples[: args.limit]
     if args.category:
         samples = [s for s in samples if s["category"] == args.category]
         print(f"Filtered to {len(samples)} samples in category '{args.category}'")
@@ -531,6 +546,7 @@ def main():
         mode=args.mode,
         category=args.category,
         chunk_seconds=args.chunk,
+        corpus=args.corpus,
     )
 
 
