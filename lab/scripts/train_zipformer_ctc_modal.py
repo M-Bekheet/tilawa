@@ -11,6 +11,10 @@ Blank handling: train in icefall order (blank id 0 = ``(ref_id + 1) % 251``);
 permute the CTC Linear rows at export so ONNX logits match the reference
 vocab with ``<blank>`` at 250. See ``scripts/zipformer_ctc_utils.py``.
 
+Architecture (verbatim from the reference ONNX ``metadata_props``):
+``--cnn-module-kernel 31,31,15,15,15,31`` (cache last-dim = kernel//2).
+Export runs on a CPU function (``cpu=8``, no GPU).
+
 Pinned icefall: ``3f848bb6d0acc970c9b294a30ca0a04a7c9c78d1`` (master HEAD at
 implementation). k2 wheel:
 ``k2==1.24.4.dev20250715+cuda12.4.torch2.4.1`` from ``https://k2-fsa.github.io/k2/cuda.html``
@@ -200,6 +204,76 @@ _EXPORT_PERM_NEW = '''    convert_scaled_to_non_scaled(model, inplace=True)
     model = OnnxModel(
 '''
 
+_TRAIN_VALID_STASH_OLD = '''            logging.info(f"Epoch {params.cur_epoch}, validation: {valid_info}")
+'''
+_TRAIN_VALID_STASH_NEW = '''            logging.info(f"Epoch {params.cur_epoch}, validation: {valid_info}")
+            params.last_valid_loss = valid_info["loss"] / valid_info["frames"]
+'''
+
+_TRAIN_EPOCH_T0_OLD = '''    for epoch in range(params.start_epoch, params.num_epochs + 1):
+        scheduler.step_epoch(epoch - 1)
+'''
+_TRAIN_EPOCH_T0_NEW = '''    import time as _epoch_time
+    for epoch in range(params.start_epoch, params.num_epochs + 1):
+        _epoch_t0 = _epoch_time.time()
+        scheduler.step_epoch(epoch - 1)
+'''
+
+_TRAIN_METRICS_OLD = '''        save_checkpoint(
+            params=params,
+            model=model,
+            model_avg=model_avg,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            sampler=train_dl.sampler,
+            scaler=scaler,
+            rank=rank,
+        )
+
+    logging.info("Done!")
+'''
+_TRAIN_METRICS_NEW = '''        save_checkpoint(
+            params=params,
+            model=model,
+            model_avg=model_avg,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            sampler=train_dl.sampler,
+            scaler=scaler,
+            rank=rank,
+        )
+
+        if rank == 0:
+            import json as _json
+            import logging as _logging
+            _train = float(getattr(params, "train_loss", float("nan")))
+            _valid = float(getattr(params, "last_valid_loss", float("nan")))
+            _lr = float(max(scheduler.get_last_lr()))
+            _elapsed = float(_epoch_time.time() - _epoch_t0)
+            _m = Path(params.exp_dir) / "metrics.jsonl"
+            with _m.open("a", encoding="utf-8") as _f:
+                _f.write(
+                    _json.dumps(
+                        {
+                            "epoch": int(params.cur_epoch),
+                            "train_loss": _train,
+                            "valid_loss": _valid,
+                            "lr": _lr,
+                            "elapsed_s": _elapsed,
+                        }
+                    )
+                    + "\\n"
+                )
+            _logging.info("wrote epoch metrics %s", _m)
+            try:
+                import modal as _modal
+                _modal.Volume.from_name("zipformer-ctc-training").commit()
+            except Exception as _e:
+                _logging.warning("vol.commit after epoch failed: %s", _e)
+
+    logging.info("Done!")
+'''
+
 
 def _patch_file(path: Path, old: str, new: str, label: str) -> None:
     text = path.read_text(encoding="utf-8")
@@ -212,8 +286,10 @@ def _patch_file(path: Path, old: str, new: str, label: str) -> None:
             f"icefall recipe may have changed (SHA {ICEFALL_SHA})"
         )
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
-    assert old not in path.read_text(encoding="utf-8")
-    assert new.strip() in path.read_text(encoding="utf-8")
+    written = path.read_text(encoding="utf-8")
+    if old not in new:
+        assert old not in written, f"patch {label!r} left original text in {path}"
+    assert new.strip() in written
     print(f"patched {label} in {path}")
 
 
@@ -227,14 +303,41 @@ def _prepare_recipe(work: Path, smoke: bool) -> Path:
     shutil.copytree(src, dst)
     shutil.copy("/app/zipformer_asr_datamodule.py", dst / "asr_datamodule.py")
     _patch_file(dst / "train.py", _TRAIN_SP_OLD, _TRAIN_SP_NEW, "train.py sp/vocab")
+    _patch_file(
+        dst / "train.py",
+        _TRAIN_VALID_STASH_OLD,
+        _TRAIN_VALID_STASH_NEW,
+        "train.py last_valid_loss",
+    )
+    _patch_file(
+        dst / "train.py",
+        _TRAIN_EPOCH_T0_OLD,
+        _TRAIN_EPOCH_T0_NEW,
+        "train.py epoch wall clock",
+    )
+    _patch_file(
+        dst / "train.py",
+        _TRAIN_METRICS_OLD,
+        _TRAIN_METRICS_NEW,
+        "train.py per-epoch metrics+commit",
+    )
     train_txt = (dst / "train.py").read_text(encoding="utf-8")
     if smoke:
+        if '"log_interval": 50,' not in train_txt:
+            raise RuntimeError(
+                "smoke log_interval patch: original '\"log_interval\": 50,' not found"
+            )
         train_txt = train_txt.replace('"log_interval": 50,', '"log_interval": 1,')
         train_txt = train_txt.replace(
             '"valid_interval": 3000,  # For the 100h subset, use 800',
             '"valid_interval": 5,',
         )
         (dst / "train.py").write_text(train_txt, encoding="utf-8")
+        patched = (dst / "train.py").read_text(encoding="utf-8")
+        assert '"log_interval": 1,' in patched, "smoke log_interval patch did not apply"
+        assert '"log_interval": 50,' not in patched
+        assert '"valid_interval": 5,' in patched
+        print("asserted smoke log_interval=1 valid_interval=5")
     # export-onnx-streaming-ctc.py already uses token_table["<blk>"] at this SHA.
     _patch_file(
         dst / "export-onnx-streaming-ctc.py",
@@ -348,36 +451,23 @@ def _write_tokens() -> Path:
 
 
 def _parse_metrics(exp_dir: Path) -> list[dict]:
+    """Read per-epoch ``metrics.jsonl`` written by the train.py patch. Do not overwrite."""
+    import json
+
+    path = exp_dir / "metrics.jsonl"
     rows: list[dict] = []
-    tb = exp_dir / "tensorboard"
-    if tb.exists():
-        try:
-            from tensorboard.backend.event_accumulator import EventAccumulator
-
-            ea = EventAccumulator(str(tb))
-            ea.Reload()
-            tags = ea.Tags().get("scalars", [])
-            by_step: dict[int, dict] = {}
-            for tag in tags:
-                for ev in ea.Scalars(tag):
-                    rec = by_step.setdefault(int(ev.step), {"step": int(ev.step)})
-                    rec[tag] = float(ev.value)
-            rows = [by_step[s] for s in sorted(by_step)]
-        except Exception as exc:
-            print(f"tensorboard parse failed: {exc}")
-    log_dir = exp_dir / "log"
-    if log_dir.exists() and not rows:
-        for log in sorted(log_dir.glob("log-train*")):
-            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-                if "loss" in line.lower():
-                    rows.append({"raw": line[-400:]})
-    out = exp_dir / "metrics.jsonl"
-    with out.open("w", encoding="utf-8") as f:
-        import json
-
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-    print(f"wrote {len(rows)} metric rows -> {out}")
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                rows.append({"raw": line[-400:]})
+        print(f"read {len(rows)} epoch metric rows <- {path}")
+        return rows
+    print(f"no {path}; train.py patch may not have run")
     return rows
 
 
@@ -391,6 +481,63 @@ def _latest_epoch(exp_dir: Path) -> int:
     if not epochs:
         raise FileNotFoundError(f"no epoch-*.pt in {exp_dir}")
     return max(epochs)
+
+
+def _write_k2_cpu_stub() -> Path:
+    """CUDA k2 needs libcuda.so.1. Export runs on CPU, so shadow ``k2`` for import
+    + ``SymbolTable``; ``convert_scaled_to_non_scaled`` removes Swoosh k2 ops
+    before the ONNX trace.
+    """
+    root = Path("/tmp/k2_cpu_stub")
+    pkg = root / "k2"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text(
+        """from pathlib import Path
+
+class Fsa:  # noqa: D401
+    pass
+
+class RaggedTensor:
+    pass
+
+class DeterminizeWeightPushingType:
+    pass
+
+class SymbolTable(dict):
+    @property
+    def symbols(self):
+        return list(self.keys())
+
+    @classmethod
+    def from_file(cls, path):
+        table = cls()
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            sym, idx = line.rsplit(" ", 1)
+            table[sym] = int(idx)
+        return table
+
+def __getattr__(name):
+    return type(name, (), {})
+""",
+        encoding="utf-8",
+    )
+    (pkg / "version.py").write_text(
+        "\n".join(
+            [
+                '__version__ = "cpu-stub"',
+                '__build_type__ = "Release"',
+                '__git_sha1__ = "stub"',
+                "def __getattr__(name):",
+                '    return "stub"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return root
 
 
 def _run_export_impl(
@@ -412,8 +559,8 @@ def _run_export_impl(
         ARCH_FLAGS,
         compute_T_hop,
         diff_io_json,
+        io_inputs_match,
         io_json_from_session,
-        io_names_match,
         load_json,
     )
 
@@ -456,8 +603,10 @@ def _run_export_impl(
         *ARCH_FLAGS,
     ]
     env = os.environ.copy()
-    env["PYTHONPATH"] = "/opt/icefall:/app:" + env.get("PYTHONPATH", "")
+    stub = _write_k2_cpu_stub()
+    env["PYTHONPATH"] = f"{stub}:/opt/icefall:/app:" + env.get("PYTHONPATH", "")
     print("export cmd:", " ".join(cmd))
+    print("k2 cpu stub on PYTHONPATH (no libcuda on export workers)")
     subprocess.run(cmd, cwd=str(recipe), env=env, check=True)
 
     produced = exp_dir / (
@@ -502,8 +651,10 @@ def _run_export_impl(
             print(" ", d)
     else:
         print("  (names+dims match)")
-    if not io_names_match(io, ref):
-        raise RuntimeError(f"ONNX input names differ from reference: {diffs}")
+    if not io_inputs_match(io, ref):
+        raise RuntimeError(
+            f"ONNX input names/dims differ from reference: {diffs}"
+        )
 
     int8_path = export_dir / "model.int8.onnx"
     quantize_dynamic(
@@ -528,6 +679,7 @@ def _run_export_impl(
         param_count = int(sum(v.numel() for v in sd.values() if hasattr(v, "numel")))
     except Exception as exc:
         print(f"param count failed: {exc}")
+    print(f"param_count={param_count}")
 
     meta = {
         "run": run_name,
@@ -688,7 +840,6 @@ def train(
 
 @app.function(
     image=image,
-    gpu=_GPU_SPEC,
     cpu=8,
     memory=32768,
     timeout=2 * 3600,
@@ -749,12 +900,24 @@ def main(
         smoke=smoke,
         synthetic=synthetic,
         limit_cuts=800 if smoke else 0,
-        do_export=bool(smoke),
+        do_export=False,
         chunk_size=chunk_size,
         left_context_frames=left_context_frames,
         avg=avg,
     )
     print("train result:", result)
+    if smoke:
+        export_avg = 1
+        export_epoch = 1
+        meta = export_onnx.remote(
+            run_name=run_name,
+            epoch=export_epoch,
+            avg=export_avg,
+            chunk_size=chunk_size,
+            left_context_frames=left_context_frames,
+        )
+        print("export metadata:", meta)
+        result["export"] = meta
     print("\nFull (detached) training command (do NOT run from this smoke job):")
     print(" ", full_cmd)
     print("Then export:")

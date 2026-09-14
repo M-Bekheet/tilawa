@@ -14,9 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from zipformer_ctc_utils import (  # noqa: E402
+    ARCH_FLAGS,
     VOCAB_SIZE,
     compute_T_hop,
     icefall_to_ref_ids,
+    io_inputs_match,
     io_json_from_session,
     permute_ctc_head,
     ref_to_icefall_ids,
@@ -145,3 +147,13 @@ def test_io_json_from_session_matches_reference_schema():
         assert a["dtype"] == b["dtype"]
     assert built["outputs"][0]["dtype"] == "float32"
     assert built["outputs"][-1]["dtype"] == "int64"
+    assert io_inputs_match(built, ref)
+    broken = json.loads(json.dumps(built))
+    broken["inputs"][0]["dims"] = [1, 60, 80]
+    assert not io_inputs_match(broken, ref)
+
+
+def test_arch_flags_reference_cnn_kernels():
+    flags = list(ARCH_FLAGS)
+    i = flags.index("--cnn-module-kernel")
+    assert flags[i + 1] == "31,31,15,15,15,31"

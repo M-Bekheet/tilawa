@@ -22,6 +22,10 @@ icefall ``export-onnx-streaming-ctc.py``::
     T = hop + pad_length     # encoder_embed consumes T frames per chunk
 
 ``chunk_size=24`` → hop=48, T=61, matching the reference ``zipformer-io.json``.
+
+CNN kernels are the reference ONNX ``metadata_props`` (and icefall Zipformer
+default): ``31,31,15,15,15,31``. Causal conv cache last-dim is ``kernel//2``
+(15,15,7,7,7,15), which is what ``zipformer-io.json`` stores.
 """
 
 from __future__ import annotations
@@ -57,7 +61,7 @@ ARCH_FLAGS = [
     "--encoder-unmasked-dim",
     "192,192,256,256,256,192",
     "--cnn-module-kernel",
-    "15,15,15,7,7,7",
+    "31,31,15,15,15,31",
     "--downsampling-factor",
     "1,2,4,8,4,2",
     "--num-heads",
@@ -245,6 +249,20 @@ def io_names_match(ours: dict, ref: dict) -> bool:
     our_names = [i["name"] for i in ours.get("inputs", [])]
     ref_names = [i["name"] for i in ref.get("inputs", [])]
     return our_names == ref_names
+
+
+def io_inputs_match(ours: dict, ref: dict) -> bool:
+    """True iff input names and dims match the reference, in order."""
+    our = ours.get("inputs", [])
+    theirs = ref.get("inputs", [])
+    if len(our) != len(theirs):
+        return False
+    for a, b in zip(our, theirs):
+        if a.get("name") != b.get("name"):
+            return False
+        if list(a.get("dims") or []) != list(b.get("dims") or []):
+            return False
+    return True
 
 
 class IcefallPhonemeEncoder:
