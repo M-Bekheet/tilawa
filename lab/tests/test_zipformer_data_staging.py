@@ -32,6 +32,7 @@ def test_parse_qul_and_tlog_filenames():
     assert prep.parse_surah_ayah_filename("002_255.wav") == (2, 255)
     assert prep.parse_surah_ayah_filename("18_10_abc123.wav") == (18, 10)
     assert prep.parse_surah_ayah_filename("audio/tlog_holdout/3_4_xyz.flac") == (3, 4)
+    assert prep.parse_surah_ayah_filename("hf://tarteel-ai/tlog/1_7_99.wav?download=1") == (1, 7)
     assert prep.parse_surah_ayah_filename("not-a-verse.wav") is None
     assert prep.parse_surah_ayah_filename("") is None
 
@@ -97,6 +98,10 @@ def test_qlab_reciter_and_flat_name():
 
 def test_parse_sources_csv():
     assert prep.parse_sources("everyayah,retasy") == ["everyayah", "retasy"]
+    assert prep.parse_sources("qurantts") == ["qurantts"]
+    assert "qurantts" not in prep.DEFAULT_SOURCES
+    assert prep.parse_sources("") == list(prep.DEFAULT_SOURCES)
+    assert prep.DEFAULT_SOURCES == ("everyayah", "qua", "iqra", "retasy", "tlog")
     with pytest.raises(ValueError):
         prep.parse_sources("nope")
 

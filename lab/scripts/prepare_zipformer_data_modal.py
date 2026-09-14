@@ -5,6 +5,10 @@ Writes 16 kHz FLAC + phoneme-string supervisions to volume `zipformer-ctc-traini
 fbank features land at `/vol/fbank/<source>/` and
 `/vol/manifests/<source>_cuts_fbank.jsonl.gz`.
 
+Default `--sources` is the shipped mix (everyayah, qua, iqra, retasy, tlog).
+QuranTTS is NPL-1.2 and is excluded from that mix; pass `--sources qurantts`
+explicitly only for an internal ablation.
+
 Usage:
   modal run --detach scripts/prepare_zipformer_data_modal.py \\
       --sources everyayah,retasy --limit 20 --skip-fbank
@@ -13,6 +17,9 @@ Usage:
 
   modal run --detach scripts/prepare_zipformer_data_modal.py \\
       --sources everyayah --limit 20
+
+  modal run --detach scripts/prepare_zipformer_data_modal.py \\
+      --sources qurantts --limit 20 --skip-fbank   # NPL-1.2 ablation, not shipped
 """
 
 from __future__ import annotations
@@ -30,6 +37,9 @@ import modal
 # ---------------------------------------------------------------------------
 
 ALL_SOURCES = ("everyayah", "qua", "qurantts", "iqra", "retasy", "tlog")
+# QuranTTS is NPL-1.2 — keep the prepare function for opt-in ablation, but it
+# is not part of the shipped training mix.
+DEFAULT_SOURCES = ("everyayah", "qua", "iqra", "retasy", "tlog")
 BAD_RETASY_LABELS = {"in_correct", "not_related_quran", "not_match_aya"}
 MIN_DURATION_S = 1.0
 LONG_DURATION_S = 20.0
@@ -45,6 +55,10 @@ HF_TLOG = "tarteel-ai/tlog"
 
 _SA_NAME_RE = re.compile(
     r"^(\d+)_(\d+)(?:_[^.]+)?\.(?:wav|flac|mp3)$",
+    re.IGNORECASE,
+)
+_SA_SEARCH_RE = re.compile(
+    r"(?<![0-9])(\d{1,3})_(\d{1,3})(?:_[^/]+)?\.(?:wav|flac|mp3)",
     re.IGNORECASE,
 )
 _SURA_AYAH_KEYS = (
@@ -84,8 +98,11 @@ def parse_surah_ayah_filename(name: str) -> tuple[int, int] | None:
     """Parse `S_A.wav` / `S_A_id.wav` (optionally with a directory prefix)."""
     if not name:
         return None
-    base = Path(str(name)).name
+    text = str(name).replace("\\", "/")
+    base = Path(text).name.split("?")[0]
     m = _SA_NAME_RE.match(base)
+    if m is None:
+        m = _SA_SEARCH_RE.search(base) or _SA_SEARCH_RE.search(text)
     if m is None:
         return None
     return int(m.group(1)), int(m.group(2))
@@ -158,6 +175,8 @@ def qlab_flat_filename(source: str, file_name: str) -> str:
 
 def parse_sources(csv: str) -> list[str]:
     parts = [p.strip() for p in csv.split(",") if p.strip()]
+    if not parts:
+        return list(DEFAULT_SOURCES)
     unknown = [p for p in parts if p not in ALL_SOURCES]
     if unknown:
         raise ValueError(f"unknown sources {unknown}; expected subset of {ALL_SOURCES}")
@@ -326,11 +345,21 @@ def _stream_ds(repo: str, split: str, name: str | None = None, audio_col: str = 
     """Streaming HF split with Audio(decode=False) so we never need torchcodec."""
     from datasets import Audio, load_dataset
 
-    ds = (
-        load_dataset(repo, name, split=split, streaming=True)
-        if name
-        else load_dataset(repo, split=split, streaming=True)
-    )
+    # `split="all"` is a reserved keyword in datasets>=3 and cannot be passed
+    # as the split= argument even when the config advertises a split named all.
+    if split == "all":
+        dd = (
+            load_dataset(repo, name, streaming=True)
+            if name
+            else load_dataset(repo, streaming=True)
+        )
+        ds = dd["all"] if hasattr(dd, "keys") and "all" in dd else dd
+    else:
+        ds = (
+            load_dataset(repo, name, split=split, streaming=True)
+            if name
+            else load_dataset(repo, split=split, streaming=True)
+        )
     feats = getattr(ds, "features", None) or {}
     if audio_col in feats:
         ds = ds.cast_column(audio_col, Audio(sampling_rate=16000, decode=False))
@@ -683,7 +712,7 @@ def _prepare_qua(limit: int, force: bool) -> dict:
 
     catalog_builder = load_dataset_builder(HF_QUA, "mushafs")
     _print_features("qua/mushafs", HF_QUA, catalog_builder.info.features, catalog_builder.info.splits)
-    catalog = load_dataset(HF_QUA, "mushafs", split="all")
+    catalog = _stream_ds(HF_QUA, "all", name="mushafs")
     kept = []
     for row in catalog:
         slug = str(row.get("slug") or "")
@@ -700,6 +729,12 @@ def _prepare_qua(limit: int, force: bool) -> dict:
             continue
         kept.append(row)
     print(f"[qua] kept {len(kept)} hafs non-tarteel mushafs")
+    if kept:
+        sample = kept[0]
+        print(
+            f"[qua] first kept slug={sample.get('slug')} riwayah={sample.get('riwayah')} "
+            f"recording_context={sample.get('recording_context')!r} reciter={sample.get('name_en')}"
+        )
 
     printed_ayah_schema = False
     idx = 0
@@ -864,7 +899,9 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
     for idx, row in enumerate(ds):
         if limit and stats["clips"] >= limit:
             break
-        hit = _match_ayah(db, row.get("sentence") or row.get("tashkeel_sentence") or "")
+        hit = _match_ayah(db, row.get("tashkeel_sentence") or "") or _match_ayah(
+            db, row.get("sentence") or ""
+        )
         if hit is None:
             _bump_skip(stats, "low_match")
             continue
@@ -985,9 +1022,14 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
         path = ""
         if isinstance(audio, dict):
             path = str(audio.get("path") or "")
-        path = path or str(row.get("label") or "")
+        for cand in (path, row.get("file_name"), row.get("id"), row.get("label")):
+            if cand and parse_surah_ayah_filename(str(cand)):
+                path = str(cand)
+                break
         parsed = parse_surah_ayah_filename(path)
         if parsed is None:
+            if int((stats.get("skipped") or {}).get("unmapped") or 0) < 3:
+                print(f"[tlog] unmapped path={path!r} audio_keys={list(audio) if isinstance(audio, dict) else type(audio)}")
             _bump_skip(stats, "unmapped")
             continue
         surah, ayah = parsed
@@ -1137,7 +1179,7 @@ PREPARE_FNS = {
 
 @app.local_entrypoint()
 def main(
-    sources: str = "everyayah,qua,qurantts,iqra,retasy,tlog",
+    sources: str = "everyayah,qua,iqra,retasy,tlog",
     limit: int = 0,
     force: bool = False,
     skip_fbank: bool = False,
