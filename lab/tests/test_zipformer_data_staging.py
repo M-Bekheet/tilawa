@@ -122,3 +122,106 @@ def test_pick_surah_ayah_column_aliases():
     assert prep.pick_surah_ayah({"chapter": 1, "verse": 7}) == (1, 7)
     assert prep.pick_surah_ayah({"surah": 114, "ayah": 6}) == (114, 6)
     assert prep.pick_surah_ayah({"text": "nope"}) is None
+
+
+def test_everyayah_splits_never_test():
+    assert prep.EVERYAYAH_SPLITS == ("train", "validation")
+    assert "test" not in prep.EVERYAYAH_SPLITS
+
+
+def test_qlab_exclusion_set_from_fake_manifest():
+    samples = [
+        {"source": "tlog_holdout", "file": "tlog_holdout__1_2_abc.wav"},
+        {"source": "tlog_holdout", "id": "tlog_holdout__3_4_xyz"},
+        {"source": "tlog_holdout", "file": "18_10_deadbeef.wav"},
+        {"source": "everyayah_heldout", "file": "everyayah_heldout__test-00009-of-00013_332.wav"},
+        {"source": "qul_alnufais", "file": "qul_alnufais__2_255.wav"},
+    ]
+    excl = prep.qlab_exclusions_from_samples(samples)
+    assert excl["tlog_ids"] == {"1_2_abc", "3_4_xyz", "18_10_deadbeef"}
+    assert prep.tlog_holdout_key("audio/11_90_2170378964.wav") == "11_90_2170378964"
+    assert prep.tlog_holdout_key("tlog_holdout__11_90_2170378964.wav") == "11_90_2170378964"
+    assert prep.is_nufais_holdout(slug="yasser_al_nufais_qul") is True
+    assert prep.is_nufais_holdout(name_en="Mishary Alnufais") is True
+    assert prep.is_nufais_holdout(slug="maher_al_muaiqly_qdc") is False
+
+
+def test_qlab_exclusion_load_tmp_manifest(tmp_path):
+    payload = {
+        "samples": [
+            {"source": "tlog_holdout", "file": "tlog_holdout__5_6_id1.wav"},
+            {"source": "qul_alnufais", "file": "qul_alnufais__1_1.wav"},
+        ]
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+    excl = prep.load_qlab_exclusions(path)
+    assert excl["tlog_ids"] == {"5_6_id1"}
+
+
+def test_existing_flac_skip_path(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    audio_root = tmp_path / "audio"
+    clip_id = prep.make_clip_id("iqra", 0, 1, 1)
+    path = prep.flac_clip_path("iqra", clip_id, audio_root=audio_root)
+    path.parent.mkdir(parents=True)
+    wav = np.zeros(16000, dtype=np.float32)
+    wav[100:200] = 0.05
+    sf.write(str(path), wav, 16000, format="FLAC")
+    dur = prep.existing_flac_duration(path)
+    assert dur is not None
+    assert abs(dur - 1.0) < 0.05
+
+    empty = tmp_path / "empty.flac"
+    empty.write_bytes(b"")
+    assert prep.existing_flac_duration(empty) is None
+    assert prep.existing_flac_duration(tmp_path / "missing.flac") is None
+
+    stats = prep._empty_stats("iqra")
+    decoded, reused_dur = prep._audio_for_clip(
+        source="iqra",
+        idx=0,
+        surah=1,
+        ayah=1,
+        audio_obj={"array": np.ones(8000, dtype=np.float32), "sampling_rate": 16000},
+        force=False,
+        stats=stats,
+        audio_root=audio_root,
+    )
+    assert decoded is None
+    assert abs(reused_dur - 1.0) < 0.05
+    assert stats.get("skipped", {}).get("audio_error") is None
+
+
+def test_iqra_keep_flags_threshold():
+    flags = prep.iqra_row_keep_flags(
+        {
+            "sentence_match": 0.4,
+            "tashkeel_match": 0.7,
+            "sentence_search": 0.96,
+            "tashkeel_search": 0.5,
+            "sentence_hamza": 0.2,
+            "tashkeel_hamza": 0.94,
+        }
+    )
+    assert flags["baseline"] is False
+    assert flags["search"] is True
+    assert flags["hamza"] is False
+    assert flags["baseline_score"] == 0.7
+    assert flags["search_score"] == 0.96
+
+
+def test_skip_hf_stream_uses_skip_when_present():
+    class _DS:
+        def skip(self, n):
+            self.n = n
+            return self
+
+    ds = _DS()
+    out = prep.skip_hf_stream(ds, 12, "tlog")
+    assert out is ds
+    assert ds.n == 12
+    assert prep.skip_hf_stream(ds, 0) is ds
+    assert prep.skip_hf_stream([1, 2, 3], 5) == [1, 2, 3]

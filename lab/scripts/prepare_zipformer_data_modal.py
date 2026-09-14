@@ -9,6 +9,13 @@ Default `--sources` is the shipped mix (everyayah, qua, iqra, retasy, tlog).
 QuranTTS is NPL-1.2 and is excluded from that mix; pass `--sources qurantts`
 explicitly only for an internal ablation.
 
+EveryAyah uses `greentechapps/everyayah_curated_1s_20s` **train + validation**
+only. The curated **test** split is the leak into q-lab `everyayah_heldout`
+(wav names like `test-00009-of-00013_332.wav`) and is never ingested.
+
+Tlog clips whose filename stem is in q-lab `tlog_holdout`, and QUA catalog
+rows whose slug/name contains `nufais`, are dropped as held-out leaks.
+
 Usage:
   modal run --detach scripts/prepare_zipformer_data_modal.py \\
       --sources everyayah,retasy --limit 20 --skip-fbank
@@ -40,6 +47,9 @@ ALL_SOURCES = ("everyayah", "qua", "qurantts", "iqra", "retasy", "tlog")
 # QuranTTS is NPL-1.2 — keep the prepare function for opt-in ablation, but it
 # is not part of the shipped training mix.
 DEFAULT_SOURCES = ("everyayah", "qua", "iqra", "retasy", "tlog")
+# q-lab everyayah_heldout wavs are curated *test* shards (test-000NN-of-00013_*).
+# Ingest train + validation only — never test — so the held-out set stays unseen.
+EVERYAYAH_SPLITS = ("train", "validation")
 BAD_RETASY_LABELS = {"in_correct", "not_related_quran", "not_match_aya"}
 MIN_DURATION_S = 1.0
 LONG_DURATION_S = 20.0
@@ -173,6 +183,112 @@ def qlab_flat_filename(source: str, file_name: str) -> str:
     return f"{source}__{Path(file_name).name}"
 
 
+def tlog_holdout_key(name: str) -> str:
+    """Stem used to match tlog training files against q-lab `tlog_holdout`."""
+    base = Path(str(name).replace("\\", "/")).name.split("?")[0]
+    if base.startswith("tlog_holdout__"):
+        base = base[len("tlog_holdout__") :]
+    return Path(base).stem
+
+
+def is_nufais_holdout(**fields: object) -> bool:
+    blob = " ".join(str(v).lower() for v in fields.values() if v not in (None, ""))
+    return "nufais" in blob
+
+
+def qlab_exclusions_from_samples(samples: list[dict]) -> dict:
+    """Build held-out exclusion sets from a q-lab-style samples list."""
+    tlog_ids: set[str] = set()
+    for s in samples:
+        if (s.get("source") or "") != "tlog_holdout":
+            continue
+        key = tlog_holdout_key(s.get("file") or s.get("id") or "")
+        if key:
+            tlog_ids.add(key)
+    return {"tlog_ids": tlog_ids}
+
+
+def qlab_manifest_path() -> Path:
+    here = Path(__file__).resolve().parent.parent
+    for p in (
+        Path("/app/benchmark/test_corpus_qlab/manifest.json"),
+        here / "benchmark" / "test_corpus_qlab" / "manifest.json",
+    ):
+        if p.is_file():
+            return p
+    raise FileNotFoundError("q-lab manifest.json not found (ship via add_local_file)")
+
+
+def load_qlab_exclusions(path: str | Path | None = None) -> dict:
+    manifest = Path(path) if path is not None else qlab_manifest_path()
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    samples = data.get("samples") if isinstance(data, dict) else data
+    excl = qlab_exclusions_from_samples(list(samples or []))
+    print(f"[qlab] excluding {len(excl['tlog_ids'])} tlog_holdout ids from {manifest}")
+    return excl
+
+
+def make_clip_id(source: str, idx: int, surah: int, ayah: int, split: str | None = None) -> str:
+    if split:
+        return f"{source}_{split}_{idx:08d}_{surah}_{ayah}"
+    return f"{source}_{idx:08d}_{surah}_{ayah}"
+
+
+def flac_clip_path(source: str, clip_id: str, audio_root: Path | str | None = None) -> Path:
+    root = Path(audio_root) if audio_root is not None else Path("/vol/audio")
+    return root / source / f"{clip_id}.flac"
+
+
+def existing_flac_duration(path: Path | str) -> float | None:
+    """Duration in seconds if `path` is a non-empty FLAC; else None."""
+    path = Path(path)
+    if not path.is_file() or path.stat().st_size <= 0:
+        return None
+    import soundfile as sf
+
+    with sf.SoundFile(str(path)) as f:
+        sr = int(f.samplerate or 16000)
+        if sr <= 0:
+            return None
+        return float(len(f) / sr)
+
+
+def progress_path(source: str, manifest_root: Path | str | None = None) -> Path:
+    root = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
+    return root / f"{source}_progress.json"
+
+
+def load_progress(source: str, manifest_root: Path | str | None = None) -> dict:
+    p = progress_path(source, manifest_root)
+    if not p.is_file():
+        return {"rows_seen": 0, "split_rows": {}}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"rows_seen": 0, "split_rows": {}}
+    data.setdefault("rows_seen", 0)
+    data.setdefault("split_rows", {})
+    return data
+
+
+def save_progress(source: str, payload: dict, manifest_root: Path | str | None = None) -> None:
+    p = progress_path(source, manifest_root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def skip_hf_stream(ds, n: int, label: str = ""):
+    """Advance a streaming HF dataset by n rows when `.skip` exists."""
+    if n <= 0:
+        return ds
+    skip = getattr(ds, "skip", None)
+    if callable(skip):
+        print(f"[{label or 'stream'}] checkpoint skip({n})")
+        return skip(n)
+    print(f"[{label or 'stream'}] no .skip(); scanning from 0, reusing existing FLACs")
+    return ds
+
+
 def parse_sources(csv: str) -> list[str]:
     parts = [p.strip() for p in csv.split(",") if p.strip()]
     if not parts:
@@ -283,6 +399,10 @@ image = (
     .add_local_file(str(_PROMPTER_QURAN), remote_path="/app/data/prompter/quran.json")
     .add_local_file(str(_QURAN_JSON), remote_path="/app/data/quran.json")
     .add_local_file(str(_TOKENS_TXT), remote_path="/app/tokens.txt")
+    .add_local_file(
+        str(PROJECT_ROOT / "benchmark" / "test_corpus_qlab" / "manifest.json"),
+        remote_path="/app/benchmark/test_corpus_qlab/manifest.json",
+    )
 )
 
 _FN_KW = dict(
@@ -311,6 +431,7 @@ def _empty_stats(source: str) -> dict:
         "features": None,
         "hf_repo": None,
         "split": None,
+        "reused_flac": 0,
     }
 
 
@@ -464,6 +585,47 @@ def _match_ayah(db, text: str):
     return hit
 
 
+def iqra_match_scores(db, sentence: str, tashkeel: str) -> dict:
+    """Compare match_verse / search / hamza-stripped scores for one Iqra row."""
+    from shared.normalizer import normalize_arabic
+
+    out: dict[str, float] = {}
+    for label, raw in (("sentence", sentence or ""), ("tashkeel", tashkeel or "")):
+        raw = str(raw)
+        if not raw.strip():
+            out[f"{label}_match"] = 0.0
+            out[f"{label}_search"] = 0.0
+            out[f"{label}_hamza"] = 0.0
+            continue
+        hit = db.match_verse(raw)
+        out[f"{label}_match"] = float(hit["score"]) if hit else 0.0
+        hits = db.search(raw, top_k=1)
+        out[f"{label}_search"] = float(hits[0]["score"]) if hits else 0.0
+        hit_h = db.match_verse(normalize_arabic(raw, strip_hamza=True))
+        out[f"{label}_hamza"] = float(hit_h["score"]) if hit_h else 0.0
+    return out
+
+
+def iqra_row_keep_flags(scores: dict, threshold: float = MATCH_MIN_SCORE) -> dict:
+    """Keep-rate flags for one Iqra score dict from `iqra_match_scores`."""
+    baseline = max(float(scores.get("sentence_match") or 0), float(scores.get("tashkeel_match") or 0))
+    search = max(float(scores.get("sentence_search") or 0), float(scores.get("tashkeel_search") or 0))
+    hamza = max(float(scores.get("sentence_hamza") or 0), float(scores.get("tashkeel_hamza") or 0))
+    return {
+        "baseline": baseline >= threshold,
+        "search": search >= threshold,
+        "hamza": hamza >= threshold,
+        "baseline_score": baseline,
+        "search_score": search,
+        "hamza_score": hamza,
+    }
+
+
+def match_iqra_row(db, sentence: str, tashkeel: str):
+    """Primary: match_verse on tashkeel then sentence. Keep ≥ 0.95 unless diag says otherwise."""
+    return _match_ayah(db, tashkeel or "") or _match_ayah(db, sentence or "")
+
+
 def _phoneme_text(corpus, tokenizer, OOVError, surah: int, ayah: int, ayah_end: int | None):
     end = ayah_end if ayah_end is not None else ayah
     phonemes = corpus.span_phonemes(surah, ayah, end)
@@ -551,6 +713,8 @@ def _ingest_clip(
     recordings,
     supervisions,
     extra_custom: dict | None = None,
+    split: str | None = None,
+    audio_root: Path | str | None = None,
 ) -> bool:
     decision = duration_decision(duration)
     if decision.startswith("skip_"):
@@ -565,9 +729,15 @@ def _ingest_clip(
     except ValueError:
         _bump_skip(stats, "missing_ayah")
         return False
-    clip_id = f"{source}_{idx:08d}_{surah}_{ayah}"
-    flac_path = Path("/vol/audio") / source / f"{clip_id}.flac"
-    _write_flac(flac_path, wav)
+    clip_id = make_clip_id(source, idx, surah, ayah, split=split)
+    flac_path = flac_clip_path(source, clip_id, audio_root=audio_root)
+    if wav is not None:
+        _write_flac(flac_path, wav)
+    elif existing_flac_duration(flac_path) is None:
+        _bump_skip(stats, "missing_flac")
+        return False
+    else:
+        stats["reused_flac"] = int(stats.get("reused_flac") or 0) + 1
     custom = {
         "surah": surah,
         "ayah": ayah,
@@ -593,6 +763,32 @@ def _ingest_clip(
     return True
 
 
+def _audio_for_clip(
+    *,
+    source: str,
+    idx: int,
+    surah: int,
+    ayah: int,
+    audio_obj,
+    force: bool,
+    stats: dict,
+    split: str | None = None,
+    audio_root: Path | str | None = None,
+):
+    """Decode audio, or reuse an existing non-empty FLAC (crash resume)."""
+    clip_id = make_clip_id(source, idx, surah, ayah, split=split)
+    flac_path = flac_clip_path(source, clip_id, audio_root=audio_root)
+    if not force:
+        dur = existing_flac_duration(flac_path)
+        if dur is not None:
+            return None, dur
+    try:
+        return _audio_to_16k_mono(audio_obj)
+    except Exception:
+        _bump_skip(stats, "audio_error")
+        return None, None
+
+
 # ---------------------------------------------------------------------------
 # Per-source prepare functions
 # ---------------------------------------------------------------------------
@@ -602,6 +798,10 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
     from datasets import load_dataset, load_dataset_builder
 
     stats = _empty_stats("everyayah")
+    print(
+        f"[everyayah] splits={list(EVERYAYAH_SPLITS)} "
+        "(never test: q-lab everyayah_heldout is curated test shards)"
+    )
     skipped = _maybe_skip_existing("everyayah", force, stats)
     if skipped is not None:
         return skipped
@@ -620,58 +820,96 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
 
     if curated_ok:
         stats["hf_repo"] = HF_EVERYAYAH_CURATED
-        stats["split"] = "train"
+        stats["split"] = "+".join(EVERYAYAH_SPLITS)
         stats["features"] = str(feats)
-        ds = _stream_ds(HF_EVERYAYAH_CURATED, "train")
-        for idx, row in enumerate(ds):
+        progress = {} if force else load_progress("everyayah")
+        split_rows = dict(progress.get("split_rows") or {})
+        for split in EVERYAYAH_SPLITS:
             if limit and stats["clips"] >= limit:
                 break
-            sa = pick_surah_ayah(row)
-            if sa is None:
-                _bump_skip(stats, "no_surah_ayah")
-                continue
-            surah, ayah = sa
-            try:
-                wav, dur = _audio_to_16k_mono(row.get("audio"))
-            except Exception:
-                _bump_skip(stats, "audio_error")
-                continue
-            _ingest_clip(
-                source="everyayah",
-                idx=idx,
-                wav=wav,
-                duration=dur,
-                surah=surah,
-                ayah=ayah,
-                ayah_end=ayah,
-                speaker=str(row.get("qari") or row.get("reciter") or "everyayah"),
-                condition="studio",
-                stats=stats,
-                corpus=corpus,
-                tokenizer=tokenizer,
-                OOVError=OOVError,
-                recordings=recordings,
-                supervisions=supervisions,
-            )
-            _commit(25, stats["clips"])
+            ds = _stream_ds(HF_EVERYAYAH_CURATED, split)
+            already = 0 if force else int(split_rows.get(split) or 0)
+            ds = skip_hf_stream(ds, already, f"everyayah/{split}")
+            idx = already
+            for row in ds:
+                if limit and stats["clips"] >= limit:
+                    break
+                sa = pick_surah_ayah(row)
+                if sa is None:
+                    _bump_skip(stats, "no_surah_ayah")
+                    idx += 1
+                    split_rows[split] = idx
+                    save_progress("everyayah", {"split_rows": split_rows, "rows_seen": idx})
+                    continue
+                surah, ayah = sa
+                wav, dur = _audio_for_clip(
+                    source="everyayah",
+                    idx=idx,
+                    surah=surah,
+                    ayah=ayah,
+                    audio_obj=row.get("audio"),
+                    force=force,
+                    stats=stats,
+                    split=split,
+                )
+                if dur is None:
+                    idx += 1
+                    split_rows[split] = idx
+                    save_progress("everyayah", {"split_rows": split_rows, "rows_seen": idx})
+                    continue
+                _ingest_clip(
+                    source="everyayah",
+                    idx=idx,
+                    wav=wav,
+                    duration=dur,
+                    surah=surah,
+                    ayah=ayah,
+                    ayah_end=ayah,
+                    speaker=str(row.get("qari") or row.get("reciter") or "everyayah"),
+                    condition="studio",
+                    stats=stats,
+                    corpus=corpus,
+                    tokenizer=tokenizer,
+                    OOVError=OOVError,
+                    recordings=recordings,
+                    supervisions=supervisions,
+                    split=split,
+                )
+                idx += 1
+                split_rows[split] = idx
+                save_progress("everyayah", {"split_rows": split_rows, "rows_seen": idx})
+                _commit(25, stats["clips"])
     else:
         builder = load_dataset_builder(HF_EVERYAYAH)
         _print_features("everyayah", HF_EVERYAYAH, builder.info.features, builder.info.splits)
         stats["hf_repo"] = HF_EVERYAYAH
         stats["split"] = "train"
         stats["features"] = str(builder.info.features)
-        ds = _stream_ds(HF_EVERYAYAH, "train")
-        for idx, row in enumerate(ds):
+        progress = {} if force else load_progress("everyayah")
+        already = 0 if force else int(progress.get("rows_seen") or 0)
+        ds = skip_hf_stream(_stream_ds(HF_EVERYAYAH, "train"), already, "everyayah")
+        idx = already
+        for row in ds:
             if limit and stats["clips"] >= limit:
                 break
             hit = _match_ayah(db, row.get("text") or "")
             if hit is None:
                 _bump_skip(stats, "low_match")
+                idx += 1
+                save_progress("everyayah", {"rows_seen": idx})
                 continue
-            try:
-                wav, dur = _audio_to_16k_mono(row.get("audio"))
-            except Exception:
-                _bump_skip(stats, "audio_error")
+            wav, dur = _audio_for_clip(
+                source="everyayah",
+                idx=idx,
+                surah=int(hit["surah"]),
+                ayah=int(hit["ayah"]),
+                audio_obj=row.get("audio"),
+                force=force,
+                stats=stats,
+            )
+            if dur is None:
+                idx += 1
+                save_progress("everyayah", {"rows_seen": idx})
                 continue
             _ingest_clip(
                 source="everyayah",
@@ -690,6 +928,8 @@ def _prepare_everyayah(limit: int, force: bool) -> dict:
                 recordings=recordings,
                 supervisions=supervisions,
             )
+            idx += 1
+            save_progress("everyayah", {"rows_seen": idx})
             _commit(25, stats["clips"])
 
     if recordings:
@@ -704,6 +944,7 @@ def _prepare_qua(limit: int, force: bool) -> dict:
 
     stats = _empty_stats("qua")
     stats["hf_repo"] = HF_QUA
+    print("[qua] dropping catalog rows whose slug/name contains nufais (q-lab qul_alnufais held-out)")
     skipped = _maybe_skip_existing("qua", force, stats)
     if skipped is not None:
         return skipped
@@ -724,11 +965,24 @@ def _prepare_qua(limit: int, force: bool) -> dict:
         ):
             _bump_skip(stats, "tarteel_dupe")
             continue
+        if is_nufais_holdout(
+            slug=slug,
+            reciter=row.get("name_en") or "",
+            reciter_id=row.get("reciter_id") or "",
+            name_ar=row.get("name_ar") or "",
+        ):
+            _bump_skip(stats, "nufais_holdout")
+            continue
         if not is_hafs_riwayah(row.get("riwayah")):
             _bump_skip(stats, "not_hafs")
             continue
         kept.append(row)
-    print(f"[qua] kept {len(kept)} hafs non-tarteel mushafs")
+    nufais_n = int((stats.get("skipped") or {}).get("nufais_holdout") or 0)
+    print(
+        f"[qua] kept {len(kept)} hafs non-tarteel non-nufais mushafs "
+        f"(excluded nufais={nufais_n} tarteel={int((stats.get('skipped') or {}).get('tarteel_dupe') or 0)} "
+        f"not_hafs={int((stats.get('skipped') or {}).get('not_hafs') or 0)})"
+    )
     if kept:
         sample = kept[0]
         print(
@@ -759,10 +1013,17 @@ def _prepare_qua(limit: int, force: bool) -> dict:
                 _bump_skip(stats, "no_surah_ayah")
                 continue
             surah, ayah = sa
-            try:
-                wav, dur = _audio_to_16k_mono(row.get("audio"))
-            except Exception:
-                _bump_skip(stats, "audio_error")
+            wav, dur = _audio_for_clip(
+                source="qua",
+                idx=idx,
+                surah=surah,
+                ayah=ayah,
+                audio_obj=row.get("audio"),
+                force=force,
+                stats=stats,
+            )
+            if dur is None:
+                idx += 1
                 continue
             extra = {
                 "recording_context": ctx,
@@ -847,13 +1108,18 @@ def _prepare_qurantts(limit: int, force: bool) -> dict:
         if not fn:
             _bump_skip(stats, "no_file_name")
             continue
-        try:
-            local = hf_hub_download(HF_QURANTTS, fn, repo_type="dataset")
-            wav, dur = _wav_from_file(local)
-        except Exception as e:
-            print(f"[qurantts] audio fail {fn}: {e}")
-            _bump_skip(stats, "audio_error")
-            continue
+        clip_id = make_clip_id("qurantts", idx, surah, ayah)
+        flac_path = flac_clip_path("qurantts", clip_id)
+        wav = None
+        dur = None if force else existing_flac_duration(flac_path)
+        if dur is None:
+            try:
+                local = hf_hub_download(HF_QURANTTS, fn, repo_type="dataset")
+                wav, dur = _wav_from_file(local)
+            except Exception as e:
+                print(f"[qurantts] audio fail {fn}: {e}")
+                _bump_skip(stats, "audio_error")
+                continue
         _ingest_clip(
             source="qurantts",
             idx=idx,
@@ -886,6 +1152,11 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
 
     stats = _empty_stats("iqra")
     stats["hf_repo"] = HF_IQRA
+    print(
+        "[iqra] match_verse ≥ 0.95 on tashkeel_sentence then sentence "
+        "(Iqra_train is MSA + Quran mix; non-Quran is the drop, not a norm bug); "
+        "first 200 rows also score search(top_k=1) and hamza-stripped normalize"
+    )
     skipped = _maybe_skip_existing("iqra", force, stats)
     if skipped is not None:
         return skipped
@@ -895,20 +1166,65 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
     _print_features("iqra", HF_IQRA, builder.info.features, builder.info.splits)
     stats["features"] = str(builder.info.features)
     stats["split"] = "train"
-    ds = _stream_ds(HF_IQRA, "train")
-    for idx, row in enumerate(ds):
+    progress = {} if force else load_progress("iqra")
+    already = 0 if force else int(progress.get("rows_seen") or 0)
+    ds = skip_hf_stream(_stream_ds(HF_IQRA, "train"), already, "iqra")
+    diag_n = 0
+    diag_keep = {"baseline": 0, "search": 0, "hamza": 0, "multi_ayah": 0}
+    diag_miss_printed = 0
+    idx = already
+    for row in ds:
         if limit and stats["clips"] >= limit:
             break
-        hit = _match_ayah(db, row.get("tashkeel_sentence") or "") or _match_ayah(
-            db, row.get("sentence") or ""
-        )
+        sentence = str(row.get("sentence") or "")
+        tashkeel = str(row.get("tashkeel_sentence") or "")
+        if diag_n < 200:
+            scores = iqra_match_scores(db, sentence, tashkeel)
+            flags = iqra_row_keep_flags(scores)
+            diag_n += 1
+            for k in ("baseline", "search", "hamza"):
+                if flags[k]:
+                    diag_keep[k] += 1
+            if not flags["baseline"] and diag_miss_printed < 8:
+                words = len(sentence.split())
+                print(
+                    f"[iqra] miss#{diag_miss_printed} words={words} "
+                    f"baseline={flags['baseline_score']:.3f} search={flags['search_score']:.3f} "
+                    f"hamza={flags['hamza_score']:.3f} tashkeel_len={len(tashkeel)} "
+                    f"sentence={sentence[:80]!r}"
+                )
+                diag_miss_printed += 1
+            if diag_n == 200:
+                def _rate(k: str) -> str:
+                    return f"{diag_keep[k]}/{diag_n} ({100.0 * diag_keep[k] / diag_n:.1f}%)"
+
+                print(
+                    f"[iqra] diag n={diag_n} keep@0.95 "
+                    f"baseline(match_verse)={_rate('baseline')} "
+                    f"search(top_k=1)={_rate('search')} "
+                    f"hamza-strip={_rate('hamza')}"
+                )
+        hit = match_iqra_row(db, sentence, tashkeel)
         if hit is None:
             _bump_skip(stats, "low_match")
+            idx += 1
+            save_progress("iqra", {"rows_seen": idx})
             continue
-        try:
-            wav, dur = _audio_to_16k_mono(row.get("audio"))
-        except Exception:
-            _bump_skip(stats, "audio_error")
+        ayah_end = hit.get("ayah_end") or int(hit["ayah"])
+        if ayah_end != int(hit["ayah"]):
+            diag_keep["multi_ayah"] += 1
+        wav, dur = _audio_for_clip(
+            source="iqra",
+            idx=idx,
+            surah=int(hit["surah"]),
+            ayah=int(hit["ayah"]),
+            audio_obj=row.get("audio"),
+            force=force,
+            stats=stats,
+        )
+        if dur is None:
+            idx += 1
+            save_progress("iqra", {"rows_seen": idx})
             continue
         _ingest_clip(
             source="iqra",
@@ -917,7 +1233,7 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
             duration=dur,
             surah=int(hit["surah"]),
             ayah=int(hit["ayah"]),
-            ayah_end=hit.get("ayah_end") or int(hit["ayah"]),
+            ayah_end=ayah_end,
             speaker=str(row.get("id") or "iqra"),
             condition="crowd",
             stats=stats,
@@ -927,7 +1243,26 @@ def _prepare_iqra(limit: int, force: bool) -> dict:
             recordings=recordings,
             supervisions=supervisions,
         )
+        idx += 1
+        save_progress("iqra", {"rows_seen": idx})
         _commit(25, stats["clips"])
+    if diag_n and diag_n < 200:
+        def _rate_partial(k: str) -> str:
+            return f"{diag_keep[k]}/{diag_n} ({100.0 * diag_keep[k] / max(diag_n, 1):.1f}%)"
+
+        print(
+            f"[iqra] diag n={diag_n} keep@0.95 "
+            f"baseline(match_verse)={_rate_partial('baseline')} "
+            f"search(top_k=1)={_rate_partial('search')} "
+            f"hamza-strip={_rate_partial('hamza')}"
+        )
+    stats["iqra_match_diag"] = {
+        "rows": diag_n,
+        "keep_baseline": diag_keep["baseline"],
+        "keep_search": diag_keep["search"],
+        "keep_hamza": diag_keep["hamza"],
+        "multi_ayah_kept": diag_keep["multi_ayah"],
+    }
     if recordings:
         _save_cuts("iqra", recordings, supervisions)
     _write_stats(stats)
@@ -949,23 +1284,38 @@ def _prepare_retasy(limit: int, force: bool) -> dict:
     _print_features("retasy", HF_RETASY, builder.info.features, builder.info.splits)
     stats["features"] = str(builder.info.features)
     stats["split"] = "train"
-    ds = _stream_ds(HF_RETASY, "train")
-    for idx, row in enumerate(ds):
+    progress = {} if force else load_progress("retasy")
+    already = 0 if force else int(progress.get("rows_seen") or 0)
+    ds = skip_hf_stream(_stream_ds(HF_RETASY, "train"), already, "retasy")
+    idx = already
+    for row in ds:
         if limit and stats["clips"] >= limit:
             break
         label = row.get("final_label")
         if not retasy_keep(label):
             reason = "bad_label" if label in BAD_RETASY_LABELS else "not_correct"
             _bump_skip(stats, reason)
+            idx += 1
+            save_progress("retasy", {"rows_seen": idx})
             continue
         hit = _match_ayah(db, row.get("Aya") or "")
         if hit is None:
             _bump_skip(stats, "low_match")
+            idx += 1
+            save_progress("retasy", {"rows_seen": idx})
             continue
-        try:
-            wav, dur = _audio_to_16k_mono(row.get("audio"))
-        except Exception:
-            _bump_skip(stats, "audio_error")
+        wav, dur = _audio_for_clip(
+            source="retasy",
+            idx=idx,
+            surah=int(hit["surah"]),
+            ayah=int(hit["ayah"]),
+            audio_obj=row.get("audio"),
+            force=force,
+            stats=stats,
+        )
+        if dur is None:
+            idx += 1
+            save_progress("retasy", {"rows_seen": idx})
             continue
         _ingest_clip(
             source="retasy",
@@ -985,6 +1335,8 @@ def _prepare_retasy(limit: int, force: bool) -> dict:
             supervisions=supervisions,
             extra_custom={"final_label": label},
         )
+        idx += 1
+        save_progress("retasy", {"rows_seen": idx})
         _commit(25, stats["clips"])
     if recordings:
         _save_cuts("retasy", recordings, supervisions)
@@ -999,6 +1351,10 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
     stats = _empty_stats("tlog")
     stats["hf_repo"] = HF_TLOG
     stats["tlog_max_hours"] = tlog_max_hours
+    excl = load_qlab_exclusions()
+    holdout = excl["tlog_ids"]
+    sample = sorted(holdout)[:3]
+    print(f"[tlog] q-lab tlog_holdout exclusion: {len(holdout)} ids sample={sample}")
     skipped = _maybe_skip_existing("tlog", force, stats)
     if skipped is not None:
         return skipped
@@ -1008,8 +1364,11 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
     _print_features("tlog", HF_TLOG, builder.info.features, builder.info.splits)
     stats["features"] = str(builder.info.features)
     stats["split"] = "clean"
-    ds = _stream_ds(HF_TLOG, "clean")
-    for idx, row in enumerate(ds):
+    progress = {} if force else load_progress("tlog")
+    already = 0 if force else int(progress.get("rows_seen") or 0)
+    ds = skip_hf_stream(_stream_ds(HF_TLOG, "clean"), already, "tlog")
+    idx = already
+    for row in ds:
         if limit and stats["clips"] >= limit:
             break
         if tlog_max_hours > 0 and stats["hours"] >= tlog_max_hours:
@@ -1017,6 +1376,8 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
             break
         if not row.get("is_clean", True):
             _bump_skip(stats, "unclean")
+            idx += 1
+            save_progress("tlog", {"rows_seen": idx})
             continue
         audio = row.get("audio") or {}
         path = ""
@@ -1031,12 +1392,27 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
             if int((stats.get("skipped") or {}).get("unmapped") or 0) < 3:
                 print(f"[tlog] unmapped path={path!r} audio_keys={list(audio) if isinstance(audio, dict) else type(audio)}")
             _bump_skip(stats, "unmapped")
+            idx += 1
+            save_progress("tlog", {"rows_seen": idx})
+            continue
+        if tlog_holdout_key(path) in holdout:
+            _bump_skip(stats, "qlab_holdout")
+            idx += 1
+            save_progress("tlog", {"rows_seen": idx})
             continue
         surah, ayah = parsed
-        try:
-            wav, dur = _audio_to_16k_mono(audio)
-        except Exception:
-            _bump_skip(stats, "audio_error")
+        wav, dur = _audio_for_clip(
+            source="tlog",
+            idx=idx,
+            surah=surah,
+            ayah=ayah,
+            audio_obj=audio,
+            force=force,
+            stats=stats,
+        )
+        if dur is None:
+            idx += 1
+            save_progress("tlog", {"rows_seen": idx})
             continue
         _ingest_clip(
             source="tlog",
@@ -1055,6 +1431,8 @@ def _prepare_tlog(limit: int, force: bool, tlog_max_hours: float) -> dict:
             recordings=recordings,
             supervisions=supervisions,
         )
+        idx += 1
+        save_progress("tlog", {"rows_seen": idx})
         _commit(50, stats["clips"])
     if recordings:
         _save_cuts("tlog", recordings, supervisions)
@@ -1100,7 +1478,7 @@ def prepare_tlog(limit: int = 0, force: bool = False, tlog_max_hours: float = 10
 
 
 @app.function(**_FN_KW)
-def compute_fbank(source: str, no_speed_perturb: bool = False):
+def compute_fbank(source: str, no_speed_perturb: bool = False, force: bool = False):
     """Extract lhotse fbanks (+ optional 0.9/1.1 speed copies) for one source."""
     _boot_remote()
     import torch
@@ -1114,6 +1492,9 @@ def compute_fbank(source: str, no_speed_perturb: bool = False):
     if not cuts_path.is_file():
         raise FileNotFoundError(f"missing {cuts_path}; run prepare first")
     out_path = Path(f"/vol/manifests/{source}_cuts_fbank.jsonl.gz")
+    if out_path.is_file() and not force:
+        print(f"[fbank/{source}] {out_path} exists; skip (pass --force to redo)")
+        return {"source": source, "skipped_existing": True, "path": str(out_path)}
     print(f"[fbank/{source}] load {cuts_path}")
     cuts = CutSet.from_file(str(cuts_path))
     if not no_speed_perturb:
@@ -1203,7 +1584,7 @@ def main(
             print(f"FAILED {src}: {type(e).__name__}: {e}")
     if not skip_fbank:
         fbank_handles = {
-            src: compute_fbank.spawn(src, no_speed_perturb) for src in selected
+            src: compute_fbank.spawn(src, no_speed_perturb, force) for src in selected
         }
         for src, handle in fbank_handles.items():
             try:
