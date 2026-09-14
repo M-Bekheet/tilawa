@@ -13,6 +13,12 @@ ONNX emits logits in reference order with blank at 250.
 ``permute_ctc_head`` is that row permutation: ``W_perm[ref] = W_ice[(ref+1)%251]``.
 Verified by ``softmax(x @ W_perm.T + b_perm)[ref] == softmax(x @ W.T + b)[ice]``.
 
+Quran-Lab v3.1 ``.pt`` stores the CTC head in **reference** order (blank=250);
+``export_quran_streaming_onnx.py`` does **not** permute on export (loads
+``ctc_head`` as-is). Fine-tune load therefore applies ``inverse_permute_ctc_head``
+so icefall trains with blank=0, and the existing export permutation restores
+reference order.
+
 Streaming T / hop
 -----------------
 icefall ``export-onnx-streaming-ctc.py``::
@@ -46,6 +52,28 @@ PAD_LENGTH = 7 + 2 * 3  # 13
 # chunk_size at 50 Hz after encoder_embed; 24 → T=61, hop=48 (reference I/O).
 DEFAULT_EXPORT_CHUNK_SIZE = 24
 DEFAULT_LEFT_CONTEXT_FRAMES = 256
+# v3/v3.1 were trained only at these 50 Hz chunk sizes (checkpoint context_profiles).
+DEFAULT_TRAIN_CHUNK_SIZES = "8,16,24"
+DEFAULT_TRAIN_LEFT_CONTEXT = "128,256"
+DEFAULT_BASE_LR = 0.005
+DEFAULT_NUM_EPOCHS = 5
+DEFAULT_AVG = 3
+DEFAULT_WARMUP_BATCHES = 500.0
+DEFAULT_INIT_FROM = "/vol/reference/zipformer_p_arabic_v3.1.pt"
+REF_HF_REPO = "Quran-Lab/zipformer_p-arabic-v3"
+REF_PT_NAME = "zipformer_p_arabic_v3.1.pt"
+
+# Quran-Lab custom AsrModel → icefall AsrModel (CTC-only).
+_QURANLAB_KEY_REMAP = (
+    ("sub.", "encoder_embed."),
+    ("ctc_head.", "ctc_output.1."),
+)
+_QURANLAB_DROP_PREFIXES = (
+    "decoder.",
+    "joiner.",
+    "simple_am_proj.",
+    "simple_lm_proj.",
+)
 
 ARCH_FLAGS = [
     "--causal",
@@ -72,6 +100,8 @@ ARCH_FLAGS = [
     "32",
     "--value-head-dim",
     "12",
+    "--pos-dim",
+    "192",
 ]
 
 _ORT_DTYPE = {
@@ -124,6 +154,111 @@ def permute_ctc_head(
         raise ValueError(f"expected bias dim0={VOCAB_SIZE}, got {b.shape}")
     perm = (np.arange(VOCAB_SIZE) + 1) % VOCAB_SIZE
     return w[perm].copy(), b[perm].copy()
+
+
+def inverse_permute_ctc_head(
+    weight: np.ndarray, bias: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Permute CTC Linear rows from reference (blank=250) to icefall (blank=0).
+
+    Inverse of :func:`permute_ctc_head`. icefall row 0 is reference row 250.
+    """
+    w = np.asarray(weight)
+    b = np.asarray(bias)
+    if w.shape[0] != VOCAB_SIZE:
+        raise ValueError(f"expected weight dim0={VOCAB_SIZE}, got {w.shape}")
+    if b.shape[0] != VOCAB_SIZE:
+        raise ValueError(f"expected bias dim0={VOCAB_SIZE}, got {b.shape}")
+    perm = (np.arange(VOCAB_SIZE) - 1) % VOCAB_SIZE
+    return w[perm].copy(), b[perm].copy()
+
+
+def remap_quranlab_key(key: str) -> str | None:
+    """Map a Quran-Lab v3.1 ``model`` key onto icefall AsrModel, or ``None`` to drop.
+
+    Drops leftover transducer heads (``decoder`` / ``joiner`` / ``simple_*``);
+    icefall ``--use-transducer 0`` does not instantiate them. ``sub.*`` is their
+    Conv2dSubsampling; icefall calls it ``encoder_embed.*``. ``ctc_head`` is a
+    bare Linear → icefall ``ctc_output.1`` (Sequential dropout, linear, log-softmax).
+    """
+    for prefix in _QURANLAB_DROP_PREFIXES:
+        if key == prefix[:-1] or key.startswith(prefix):
+            return None
+    for src, dst in _QURANLAB_KEY_REMAP:
+        if key.startswith(src):
+            return dst + key[len(src) :]
+    return key
+
+
+def remap_quranlab_state_keys(keys: Iterable[str]) -> dict[str, str | None]:
+    """``old_key → new_key | None`` for every key in ``keys``."""
+    return {k: remap_quranlab_key(k) for k in keys}
+
+
+def arch_train_flags() -> list[str]:
+    """Architecture + causal chunk flags for icefall ``train.py``."""
+    return [
+        *ARCH_FLAGS,
+        "--chunk-size",
+        DEFAULT_TRAIN_CHUNK_SIZES,
+        "--left-context-frames",
+        DEFAULT_TRAIN_LEFT_CONTEXT,
+    ]
+
+
+def icefall_train_flags(
+    *,
+    world_size: int = 1,
+    num_epochs: int = DEFAULT_NUM_EPOCHS,
+    start_epoch: int = 1,
+    exp_dir: str = "/vol/exp/run",
+    base_lr: float = DEFAULT_BASE_LR,
+    max_duration: int = 1200,
+    sources: str = DEFAULT_TRAIN_SOURCES,
+    limit_cuts: int = 0,
+    smoke: bool = False,
+    init_from: str = DEFAULT_INIT_FROM,
+) -> list[str]:
+    """Argv for icefall ``zipformer/train.py`` (no executable). ``init_from`` is
+    recorded for tests; the Modal job loads it via env, not as an icefall flag.
+    """
+    del init_from  # loaded via ZIPFORMER_INIT_FROM, not train.py argv
+    limited = smoke or int(limit_cuts) > 0
+    return [
+        "--world-size",
+        str(world_size),
+        "--num-epochs",
+        str(num_epochs),
+        "--start-epoch",
+        str(start_epoch),
+        "--exp-dir",
+        str(exp_dir),
+        "--bpe-model",
+        "/app/tokens.js",
+        "--use-fp16",
+        "1",
+        "--base-lr",
+        str(base_lr),
+        "--max-duration",
+        str(max_duration),
+        "--full-libri",
+        "1",
+        "--enable-musan",
+        "0",
+        "--num-workers",
+        "2" if smoke else "8",
+        "--drop-last",
+        "0" if limited else "1",
+        "--num-buckets",
+        "4" if limited else "30",
+        "--manifest-dir",
+        "/vol/manifests",
+        "--sources",
+        sources,
+        "--limit-cuts",
+        str(limit_cuts),
+        *arch_train_flags(),
+    ]
 
 
 def compute_T_hop(chunk_size: int, pad_length: int = PAD_LENGTH) -> tuple[int, int]:

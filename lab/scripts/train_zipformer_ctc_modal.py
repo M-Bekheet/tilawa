@@ -1,6 +1,6 @@
 """icefall streaming Zipformer2-CTC on Modal + streaming ONNX export.
 
-App ``zipformer-ctc-train``. Trains with icefall's ``zipformer/train.py`` as a
+App ``zipformer-ctc-finetune``. Trains with icefall's ``zipformer/train.py`` as a
 subprocess (copy recipe into ``/vol/work/zipformer``, overwrite
 ``asr_datamodule.py``, patch the two ``sp`` uses: SentencePiece load /
 ``vocab_size`` + ``encode``). Own-script alternative was rejected so we stay
@@ -8,8 +8,9 @@ on icefall's optimiser, Eden schedule, DDP, checkpoint averaging, and
 streaming export without reimplementing them.
 
 Blank handling: train in icefall order (blank id 0 = ``(ref_id + 1) % 251``);
-permute the CTC Linear rows at export so ONNX logits match the reference
-vocab with ``<blank>`` at 250. See ``scripts/zipformer_ctc_utils.py``.
+inverse-permute the Quran-Lab v3.1 CTC Linear on load (reference blank=250);
+permute back at export so ONNX logits match the reference vocab with ``<blank>``
+at 250. See ``scripts/zipformer_ctc_utils.py``.
 
 Architecture (verbatim from the reference ONNX ``metadata_props``):
 ``--cnn-module-kernel 31,31,15,15,15,31`` (cache last-dim = kernel//2).
@@ -25,10 +26,14 @@ Image is ``nvidia/cuda:12.4.1-devel-ubuntu22.04`` + Modal ``add_python=3.11`` + 
 Usage::
 
     ZIPFORMER_GPU=H100 modal run --detach scripts/train_zipformer_ctc_modal.py \\
-        --run-name smoke --smoke --synthetic
+        --run-name load-path --export-init-only
 
-    modal run scripts/train_zipformer_ctc_modal.py \\
-        --run-name v1 --export-only --epoch 40 --avg 10
+    ZIPFORMER_GPU=H100 modal run --detach scripts/train_zipformer_ctc_modal.py \\
+        --run-name ft-smoke --limit-cuts 800 --sources retasy --num-epochs 1
+
+    ZIPFORMER_GPU=H100:4 modal run --detach scripts/train_zipformer_ctc_modal.py \\
+        --run-name ft-v31 --num-epochs 5 --max-duration 1200 --avg 3 \\
+        --init-from /vol/reference/zipformer_p_arabic_v3.1.pt
 
 Do not download checkpoints/ONNX into git. After export::
 
@@ -116,6 +121,7 @@ def _build_image() -> modal.Image:
             "packaging",
             "pypinyin==0.50.0",
             "num2words",
+            "huggingface_hub",
         )
         .pip_install("numpy<2")
         .run_commands(
@@ -159,7 +165,7 @@ def _build_image() -> modal.Image:
 
 
 image = _build_image()
-app = modal.App("zipformer-ctc-train")
+app = modal.App("zipformer-ctc-finetune")
 vol = modal.Volume.from_name("zipformer-ctc-training", create_if_missing=True)
 
 _TRAIN_SP_OLD = '''    sp = spm.SentencePieceProcessor()
@@ -202,6 +208,41 @@ _EXPORT_PERM_NEW = '''    convert_scaled_to_non_scaled(model, inplace=True)
     logging.info("permuted CTC head to reference blank=250 order")
 
     model = OnnxModel(
+'''
+
+_TRAIN_INIT_OLD = '''    logging.info("About to create model")
+    model = get_model(params)
+
+    num_param = sum([p.numel() for p in model.parameters()])
+'''
+_TRAIN_INIT_NEW = '''    logging.info("About to create model")
+    model = get_model(params)
+
+    import os as _os
+    _init_from = _os.environ.get("ZIPFORMER_INIT_FROM", "").strip()
+    if _init_from:
+        import torch as _torch
+        _blob = _torch.load(_init_from, map_location="cpu", weights_only=False)
+        _sd = _blob["model"] if isinstance(_blob, dict) and "model" in _blob else _blob
+        _incompat = model.load_state_dict(_sd, strict=False)
+        _missing = list(_incompat.missing_keys)
+        _unexpected = list(_incompat.unexpected_keys)
+        if _missing or _unexpected:
+            raise RuntimeError(
+                "init-from strict load failed "
+                f"missing={_missing} unexpected={_unexpected}"
+            )
+        logging.info("loaded init-from %s (%d tensors, no missing/unexpected)", _init_from, len(_sd))
+
+    num_param = sum([p.numel() for p in model.parameters()])
+'''
+
+_TRAIN_EDEN_OLD = '''    scheduler = Eden(optimizer, params.lr_batches, params.lr_epochs, warmup_start=0.1)
+'''
+_TRAIN_EDEN_NEW = '''    import os as _os
+    _wb = float(_os.environ.get("ZIPFORMER_WARMUP_BATCHES", "500"))
+    scheduler = Eden(optimizer, params.lr_batches, params.lr_epochs, warmup_batches=_wb, warmup_start=0.1)
+    logging.info("Eden warmup_batches=%s warmup_start=0.1", _wb)
 '''
 
 _TRAIN_VALID_STASH_OLD = '''            logging.info(f"Epoch {params.cur_epoch}, validation: {valid_info}")
@@ -321,6 +362,18 @@ def _prepare_recipe(work: Path, smoke: bool) -> Path:
         _TRAIN_METRICS_NEW,
         "train.py per-epoch metrics+commit",
     )
+    _patch_file(
+        dst / "train.py",
+        _TRAIN_INIT_OLD,
+        _TRAIN_INIT_NEW,
+        "train.py init-from load",
+    )
+    _patch_file(
+        dst / "train.py",
+        _TRAIN_EDEN_OLD,
+        _TRAIN_EDEN_NEW,
+        "train.py Eden warmup_batches",
+    )
     train_txt = (dst / "train.py").read_text(encoding="utf-8")
     if smoke:
         if '"log_interval": 50,' not in train_txt:
@@ -429,15 +482,136 @@ def _build_synthetic_cuts(n: int = 20) -> Path:
 
 
 def _arch_train_flags() -> list[str]:
-    from zipformer_ctc_utils import ARCH_FLAGS
+    from zipformer_ctc_utils import arch_train_flags
 
-    return [
-        *ARCH_FLAGS,
-        "--chunk-size",
-        "16,32,64,-1",
-        "--left-context-frames",
-        "64,128,256,-1",
-    ]
+    return arch_train_flags()
+
+
+def _ensure_reference_pt(path: str) -> Path:
+    """Return ``path`` if it exists, else download Quran-Lab v3.1 into ``/vol/reference/``."""
+    from zipformer_ctc_utils import REF_HF_REPO, REF_PT_NAME
+
+    p = Path(path)
+    if p.is_file():
+        print(f"init-from present: {p} ({p.stat().st_size} bytes)")
+        return p
+    dest_dir = Path("/vol/reference")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / (p.name if p.name.endswith(".pt") else REF_PT_NAME)
+    if dest.is_file():
+        print(f"init-from fallback present: {dest} ({dest.stat().st_size} bytes)")
+        return dest
+    from huggingface_hub import hf_hub_download
+
+    fname = dest.name
+    print(f"init-from missing; hf_hub_download {REF_HF_REPO}/{fname} -> {dest_dir}")
+    got = hf_hub_download(
+        REF_HF_REPO,
+        fname,
+        local_dir=str(dest_dir),
+    )
+    out = Path(got)
+    print(f"downloaded {out} ({out.stat().st_size} bytes)")
+    return out
+
+
+def _inspect_quranlab_blob(blob: object) -> dict:
+    meta: dict = {"top_type": type(blob).__name__}
+    if not isinstance(blob, dict):
+        print(f"checkpoint is {type(blob)}, not a dict")
+        return meta
+    meta["top_keys"] = list(blob.keys())
+    for k in ("epoch", "step", "blank_id", "context_profiles"):
+        if k in blob:
+            meta[k] = blob[k]
+            print(f"checkpoint.{k}={blob[k]!r}")
+    if "params" in blob and isinstance(blob["params"], dict):
+        pk = list(blob["params"].keys())[:24]
+        meta["params_keys"] = pk
+        print(f"checkpoint.params keys (head): {pk}")
+    if "tokens" in blob:
+        print(f"checkpoint.tokens type={type(blob['tokens'])}")
+    sd = blob["model"] if "model" in blob else blob
+    if not isinstance(sd, dict):
+        return meta
+    keys = list(sd.keys())
+    meta["n_tensors"] = len(keys)
+    prefixes: dict[str, int] = {}
+    for k in keys:
+        prefixes[k.split(".")[0]] = prefixes.get(k.split(".")[0], 0) + 1
+    meta["prefixes"] = prefixes
+    print(f"model state dict: {len(keys)} tensors, prefixes={prefixes}")
+    ctc_keys = [k for k in keys if "ctc" in k.lower() or k.startswith("ctc_head")]
+    print(f"ctc-like keys: {ctc_keys}")
+    meta["has_ctc_output"] = any(k.startswith("ctc_output.") for k in keys)
+    meta["has_ctc_head"] = any(k.startswith("ctc_head.") for k in keys)
+    for cand in ("ctc_head.bias", "ctc_output.1.bias"):
+        if cand in sd:
+            b = sd[cand]
+            try:
+                import torch
+
+                t = b.detach().cpu() if hasattr(b, "detach") else torch.as_tensor(b)
+                print(
+                    f"{cand}: shape={tuple(t.shape)} row0={float(t[0]):.4f} "
+                    f"row250={float(t[250]):.4f} argmax={int(t.argmax())}"
+                )
+                meta["ctc_bias_argmax"] = int(t.argmax())
+            except Exception as exc:
+                print(f"{cand} inspect failed: {exc}")
+    n = sum(int(v.numel()) for v in sd.values() if hasattr(v, "numel"))
+    meta["param_count"] = n
+    print(f"checkpoint param_count={n}")
+    return meta
+
+
+def _convert_reference_to_icefall_pt(src: Path, dest: Path) -> dict:
+    """Remap Quran-Lab keys, inverse-permute CTC head, write icefall ``{model: sd}``."""
+    import torch
+
+    sys.path.insert(0, "/app")
+    from zipformer_ctc_utils import inverse_permute_ctc_head, remap_quranlab_key
+
+    blob = torch.load(str(src), map_location="cpu", weights_only=False)
+    inspect = _inspect_quranlab_blob(blob)
+    raw = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
+    if not isinstance(raw, dict):
+        raise TypeError(f"expected state dict, got {type(raw)}")
+    out: dict = {}
+    dropped: list[str] = []
+    for k, v in raw.items():
+        nk = remap_quranlab_key(k)
+        if nk is None:
+            dropped.append(k)
+            continue
+        if nk in out:
+            raise RuntimeError(f"key collision after remap: {k} -> {nk}")
+        out[nk] = v
+    print(f"dropped {len(dropped)} transducer/unused keys (head): {dropped[:8]}")
+    w_key, b_key = "ctc_output.1.weight", "ctc_output.1.bias"
+    if w_key not in out or b_key not in out:
+        raise RuntimeError(
+            f"CTC Linear missing after remap: have "
+            f"{[k for k in out if 'ctc' in k]} (need {w_key}, {b_key})"
+        )
+    w, b = out[w_key], out[b_key]
+    w_np, b_np = inverse_permute_ctc_head(
+        w.detach().cpu().numpy(),
+        b.detach().cpu().numpy(),
+    )
+    out[w_key] = torch.from_numpy(w_np).to(dtype=w.dtype)
+    out[b_key] = torch.from_numpy(b_np).to(dtype=b.dtype)
+    print(
+        f"inverse-permuted CTC head: icefall row0 bias={float(out[b_key][0]):.4f} "
+        f"(was ref blank row250); icefall row250 bias={float(out[b_key][250]):.4f}"
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"model": out}, dest)
+    print(f"wrote icefall init checkpoint {dest} ({dest.stat().st_size} bytes, {len(out)} tensors)")
+    inspect["dropped"] = len(dropped)
+    inspect["icefall_tensors"] = len(out)
+    inspect["icefall_pt"] = str(dest)
+    return inspect
 
 
 def _write_tokens() -> Path:
@@ -718,7 +892,7 @@ def _run_export_impl(
 )
 def train(
     run_name: str,
-    num_epochs: int = 40,
+    num_epochs: int = 5,
     max_duration: int = 1200,
     sources: str = "everyayah,qua,iqra,retasy,tlog",
     smoke: bool = False,
@@ -727,13 +901,18 @@ def train(
     do_export: bool = False,
     chunk_size: int = 24,
     left_context_frames: int = 256,
-    avg: int = 10,
+    avg: int = 3,
     start_epoch: int = 1,
+    init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt",
+    base_lr: float = 0.005,
+    warmup_batches: float = 500,
 ) -> dict:
     import subprocess
     import time
 
     sys.path.insert(0, "/app")
+    from zipformer_ctc_utils import icefall_train_flags
+
     t0 = time.time()
     work = Path("/vol/work")
     work.mkdir(parents=True, exist_ok=True)
@@ -750,6 +929,28 @@ def train(
         if missing:
             print(f"smoke cuts missing {missing}; falling back to --synthetic")
             synthetic = True
+    if not synthetic:
+        present = [
+            s
+            for s in src_list
+            if (Path("/vol/manifests") / f"{s}_cuts_fbank.jsonl.gz").is_file()
+        ]
+        if not present:
+            avail = sorted(Path("/vol/manifests").glob("*_cuts_fbank.jsonl.gz"))
+            print(f"requested sources {src_list} have no fbank cuts; available={avail}")
+            if avail:
+                fallback = avail[0].name.removesuffix("_cuts_fbank.jsonl.gz")
+                print(f"using staged source {fallback!r}")
+                src_list = [fallback]
+                sources = fallback
+            else:
+                print("no staged cuts; falling back to --synthetic")
+                synthetic = True
+        elif len(present) < len(src_list):
+            missing = [s for s in src_list if s not in present]
+            print(f"dropping unstaged sources {missing}; training on {present}")
+            src_list = present
+            sources = ",".join(present)
     if synthetic:
         _build_synthetic_cuts(20)
         src_list = ["synthetic"]
@@ -762,6 +963,13 @@ def train(
     exp_dir = Path(f"/vol/exp/{run_name}")
     exp_dir.mkdir(parents=True, exist_ok=True)
 
+    init_meta = None
+    init_pt = ""
+    if init_from:
+        src = _ensure_reference_pt(init_from)
+        init_pt = str(exp_dir / "init_icefall.pt")
+        init_meta = _convert_reference_to_icefall_pt(src, Path(init_pt))
+
     if smoke:
         num_epochs = 1
         max_duration = min(max_duration, 200)
@@ -771,44 +979,27 @@ def train(
     cmd = [
         sys.executable,
         str(recipe / "train.py"),
-        "--world-size",
-        str(WORLD_SIZE),
-        "--num-epochs",
-        str(num_epochs),
-        "--start-epoch",
-        str(start_epoch),
-        "--exp-dir",
-        str(exp_dir),
-        "--bpe-model",
-        "/app/tokens.js",
-        "--use-fp16",
-        "1",
-        "--base-lr",
-        "0.045",
-        "--max-duration",
-        str(max_duration),
-        "--full-libri",
-        "1",
-        "--enable-musan",
-        "0",
-        "--num-workers",
-        "8" if not smoke else "2",
-        "--drop-last",
-        "0" if smoke else "1",
-        "--num-buckets",
-        "4" if smoke else "30",
-        "--manifest-dir",
-        "/vol/manifests",
-        "--sources",
-        sources,
-        "--limit-cuts",
-        str(limit_cuts),
-        *_arch_train_flags(),
+        *icefall_train_flags(
+            world_size=WORLD_SIZE,
+            num_epochs=num_epochs,
+            start_epoch=start_epoch,
+            exp_dir=str(exp_dir),
+            base_lr=base_lr,
+            max_duration=max_duration,
+            sources=sources,
+            limit_cuts=limit_cuts,
+            smoke=smoke,
+        ),
     ]
 
     env = os.environ.copy()
     env["PYTHONPATH"] = "/opt/icefall:/app:" + env.get("PYTHONPATH", "")
+    if init_pt:
+        env["ZIPFORMER_INIT_FROM"] = init_pt
+    env["ZIPFORMER_WARMUP_BATCHES"] = str(warmup_batches)
     print("train cmd:", " ".join(cmd))
+    print(f"ZIPFORMER_INIT_FROM={env.get('ZIPFORMER_INIT_FROM', '')!r}")
+    print(f"ZIPFORMER_WARMUP_BATCHES={env['ZIPFORMER_WARMUP_BATCHES']} base_lr={base_lr}")
     subprocess.run(cmd, cwd=str(recipe), env=env, check=True)
     rows = _parse_metrics(exp_dir)
     elapsed = time.time() - t0
@@ -821,6 +1012,10 @@ def train(
         "elapsed_s": elapsed,
         "synthetic": synthetic,
         "sources": sources,
+        "init_from": init_from,
+        "init_meta": init_meta,
+        "base_lr": base_lr,
+        "warmup_batches": warmup_batches,
         "metrics_head": rows[:8],
         "metrics_tail": rows[-8:],
         "icefall_sha": Path("/opt/icefall.sha").read_text().strip(),
@@ -845,15 +1040,30 @@ def train(
     memory=32768,
     timeout=2 * 3600,
     volumes={"/vol": vol},
+    secrets=[modal.Secret.from_name("huggingface")],
 )
 def export_onnx(
     run_name: str,
     epoch: int = 0,
-    avg: int = 10,
+    avg: int = 3,
     chunk_size: int = 24,
     left_context_frames: int = 256,
+    init_from: str = "",
+    export_init: bool = False,
 ) -> dict:
+    init_meta = None
+    if export_init:
+        src_path = init_from or "/vol/reference/zipformer_p_arabic_v3.1.pt"
+        src = _ensure_reference_pt(src_path)
+        exp_dir = Path(f"/vol/exp/{run_name}")
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        dest = exp_dir / "epoch-1.pt"
+        init_meta = _convert_reference_to_icefall_pt(src, dest)
+        epoch = 1
+        avg = 1
     meta = _run_export_impl(run_name, epoch, avg, chunk_size, left_context_frames)
+    if init_meta is not None:
+        meta["init_meta"] = init_meta
     vol.commit()
     return meta
 
@@ -861,39 +1071,60 @@ def export_onnx(
 @app.local_entrypoint()
 def main(
     run_name: str,
-    num_epochs: int = 40,
+    num_epochs: int = 5,
     max_duration: int = 1200,
     sources: str = "everyayah,qua,iqra,retasy,tlog",
     smoke: bool = False,
     synthetic: bool = False,
     export_only: bool = False,
+    export_init_only: bool = False,
     epoch: int = 0,
-    avg: int = 10,
+    avg: int = 3,
     chunk_size: int = 24,
     left_context_frames: int = 256,
     start_epoch: int = 1,
+    limit_cuts: int = 0,
+    init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt",
+    base_lr: float = 0.005,
+    warmup_batches: float = 500,
+    skip_export: bool = False,
 ):
-    """Train and/or export. Smoke implies 1 epoch, max-duration 200, limit-cuts 800."""
+    """Fine-tune from Quran-Lab v3.1 (or from scratch if ``init_from=""``).
+
+    ``--export-init-only``: load+permute+export, no training (load-path proof).
+    Smoke implies 1 epoch, max-duration 200, limit-cuts 800.
+    """
     full_cmd = (
         "ZIPFORMER_GPU=H100:4 modal run --detach scripts/train_zipformer_ctc_modal.py "
-        "--run-name trackA-v1 --num-epochs 40 --max-duration 1200 "
+        "--run-name ft-v31 --num-epochs 5 --max-duration 1200 --avg 3 "
+        "--base-lr 0.005 --warmup-batches 500 "
+        "--init-from /vol/reference/zipformer_p_arabic_v3.1.pt "
         "--sources everyayah,qua,iqra,retasy,tlog"
     )
     export_cmd = (
         "modal run --detach scripts/train_zipformer_ctc_modal.py "
-        f"--run-name trackA-v1 --export-only --epoch 40 --avg 10 "
+        f"--run-name ft-v31 --export-only --epoch 5 --avg 3 "
         f"--chunk-size {chunk_size} --left-context-frames {left_context_frames}"
     )
-    if export_only:
+    if export_only or export_init_only:
         meta = export_onnx.remote(
             run_name=run_name,
             epoch=epoch,
-            avg=avg,
+            avg=1 if export_init_only else avg,
             chunk_size=chunk_size,
             left_context_frames=left_context_frames,
+            init_from=init_from,
+            export_init=export_init_only,
         )
         print("export metadata:", meta)
+        print("\nFull (detached) fine-tune command (do NOT run from this job):")
+        print(" ", full_cmd)
+        print("Then export:")
+        print(" ", export_cmd)
         return
+    lc = limit_cuts
+    if smoke and lc <= 0:
+        lc = 800
     result = train.remote(
         run_name=run_name,
         num_epochs=1 if smoke else num_epochs,
@@ -901,17 +1132,27 @@ def main(
         sources="everyayah" if smoke and not synthetic else sources,
         smoke=smoke,
         synthetic=synthetic,
-        limit_cuts=800 if smoke else 0,
+        limit_cuts=lc,
         do_export=False,
         chunk_size=chunk_size,
         left_context_frames=left_context_frames,
         avg=avg,
         start_epoch=start_epoch,
+        init_from=init_from,
+        base_lr=base_lr,
+        warmup_batches=warmup_batches,
     )
     print("train result:", result)
-    if smoke:
-        export_avg = 1
-        export_epoch = 1
+    should_export = (not skip_export) and (smoke or num_epochs >= 1)
+    if should_export:
+        export_epoch = 1 if smoke else 0
+        export_avg = 1 if smoke or (1 if smoke else num_epochs) < 2 else min(avg, num_epochs)
+        if smoke:
+            export_avg = 1
+            export_epoch = 1
+        else:
+            export_epoch = 0  # latest
+            export_avg = avg
         meta = export_onnx.remote(
             run_name=run_name,
             epoch=export_epoch,
@@ -921,7 +1162,7 @@ def main(
         )
         print("export metadata:", meta)
         result["export"] = meta
-    print("\nFull (detached) training command (do NOT run from this smoke job):")
+    print("\nFull (detached) fine-tune command (do NOT run from this job):")
     print(" ", full_cmd)
     print("Then export:")
     print(" ", export_cmd)

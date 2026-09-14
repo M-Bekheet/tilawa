@@ -15,14 +15,22 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from zipformer_ctc_utils import (  # noqa: E402
     ARCH_FLAGS,
+    DEFAULT_AVG,
+    DEFAULT_BASE_LR,
+    DEFAULT_INIT_FROM,
+    DEFAULT_NUM_EPOCHS,
+    DEFAULT_TRAIN_CHUNK_SIZES,
     DEFAULT_TRAIN_SOURCES,
     VOCAB_SIZE,
     compute_T_hop,
     icefall_to_ref_ids,
+    icefall_train_flags,
+    inverse_permute_ctc_head,
     io_inputs_match,
     io_json_from_session,
     permute_ctc_head,
     ref_to_icefall_ids,
+    remap_quranlab_key,
     write_icefall_tokens,
 )
 
@@ -78,6 +86,65 @@ def test_permute_ctc_head_softmax_alignment():
         np.testing.assert_allclose(
             p_ref[:, ref_id], p_ice[:, ice_id], rtol=1e-5, atol=1e-6
         )
+
+
+def test_inverse_permute_ctc_head_roundtrip_and_blank_row():
+    rng = np.random.default_rng(1)
+    hidden = 8
+    w = rng.standard_normal((VOCAB_SIZE, hidden)).astype(np.float32)
+    b = rng.standard_normal(VOCAB_SIZE).astype(np.float32)
+    w_back, b_back = permute_ctc_head(*inverse_permute_ctc_head(w, b))
+    np.testing.assert_array_equal(w_back, w)
+    np.testing.assert_array_equal(b_back, b)
+    w_back, b_back = inverse_permute_ctc_head(*permute_ctc_head(w, b))
+    np.testing.assert_array_equal(w_back, w)
+    np.testing.assert_array_equal(b_back, b)
+
+    marked_w = np.zeros((VOCAB_SIZE, 3), dtype=np.float32)
+    marked_b = np.zeros(VOCAB_SIZE, dtype=np.float32)
+    marked_w[250] = 3.0
+    marked_b[250] = 7.0
+    ice_w, ice_b = inverse_permute_ctc_head(marked_w, marked_b)
+    np.testing.assert_array_equal(ice_w[0], 3.0)
+    assert ice_b[0] == 7.0
+    assert ice_b[250] == 0.0
+
+
+def test_remap_quranlab_keys_sub_and_ctc_drop_transducer():
+    assert remap_quranlab_key("sub.conv.0.weight") == "encoder_embed.conv.0.weight"
+    assert remap_quranlab_key("ctc_head.weight") == "ctc_output.1.weight"
+    assert remap_quranlab_key("ctc_head.bias") == "ctc_output.1.bias"
+    assert remap_quranlab_key("encoder.encoders.0.layers.0.norm.bias") == (
+        "encoder.encoders.0.layers.0.norm.bias"
+    )
+    assert remap_quranlab_key("decoder.embedding.weight") is None
+    assert remap_quranlab_key("joiner.output_linear.weight") is None
+    assert remap_quranlab_key("simple_am_proj.weight") is None
+    assert remap_quranlab_key("simple_lm_proj.bias") is None
+
+
+def test_icefall_train_flags_init_from_chunk_lr():
+    flags = icefall_train_flags(init_from=DEFAULT_INIT_FROM)
+    assert flags[flags.index("--chunk-size") + 1] == DEFAULT_TRAIN_CHUNK_SIZES
+    assert flags[flags.index("--chunk-size") + 1] == "8,16,24"
+    assert flags[flags.index("--left-context-frames") + 1] == "128,256"
+    assert flags[flags.index("--base-lr") + 1] == str(DEFAULT_BASE_LR)
+    assert flags[flags.index("--base-lr") + 1] == "0.005"
+    assert flags[flags.index("--num-epochs") + 1] == str(DEFAULT_NUM_EPOCHS)
+    assert flags[flags.index("--drop-last") + 1] == "1"
+    limited = icefall_train_flags(limit_cuts=800, sources="retasy")
+    assert limited[limited.index("--drop-last") + 1] == "0"
+    assert limited[limited.index("--num-buckets") + 1] == "4"
+    assert limited[limited.index("--sources") + 1] == "retasy"
+    train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
+    assert 'init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt"' in train_py
+    assert train_py.count('init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt"') >= 2
+    assert "arch_train_flags" in train_py
+    assert "icefall_train_flags" in train_py
+    assert "inverse_permute_ctc_head" in train_py
+    assert "0.005" in train_py
+    assert DEFAULT_AVG == 3
+    assert DEFAULT_NUM_EPOCHS == 5
 
 
 def test_compute_T_hop_reference_chunk_24():
@@ -158,6 +225,8 @@ def test_arch_flags_reference_cnn_kernels():
     flags = list(ARCH_FLAGS)
     i = flags.index("--cnn-module-kernel")
     assert flags[i + 1] == "31,31,15,15,15,31"
+    j = flags.index("--pos-dim")
+    assert flags[j + 1] == "192"
 
 
 def test_default_train_sources_exclude_qurantts():
