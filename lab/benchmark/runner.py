@@ -495,7 +495,7 @@ def main():
         "--corpus",
         type=str,
         default="test_corpus",
-        help="Corpus dir under benchmark/ (test_corpus, test_corpus_v2, test_corpus_v3)",
+        help="Corpus dir under benchmark/ (test_corpus, test_corpus_v2, test_corpus_v3, test_corpus_qlab)",
     )
     parser.add_argument("--limit", type=int, default=0, help="Only the first N samples (0 = all)")
     args = parser.parse_args()
