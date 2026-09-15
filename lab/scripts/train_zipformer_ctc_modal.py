@@ -51,7 +51,7 @@ import modal
 WORKTREE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKTREE))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from shared.paths import data_root as _data_root  # noqa: E402
+from shared.paths import resolve_data_file  # noqa: E402
 from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_AVG,
     DEFAULT_BASE_LR,
@@ -62,8 +62,6 @@ from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_TRAIN_SOURCES,
     DEFAULT_WARMUP_BATCHES,
 )
-
-MAIN_CHECKOUT = _data_root().parent
 
 ICEFALL_SHA = "3f848bb6d0acc970c9b294a30ca0a04a7c9c78d1"
 K2_VERSION = "1.24.4.dev20250715+cuda12.4.torch2.4.1"
@@ -89,11 +87,20 @@ WORLD_SIZE = _world_size(_GPU_SPEC)
 
 
 def _client_file(rel: str) -> Path | None:
-    for root in (WORKTREE, MAIN_CHECKOUT):
-        p = root / rel
-        if p.is_file():
-            return p
-    return None
+    """Resolve a Modal `add_local_file` source on the client.
+
+    `data/...` is per-file via `resolve_data_file` (worktree `data/quran.json`
+    must not hide main-checkout `data/prompter/quran.json`). Everything else
+    is repo-relative to this worktree.
+    """
+    posix = Path(rel).as_posix()
+    if posix.startswith("data/"):
+        try:
+            return resolve_data_file(posix.removeprefix("data/"))
+        except FileNotFoundError:
+            return None
+    p = WORKTREE / rel
+    return p if p.is_file() else None
 
 
 def _build_image() -> modal.Image:
@@ -153,6 +160,8 @@ def _build_image() -> modal.Image:
         )
     )
     # add_local_file only on the client (these paths do not exist in the container).
+    if not (WORKTREE / "shared" / "paths.py").is_file():
+        return img
     mounts = [
         ("shared/paths.py", "/app/shared/paths.py"),
         ("shared/prompter_labels.py", "/app/shared/prompter_labels.py"),
