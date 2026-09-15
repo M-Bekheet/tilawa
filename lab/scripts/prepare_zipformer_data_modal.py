@@ -44,8 +44,9 @@ from pathlib import Path
 import modal
 
 _REPO = Path(__file__).resolve().parent.parent
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
+for _p in (_REPO, Path("/app")):
+    if _p.is_dir() and str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 from shared.paths import data_root  # noqa: E402
 
 # ---------------------------------------------------------------------------
