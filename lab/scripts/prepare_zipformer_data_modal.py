@@ -2260,8 +2260,61 @@ def _chain_window_cuts(cuts: list, gaps: tuple[float, ...]):
 
 
 def _assign_window_supervision(cut, *, wid: str, text: str, speaker: str, custom: dict):
+    """Attach one window-level supervision.
+
+    MixedCut.supervisions is derived from tracks — appending to the property
+    is a no-op (smoke ap-eOa3fVLZJuYotDOl7IxYPt IndexError). Drop track
+    supervisions, then put the concatenated phoneme text on the first
+    non-padding track (duration must fit that track; icefall reads ``.text``).
+    """
     from lhotse import SupervisionSegment
 
+    try:
+        from lhotse.utils import fastcopy
+    except ImportError:
+        from dataclasses import replace as fastcopy
+
+    if hasattr(cut, "drop_supervisions"):
+        cut = cut.drop_supervisions()
+    tracks = getattr(cut, "tracks", None)
+    if tracks:
+        idx = None
+        for i, track in enumerate(tracks):
+            inner = track.cut
+            if type(inner).__name__ == "PaddingCut":
+                continue
+            idx = i
+            break
+        if idx is None:
+            raise RuntimeError(f"no non-padding track to attach supervision for {wid}")
+        track = tracks[idx]
+        inner = track.cut
+        rec_id = getattr(inner, "recording_id", None) or wid
+        sup = SupervisionSegment(
+            id=wid,
+            recording_id=str(rec_id),
+            start=0.0,
+            duration=inner.duration,
+            channel=0,
+            text=text,
+            language="quran-phonemes",
+            speaker=speaker,
+            custom=custom,
+        )
+        inner = fastcopy(inner, supervisions=[sup])
+        new_tracks = list(tracks)
+        new_tracks[idx] = fastcopy(track, cut=inner)
+        cut = fastcopy(cut, tracks=new_tracks)
+        if hasattr(cut, "with_id"):
+            cut = cut.with_id(wid)
+        else:
+            cut = fastcopy(cut, id=wid)
+        if not cut.supervisions or cut.supervisions[0].text != text:
+            raise RuntimeError(
+                f"MixedCut supervision did not stick for {wid} "
+                f"n={len(cut.supervisions)}"
+            )
+        return cut
     rec_id = getattr(cut, "recording_id", None) or wid
     sup = SupervisionSegment(
         id=wid,
@@ -2274,15 +2327,11 @@ def _assign_window_supervision(cut, *, wid: str, text: str, speaker: str, custom
         speaker=speaker,
         custom=custom,
     )
-    if hasattr(cut, "drop_supervisions"):
-        cut = cut.drop_supervisions()
-    else:
-        cut.supervisions.clear()
-    cut.supervisions.append(sup)
+    cut = fastcopy(cut, supervisions=[sup])
     if hasattr(cut, "with_id"):
         cut = cut.with_id(wid)
     else:
-        cut.id = wid
+        cut = fastcopy(cut, id=wid)
     return cut
 
 
