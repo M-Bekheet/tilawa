@@ -49,7 +49,21 @@ from pathlib import Path
 import modal
 
 WORKTREE = Path(__file__).resolve().parent.parent
-MAIN_CHECKOUT = Path("/Users/rock/ai/projects/offline-tarteel")
+sys.path.insert(0, str(WORKTREE))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shared.paths import data_root as _data_root  # noqa: E402
+from zipformer_ctc_utils import (  # noqa: E402
+    DEFAULT_AVG,
+    DEFAULT_BASE_LR,
+    DEFAULT_EXPORT_CHUNK_SIZE,
+    DEFAULT_INIT_FROM,
+    DEFAULT_LEFT_CONTEXT_FRAMES,
+    DEFAULT_NUM_EPOCHS,
+    DEFAULT_TRAIN_SOURCES,
+    DEFAULT_WARMUP_BATCHES,
+)
+
+MAIN_CHECKOUT = _data_root().parent
 
 ICEFALL_SHA = "3f848bb6d0acc970c9b294a30ca0a04a7c9c78d1"
 K2_VERSION = "1.24.4.dev20250715+cuda12.4.torch2.4.1"
@@ -140,6 +154,7 @@ def _build_image() -> modal.Image:
     )
     # add_local_file only on the client (these paths do not exist in the container).
     mounts = [
+        ("shared/paths.py", "/app/shared/paths.py"),
         ("shared/prompter_labels.py", "/app/shared/prompter_labels.py"),
         ("shared/fbank.py", "/app/shared/fbank.py"),
         ("scripts/zipformer_ctc_utils.py", "/app/zipformer_ctc_utils.py"),
@@ -329,8 +344,10 @@ def _patch_file(path: Path, old: str, new: str, label: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     written = path.read_text(encoding="utf-8")
     if old not in new:
-        assert old not in written, f"patch {label!r} left original text in {path}"
-    assert new.strip() in written
+        if old in written:
+            raise RuntimeError(f"patch {label!r} left original text in {path}")
+    if new.strip() not in written:
+        raise RuntimeError(f"patch {label!r} did not write new text into {path}")
     print(f"patched {label} in {path}")
 
 
@@ -387,9 +404,12 @@ def _prepare_recipe(work: Path, smoke: bool) -> Path:
         )
         (dst / "train.py").write_text(train_txt, encoding="utf-8")
         patched = (dst / "train.py").read_text(encoding="utf-8")
-        assert '"log_interval": 1,' in patched, "smoke log_interval patch did not apply"
-        assert '"log_interval": 50,' not in patched
-        assert '"valid_interval": 5,' in patched
+        if '"log_interval": 1,' not in patched:
+            raise RuntimeError("smoke log_interval patch did not apply")
+        if '"log_interval": 50,' in patched:
+            raise RuntimeError("smoke log_interval=50 still present after patch")
+        if '"valid_interval": 5,' not in patched:
+            raise RuntimeError("smoke valid_interval patch did not apply")
         print("asserted smoke log_interval=1 valid_interval=5")
     # export-onnx-streaming-ctc.py already uses token_table["<blk>"] at this SHA.
     _patch_file(
@@ -466,9 +486,14 @@ def _build_synthetic_cuts(n: int = 20) -> Path:
     cfg = dict(LHOTSE_FBANK_CONFIG)
     try:
         extractor = Fbank(FbankConfig(**cfg))
-    except TypeError:
-        cfg.pop("torchaudio_compatible_mel_scale", None)
-        extractor = Fbank(FbankConfig(**cfg))
+    except TypeError as exc:
+        import lhotse
+
+        raise TypeError(
+            f"lhotse {getattr(lhotse, '__version__', '?')} FbankConfig rejected "
+            f"LHOTSE_FBANK_CONFIG keys={sorted(cfg)}: {exc}. "
+            f"Need torchaudio_compatible_mel_scale for knf/torchaudio parity."
+        ) from exc
     cs = cs.compute_and_store_features(
         extractor=extractor,
         storage_path=str(feat_dir),
@@ -893,20 +918,20 @@ def _run_export_impl(
 )
 def train(
     run_name: str,
-    num_epochs: int = 5,
+    num_epochs: int = DEFAULT_NUM_EPOCHS,
     max_duration: int = 1200,
-    sources: str = "everyayah,qua,iqra,retasy,tlog",
+    sources: str = DEFAULT_TRAIN_SOURCES,
     smoke: bool = False,
     synthetic: bool = False,
     limit_cuts: int = 0,
     do_export: bool = False,
-    chunk_size: int = 24,
-    left_context_frames: int = 256,
-    avg: int = 3,
+    chunk_size: int = DEFAULT_EXPORT_CHUNK_SIZE,
+    left_context_frames: int = DEFAULT_LEFT_CONTEXT_FRAMES,
+    avg: int = DEFAULT_AVG,
     start_epoch: int = 1,
-    init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt",
-    base_lr: float = 0.005,
-    warmup_batches: float = 500,
+    init_from: str = DEFAULT_INIT_FROM,
+    base_lr: float = DEFAULT_BASE_LR,
+    warmup_batches: float = DEFAULT_WARMUP_BATCHES,
 ) -> dict:
     import subprocess
     import time
@@ -1056,22 +1081,22 @@ def export_onnx(
 @app.local_entrypoint()
 def main(
     run_name: str,
-    num_epochs: int = 5,
+    num_epochs: int = DEFAULT_NUM_EPOCHS,
     max_duration: int = 1200,
-    sources: str = "everyayah,qua,iqra,retasy,tlog",
+    sources: str = DEFAULT_TRAIN_SOURCES,
     smoke: bool = False,
     synthetic: bool = False,
     export_only: bool = False,
     export_init_only: bool = False,
     epoch: int = 0,
-    avg: int = 3,
-    chunk_size: int = 24,
-    left_context_frames: int = 256,
+    avg: int = DEFAULT_AVG,
+    chunk_size: int = DEFAULT_EXPORT_CHUNK_SIZE,
+    left_context_frames: int = DEFAULT_LEFT_CONTEXT_FRAMES,
     start_epoch: int = 1,
     limit_cuts: int = 0,
-    init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt",
-    base_lr: float = 0.005,
-    warmup_batches: float = 500,
+    init_from: str = DEFAULT_INIT_FROM,
+    base_lr: float = DEFAULT_BASE_LR,
+    warmup_batches: float = DEFAULT_WARMUP_BATCHES,
     skip_export: bool = False,
 ):
     """Fine-tune from Quran-Lab v3.1 (or from scratch if ``init_from=""``).

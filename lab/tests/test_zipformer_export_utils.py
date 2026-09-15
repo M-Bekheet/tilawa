@@ -139,14 +139,18 @@ def test_icefall_train_flags_init_from_chunk_lr():
     assert limited[limited.index("--num-buckets") + 1] == "4"
     assert limited[limited.index("--sources") + 1] == "retasy"
     train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
-    assert 'init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt"' in train_py
-    assert train_py.count('init_from: str = "/vol/reference/zipformer_p_arabic_v3.1.pt"') >= 2
+    assert "init_from: str = DEFAULT_INIT_FROM" in train_py
+    assert train_py.count("init_from: str = DEFAULT_INIT_FROM") >= 2
     assert "arch_train_flags" in train_py
     assert "icefall_train_flags" in train_py
     assert "inverse_permute_ctc_head" in train_py
     assert "0.005" in train_py
     assert DEFAULT_AVG == 3
     assert DEFAULT_NUM_EPOCHS == 5
+    assert "TypeError" in train_py
+    assert "LHOTSE_FBANK_CONFIG" in train_py
+    assert "torchaudio_compatible_mel_scale" in train_py
+    assert "cfg.pop(" not in train_py
     ddp = icefall_train_flags(world_size=4)
     assert ddp[ddp.index("--world-size") + 1] == "4"
     assert "torch.cuda.device_count" in train_py
@@ -278,6 +282,6 @@ def test_default_train_sources_exclude_qurantts():
     assert parts == ["everyayah", "qua", "iqra", "retasy", "tlog"]
     train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
     data_py = (ROOT / "scripts" / "zipformer_asr_datamodule.py").read_text()
-    assert train_py.count('sources: str = "everyayah,qua,iqra,retasy,tlog"') == 2
+    assert train_py.count("sources: str = DEFAULT_TRAIN_SOURCES") == 2
     assert 'default="everyayah,qua,iqra,retasy,tlog"' in data_py
     assert "--sources everyayah,qua,qurantts" not in train_py
