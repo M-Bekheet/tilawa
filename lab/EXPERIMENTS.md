@@ -241,10 +241,14 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 | v3.1 int8 (vendored) | 69 MB | **53/53** | 42/43 | same 247/256 | same 571/583 | same split | 0.75 s / 0.48 s |
 | v3 fp32 | 251 MB | 52/53 | **43/43** | same 247/256 | same 571/583 | same split | 0.88 s / 0.58 s |
 | v3 int8 | 69 MB | 52/53 | **43/43** | same 247/256 | same 571/583 | same split | 0.75 s / 0.48 s |
+| ft-v31 fp32 | 248 MB | 45/53 | 39/43 | 92.3 / 94.5 / 90.2 **(231/256)** | 566/583 (97.1%) | 184/184, 194/200, 188/199 | 0.85 s / 0.56 s |
+| ft-v31 int8 | 66 MB | 45/53 | 39/43 | same 231/256 | same 566/583 | same split | 0.68 s / 0.44 s |
 
-v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1.
+v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1. ft-v31 fp32+int8 all corpora ×3 (scores identical across repeats).
 
 **PER (ONNX streaming greedy, v3.1 fp32, qlab):** overall **5.56%** (exact 49.1%); everyayah_heldout 2.39%, qul_alnufais 7.78%, tlog_holdout 7.06%. Not comparable 1:1 to the card (different decode, gold is `ordered_quran_phonemes.json` by surah:ayah, torchaudio kaldi fbank). Wrapper: `experiments/prompter-zipformer/reference_tools/per_onnx_wrapper.py`.
+
+**PER (ft-v31 fp32, same wrapper):** overall **4.37%** (exact 61.6%); EA 1.69%, nufais 4.59%, tlog 8.18%. int8 4.35%. Acoustic PER improved vs v3.1; tracker SeqAcc did not.
 
 Reproduction:
 
@@ -261,6 +265,31 @@ PROMPTER_ORT_DIR=/Users/rock/ai/projects/offline-tarteel/web/frontend/node_modul
 ```
 
 Raw JSON: `benchmark/results/2026-09-14_16*.json` / `_17*.json` / `_18*.json`; ledger `benchmark/results/qlab_v3_eval_ledger.json`; PER `benchmark/results/v31_fp32_qlab_per.json`.
+
+### Fine-tune data mix (staged 2026-09-15)
+
+Volume `zipformer-ctc-training` `/manifests/`. All five `*_cuts_fbank.jsonl.gz` exist. OOV 0. Speed perturb ×3 at train time.
+
+| source | clips | hours | notes |
+|---|---|---|---|
+| everyayah | 128,204 | 358.0 | train+validation, 1 skip_short |
+| qua | 239,975 | 747.2 | fbank 11/12 shards ≈ 685 h perturbed; shard 11 hung twice, skipped |
+| iqra | 16,070 | 21.5 | 55,321 low_match dropped (MSA+Quran mix) |
+| retasy | 357 | 0.36 | `correct` only; icefall drops ~3 s clips labelled 2:255 |
+| tlog | 41,083 | 100.0 | qlab tlog_holdout ids excluded |
+| **total (raw)** | **425,689** | **1,227** | ~2,700 h with ×3 perturb |
+
+### ft-v31 (NOT PROMOTED)
+
+Fine-tune from Quran-Lab v3.1 `.pt` (`--init-from`, inverse-permute CTC blank 250→0, `--pos-dim 192`). Config: 5 epochs, `--max-duration 1200`, `--avg 3` (epochs 2–5), `--base-lr 0.005`, `--warmup-batches 500`, chunks `8,16,24`, left `128,256`. GPU `H100:4` DDP after `201f8d1` (worker `world_size=torch.cuda.device_count()`). Train app `ap-6In0UqeDBVXxeLVFXw1aUe` (cancelled first client `ap-a4vuTLIWmrU9rOEoVMrX3g` had `world_size=1` because `ZIPFORMER_GPU` was unset on the worker). Volume `/vol/exp/ft-v31`, export `/vol/exports/ft-v31` (`model.onnx` 259.6 MB, `model.int8.onnx` 69.2 MB, T=61 hop=48, `io_diff=[]`). Trained on the 11/12 QUA fbank merge (shard 11 later finished; this run did not see it).
+
+CTC first-batch 0.6411 (pretrained, <1.0). `metrics.jsonl`: ep1 train 0.1066 / valid 0.0884; ep5 train 0.0796 / valid 0.0324. Wall 9536 s (~2.65 h). Max GPU mem ~18 GB / 80 GB. Epoch-3 valid 0.0342 is worse than ep4/5 — no extra `--epoch 3 --avg 1` export.
+
+Promotion bar (strict): qlab ≥ 572 AND v1 = 53 AND v3 ≥ 247 vs v3.1 baseline 571 / 53 / 247. **NOT PROMOTED** — qlab 566/583, v1 45/53, v3 231/256. tlog_holdout 188/199 vs 194; nufais 194/200 vs 193 (the only slice that improved). int8 matches fp32 scores, ~20% faster.
+
+v1/v3 regressions are mostly multi-ayah truncation (first 1–2 ayahs only). qlab: −6 tlog_holdout, +1 nufais (`qul_alnufais__37_43`). ONNX PER **4.37%** (EA 1.69 / nufais 4.59 / tlog 8.18; exact 61.6%) vs v3.1 **5.56%** — acoustics improved, tracker SeqAcc did not.
+
+Raw JSON: `benchmark/results/2026-09-15_18*.json` / `_19*.json`; ledger `benchmark/results/ft_v31_eval_ledger.json`; PER `benchmark/results/ft_v31_fp32_qlab_per.json`.
 
 ## Per-experiment notes
 
@@ -314,6 +343,7 @@ Use case: r7 remains the highest-accuracy distillation teacher; r15 is now a pla
 12. **r7 (Ahmed's 1B wav2vec2 phoneme CTC) is still a strong v3 batch oracle.** 96.1% / 96.1% / 96.1% on v3 (256 samples, full-file batch), but 1 GB is too large to ship and wav2vec2 attention is not streaming-friendly. Use r7/r15 as teacher/verifier candidates, not the browser runtime.
 13. **v3 SeqAcc is mostly a tracker state problem, not a recognizability problem.** Exact-match diagnostics (`web/frontend/test/analyze-v3-stability.ts`) show the v3 gap is dominated by extra emissions: cached streaming exact-fail runs include 124 `extra_after_expected` and 29 `wrong_surah_jump` cases across 768 runs. Comparing those cached streaming outputs against the r7 batch oracle (`web/frontend/test/compare-streaming-oracle.ts --stability-json=... --oracle-results=benchmark/results/r7-v3-batch.json`) shows the first long/medium exact-fail samples are `streaming_tracker_loss`: r7 predicts the exact expected verse while streaming emits expected+extras. The old phoneme ONNX full-file path was too weak to serve as this oracle; it often missed the expected verse on those same long clips. Two tempting runtime invariants were falsified and reverted: consuming the buffer after evidence-backed stale exits, and blocking selected candidates dominated by the current fusion leader. The next tracker attempt needs explicit segment ownership / active-hypothesis comparison, not score-threshold or rank gates.
 14. **Alketab ships Quran-Lab v3.1 int8.** `quran_phoneme_zipformer.onnx` is byte-identical to `Quran-Lab/zipformer_p-arabic-v3` `zipformer_p_arabic_v3.1.int8.onnx` (NPL-1.2). Tracker scores are deterministic; v3.1 vs v3 only swap one v1/v2 crowd clip. Fine-tune v3.1 rather than training Zipformer CTC from scratch.
+15. **A 5-epoch full-mix fine-tune of v3.1 at lr 0.005 dropped tracker SeqAcc even as CTC valid loss fell 0.088→0.032 and ONNX PER 5.56%→4.37%.** ft-v31: v1 53→45, v3 247→231, qlab 571→566 (tlog −6, nufais +1). Failures are mostly multi-ayah truncations, not wrong-surah. Lower LR / fewer epochs / freeze encoder next — do not ship this checkpoint.
 
 ## Methodology
 
