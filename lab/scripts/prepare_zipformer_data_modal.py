@@ -2038,13 +2038,33 @@ def main(
             f"no_speed_perturb={no_speed_perturb}"
         )
         for src in selected:
-            args = [
-                (src, i, fbank_shards, no_speed_perturb) for i in range(fbank_shards)
-            ]
             print(f"[fbank/{src}] spawning {fbank_shards} shards", flush=True)
-            results = list(compute_fbank_shard.starmap(args))
-            for r in results:
-                print(f"  shard done: {r}", flush=True)
+            pending = list(range(fbank_shards))
+            results: list = [None] * fbank_shards
+            attempts = {i: 0 for i in pending}
+            max_attempts = 3
+            while pending:
+                handles = {
+                    i: compute_fbank_shard.spawn(src, i, fbank_shards, no_speed_perturb)
+                    for i in pending
+                }
+                next_pending: list[int] = []
+                for i, handle in handles.items():
+                    try:
+                        results[i] = handle.get()
+                        print(f"  shard done: {results[i]}", flush=True)
+                    except Exception as e:
+                        attempts[i] += 1
+                        print(
+                            f"  shard {i} FAILED attempt {attempts[i]}/{max_attempts}: "
+                            f"{type(e).__name__}: {e}",
+                            flush=True,
+                        )
+                        if attempts[i] < max_attempts:
+                            next_pending.append(i)
+                        else:
+                            raise
+                pending = next_pending
             merged = merge_fbank_shards.remote(src, fbank_shards, no_speed_perturb)
             print(f"FBANK MERGED {src}: {merged}", flush=True)
         return
