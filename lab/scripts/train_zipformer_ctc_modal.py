@@ -38,6 +38,7 @@ Usage::
     modal run --detach scripts/train_zipformer_ctc_modal.py \\
         --run-name interp-ftv31-a0.5 --export-interp \\
         /vol/reference/zipformer_p_arabic_v3.1.pt:/vol/exp/ft-v31/epoch-5.pt:0.5
+    # optional 4th field selects icefall epoch tensors (default model; or model_avg)
 
 Do not download checkpoints/ONNX into git. After export::
 
@@ -65,7 +66,9 @@ from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_NUM_EPOCHS,
     DEFAULT_TRAIN_SOURCES,
     DEFAULT_WARMUP_BATCHES,
+    icefall_state_from_reference,
     parse_export_interp,
+    remap_quranlab_key,
 )
 
 ICEFALL_SHA = "3f848bb6d0acc970c9b294a30ca0a04a7c9c78d1"
@@ -606,40 +609,20 @@ def _inspect_quranlab_blob(blob: object) -> dict:
 
 def _convert_reference_to_icefall_pt(src: Path, dest: Path) -> dict:
     """Remap Quran-Lab keys, inverse-permute CTC head, write icefall ``{model: sd}``."""
+    import numpy as np
     import torch
-
-    sys.path.insert(0, "/app")
-    from zipformer_ctc_utils import inverse_permute_ctc_head, remap_quranlab_key
 
     blob = torch.load(str(src), map_location="cpu", weights_only=False)
     inspect = _inspect_quranlab_blob(blob)
     raw = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
     if not isinstance(raw, dict):
         raise TypeError(f"expected state dict, got {type(raw)}")
-    out: dict = {}
-    dropped: list[str] = []
-    for k, v in raw.items():
-        nk = remap_quranlab_key(k)
-        if nk is None:
-            dropped.append(k)
-            continue
-        if nk in out:
-            raise RuntimeError(f"key collision after remap: {k} -> {nk}")
-        out[nk] = v
+    dropped = [k for k in raw if remap_quranlab_key(k) is None]
     print(f"dropped {len(dropped)} transducer/unused keys (head): {dropped[:8]}")
+    init_np = {k: _tensor_to_numpy(v) for k, v in raw.items()}
+    out_np = icefall_state_from_reference(init_np)
+    out = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in out_np.items()}
     w_key, b_key = "ctc_output.1.weight", "ctc_output.1.bias"
-    if w_key not in out or b_key not in out:
-        raise RuntimeError(
-            f"CTC Linear missing after remap: have "
-            f"{[k for k in out if 'ctc' in k]} (need {w_key}, {b_key})"
-        )
-    w, b = out[w_key], out[b_key]
-    w_np, b_np = inverse_permute_ctc_head(
-        w.detach().cpu().numpy(),
-        b.detach().cpu().numpy(),
-    )
-    out[w_key] = torch.from_numpy(w_np).to(dtype=w.dtype)
-    out[b_key] = torch.from_numpy(b_np).to(dtype=b.dtype)
     print(
         f"inverse-permuted CTC head: icefall row0 bias={float(out[b_key][0]):.4f} "
         f"(was ref blank row250); icefall row250 bias={float(out[b_key][250]):.4f}"
@@ -666,13 +649,19 @@ def _write_interpolated_checkpoint(
     ft_pt: str,
     alpha: float,
     dest: Path,
+    ft_state_key: str = "model",
 ) -> dict:
-    """Load reference init + icefall FT, blend in icefall order, write ``epoch-*.pt``."""
+    """Load init + icefall FT, blend in icefall order, write ``epoch-*.pt``."""
     import numpy as np
     import torch
 
     sys.path.insert(0, "/app")
-    from zipformer_ctc_utils import interpolate_state_dicts
+    from zipformer_ctc_utils import (
+        checkpoint_top_keys,
+        detect_state_space,
+        interpolate_state_dicts,
+        select_checkpoint_state,
+    )
 
     src = _ensure_reference_pt(init_pt)
     blob = torch.load(str(src), map_location="cpu", weights_only=False)
@@ -680,16 +669,16 @@ def _write_interpolated_checkpoint(
     if not isinstance(init_raw, dict):
         raise TypeError(f"init checkpoint is {type(init_raw)}, not a state dict")
     init_np = {k: _tensor_to_numpy(v) for k, v in init_raw.items()}
+    init_space = detect_state_space(init_np)
+    print(f"init state space={init_space} ({len(init_np)} tensors)")
 
     ft_path = Path(ft_pt)
     if not ft_path.is_file():
         raise FileNotFoundError(f"fine-tune checkpoint missing: {ft_path}")
     ft_blob = torch.load(str(ft_path), map_location="cpu", weights_only=False)
-    ft_raw = (
-        ft_blob["model"] if isinstance(ft_blob, dict) and "model" in ft_blob else ft_blob
-    )
-    if not isinstance(ft_raw, dict):
-        raise TypeError(f"ft checkpoint is {type(ft_raw)}, not a state dict")
+    ft_top_keys = checkpoint_top_keys(ft_blob)
+    print(f"ft checkpoint top-level keys={ft_top_keys}; using {ft_state_key}")
+    ft_raw = select_checkpoint_state(ft_blob, ft_state_key)
     ft_np = {}
     for key, value in ft_raw.items():
         nk = key[7:] if key.startswith("module.") else key
@@ -699,9 +688,9 @@ def _write_interpolated_checkpoint(
 
     print(
         f"interpolating alpha={alpha} init={src} ({len(init_np)} tensors) "
-        f"ft={ft_path} ({len(ft_np)} tensors)"
+        f"ft={ft_path} ({len(ft_np)} tensors) ft_state_key={ft_state_key}"
     )
-    blended = interpolate_state_dicts(init_np, ft_np, alpha, init_is_reference=True)
+    blended = interpolate_state_dicts(init_np, ft_np, alpha)
     out = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in blended.items()}
     dest.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"model": out}, dest)
@@ -715,6 +704,9 @@ def _write_interpolated_checkpoint(
         "alpha": float(alpha),
         "n_tensors": len(out),
         "icefall_pt": str(dest),
+        "init_space": init_space,
+        "ft_state_key": ft_state_key,
+        "ft_top_keys": ft_top_keys,
     }
 
 
@@ -1145,11 +1137,13 @@ def export_onnx(
     if export_interp and export_init:
         raise ValueError("pass only one of --export-interp and --export-init-only")
     if export_interp:
-        init_pt, ft_pt, alpha = parse_export_interp(export_interp)
+        init_pt, ft_pt, alpha, ft_state_key = parse_export_interp(export_interp)
         exp_dir = Path(f"/vol/exp/{run_name}")
         exp_dir.mkdir(parents=True, exist_ok=True)
         dest = exp_dir / "epoch-1.pt"
-        init_meta = _write_interpolated_checkpoint(init_pt, ft_pt, alpha, dest)
+        init_meta = _write_interpolated_checkpoint(
+            init_pt, ft_pt, alpha, dest, ft_state_key=ft_state_key
+        )
         epoch = 1
         avg = 1
     elif export_init:
@@ -1163,7 +1157,13 @@ def export_onnx(
         avg = 1
     meta = _run_export_impl(run_name, epoch, avg, chunk_size, left_context_frames)
     if init_meta is not None:
+        import json
+
         meta["init_meta"] = init_meta
+        export_dir = Path(f"/vol/exports/{run_name}")
+        (export_dir / "metadata.json").write_text(
+            json.dumps(meta, indent=2) + "\n", encoding="utf-8"
+        )
     vol.commit()
     return meta
 
@@ -1193,7 +1193,7 @@ def main(
     """Fine-tune from Quran-Lab v3.1 (or from scratch if ``init_from=""``).
 
     ``--export-init-only``: load+permute+export, no training (load-path proof).
-    ``--export-interp INIT_PT:FT_PT:ALPHA``: WiSE-FT blend then export (CPU, no train).
+    ``--export-interp INIT_PT:FT_PT:ALPHA[:model|model_avg]``: WiSE-FT blend then export (CPU, no train).
     Smoke implies 1 epoch, max-duration 200, limit-cuts 800.
     """
     full_cmd = (

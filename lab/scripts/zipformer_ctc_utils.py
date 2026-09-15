@@ -197,13 +197,27 @@ def remap_quranlab_state_keys(keys: Iterable[str]) -> dict[str, str | None]:
     return {k: remap_quranlab_key(k) for k in keys}
 
 
-def parse_export_interp(spec: str) -> tuple[str, str, float]:
-    """Parse ``INIT_PT:FT_PT:ALPHA`` (alpha last; paths may contain colons besides the two separators)."""
+FT_CHECKPOINT_STATE_KEYS = frozenset({"model", "model_avg"})
+
+
+def parse_export_interp(spec: str) -> tuple[str, str, float, str]:
+    """Parse ``INIT_PT:FT_PT:ALPHA[:model|model_avg]``.
+
+    Alpha is the last float field; an optional 4th token selects the icefall
+    checkpoint tensor dict (default ``model``). Paths may contain colons.
+    """
     text = str(spec).strip()
-    parts = text.rsplit(":", 2)
+    ft_state_key = "model"
+    rest = text
+    head, sep, tail = text.rpartition(":")
+    if sep and tail in FT_CHECKPOINT_STATE_KEYS:
+        ft_state_key = tail
+        rest = head
+    parts = rest.rsplit(":", 2)
     if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2]:
         raise ValueError(
-            f"export-interp must be INIT_PT:FT_PT:ALPHA, got {spec!r}"
+            "export-interp must be INIT_PT:FT_PT:ALPHA[:model|model_avg], "
+            f"got {spec!r}"
         )
     init_pt, ft_pt, alpha_s = parts
     try:
@@ -214,7 +228,62 @@ def parse_export_interp(spec: str) -> tuple[str, str, float]:
         ) from exc
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"export-interp alpha must be in [0, 1], got {alpha}")
-    return init_pt, ft_pt, alpha
+    return init_pt, ft_pt, alpha, ft_state_key
+
+
+def checkpoint_top_keys(blob: object) -> list[str]:
+    """Sorted top-level keys of an icefall/Quran-Lab checkpoint wrapper."""
+    if not isinstance(blob, dict):
+        return []
+    return sorted(str(k) for k in blob.keys())
+
+
+def select_checkpoint_state(blob: object, key: str) -> dict:
+    """Pull ``blob[key]`` (``model`` or ``model_avg``). Fail loud if missing."""
+    if key not in FT_CHECKPOINT_STATE_KEYS:
+        raise ValueError(
+            f"ft state key must be one of {sorted(FT_CHECKPOINT_STATE_KEYS)}, got {key!r}"
+        )
+    if not isinstance(blob, dict):
+        raise TypeError(f"checkpoint is {type(blob)}, not a dict")
+    top = checkpoint_top_keys(blob)
+    if key not in blob:
+        raise KeyError(
+            f"checkpoint has no {key!r}; top-level keys: {top}"
+        )
+    raw = blob[key]
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"checkpoint[{key!r}] is {type(raw)}, not a state dict; "
+            f"top-level keys: {top}"
+        )
+    return raw
+
+
+def detect_state_space(keys: Iterable[str]) -> str:
+    """``reference`` if ``ctc_head.*``/``sub.*``; ``icefall`` if ``ctc_output.1.*``.
+
+    Raises if both (or neither) families are present so a second inverse-permute
+    cannot silently rotate an already-icefall CTC head.
+    """
+    key_list = [str(k) for k in keys]
+    has_ref = any(
+        k.startswith("ctc_head.") or k.startswith("sub.") for k in key_list
+    )
+    has_ice = any(k.startswith("ctc_output.1.") for k in key_list)
+    if has_ref and has_ice:
+        raise ValueError(
+            "ambiguous state-dict space: both reference markers "
+            "(ctc_head.*/sub.*) and icefall markers (ctc_output.1.*) present"
+        )
+    if has_ref:
+        return "reference"
+    if has_ice:
+        return "icefall"
+    raise ValueError(
+        "cannot detect state-dict space: need ctc_head.*/sub.* (reference) "
+        "or ctc_output.1.* (icefall)"
+    )
 
 
 def icefall_state_from_reference(
@@ -247,21 +316,20 @@ def interpolate_state_dicts(
     init_sd: dict[str, np.ndarray],
     ft_sd: dict[str, np.ndarray],
     alpha: float,
-    *,
-    init_is_reference: bool = True,
 ) -> dict[str, np.ndarray]:
     """WiSE-FT blend ``alpha * ft + (1 - alpha) * init`` in icefall key/CTC order.
 
-    ``init_is_reference=True`` applies the same remap + inverse blank permutation
-    as ``--init-from`` *before* blending, so CTC rows line up with the fine-tuned
-    icefall checkpoint. Matching keys only; missing/extra keys or shape mismatch
-    raise.
+    Detects init space from keys: reference (``ctc_head.*``/``sub.*``) is remapped
+    and inverse-permuted via :func:`icefall_state_from_reference`; icefall
+    (``ctc_output.1.*``) is used as-is. Ambiguous/unknown spaces raise.
+    Matching keys only; missing/extra keys or shape mismatch raise.
     """
     if not 0.0 <= float(alpha) <= 1.0:
         raise ValueError(f"alpha must be in [0, 1], got {alpha}")
+    space = detect_state_space(init_sd)
     init = (
         icefall_state_from_reference(init_sd)
-        if init_is_reference
+        if space == "reference"
         else {k: np.asarray(v) for k, v in init_sd.items()}
     )
     ft = {k: np.asarray(v) for k, v in ft_sd.items()}

@@ -23,6 +23,7 @@ from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_TRAIN_SOURCES,
     VOCAB_SIZE,
     compute_T_hop,
+    detect_state_space,
     icefall_to_ref_ids,
     icefall_train_flags,
     inverse_permute_ctc_head,
@@ -36,6 +37,7 @@ from zipformer_ctc_utils import (  # noqa: E402
     write_icefall_tokens,
     interpolate_state_dicts,
     parse_export_interp,
+    select_checkpoint_state,
     CTC_ICEFALL_BIAS_KEY,
     CTC_ICEFALL_WEIGHT_KEY,
 )
@@ -147,7 +149,7 @@ def test_icefall_train_flags_init_from_chunk_lr():
     assert train_py.count("init_from: str = DEFAULT_INIT_FROM") >= 2
     assert "arch_train_flags" in train_py
     assert "icefall_train_flags" in train_py
-    assert "inverse_permute_ctc_head" in train_py
+    assert "icefall_state_from_reference" in train_py
     assert "0.005" in train_py
     assert DEFAULT_AVG == 3
     assert DEFAULT_NUM_EPOCHS == 5
@@ -281,16 +283,26 @@ def test_resolve_train_sources_full_run_fails_loud(tmp_path: Path):
 
 
 def test_parse_export_interp_and_alpha_endpoints():
-    init_pt, ft_pt, alpha = parse_export_interp(
+    init_pt, ft_pt, alpha, key = parse_export_interp(
         "/vol/reference/zipformer_p_arabic_v3.1.pt:/vol/exp/ft-v31/epoch-5.pt:0.25"
     )
     assert init_pt.endswith("zipformer_p_arabic_v3.1.pt")
     assert ft_pt.endswith("epoch-5.pt")
     assert alpha == 0.25
+    assert key == "model"
+    *_, key_avg = parse_export_interp(
+        "/vol/reference/zipformer_p_arabic_v3.1.pt:/vol/exp/ft-v31/epoch-5.pt:0.5:model_avg"
+    )
+    assert key_avg == "model_avg"
     with pytest.raises(ValueError, match="INIT_PT:FT_PT:ALPHA"):
         parse_export_interp("only-one-path")
     with pytest.raises(ValueError, match="in \\[0, 1\\]"):
         parse_export_interp("/a.pt:/b.pt:1.5")
+    blob = {"model": {"a": 1}, "model_avg": {"a": 2}, "epoch": 5}
+    assert select_checkpoint_state(blob, "model") == {"a": 1}
+    assert select_checkpoint_state(blob, "model_avg") == {"a": 2}
+    with pytest.raises(KeyError, match="top-level keys"):
+        select_checkpoint_state({"model": {"a": 1}}, "model_avg")
 
 
 def test_interpolate_alpha_endpoints_and_ctc_permute_before_blend():
@@ -358,9 +370,33 @@ def test_interpolate_alpha_endpoints_and_ctc_permute_before_blend():
             {**ft_sd, "extra.weight": np.ones(2, dtype=np.float32)},
             0.5,
         )
+
+    # icefall-space init: do NOT inverse-permute again (alpha=0 identity).
+    init_ice = {
+        "encoder_embed.conv.weight": encoder_init,
+        CTC_ICEFALL_WEIGHT_KEY: ice_w,
+        CTC_ICEFALL_BIAS_KEY: ice_b,
+    }
+    assert detect_state_space(init_sd) == "reference"
+    assert detect_state_space(init_ice) == "icefall"
+    out_ice0 = interpolate_state_dicts(init_ice, ft_sd, 0.0)
+    np.testing.assert_allclose(out_ice0["encoder_embed.conv.weight"], encoder_init)
+    np.testing.assert_allclose(out_ice0[CTC_ICEFALL_WEIGHT_KEY], ice_w)
+    np.testing.assert_allclose(out_ice0[CTC_ICEFALL_BIAS_KEY], ice_b)
+    twice = inverse_permute_ctc_head(ice_w, ice_b)
+    assert not np.allclose(out_ice0[CTC_ICEFALL_BIAS_KEY], twice[1])
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        detect_state_space([*init_sd, *init_ice])
+    with pytest.raises(ValueError, match="cannot detect"):
+        detect_state_space(["encoder_embed.conv.weight"])
+
     train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
     assert "export_interp" in train_py
     assert "parse_export_interp" in train_py
+    assert "ft_state_key" in train_py
+    assert "icefall_state_from_reference" in train_py
+    assert "init_is_reference" not in train_py
 
 
 def test_default_train_sources_exclude_qurantts():
