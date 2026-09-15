@@ -14,6 +14,11 @@ import os
 import re
 from pathlib import Path
 
+try:
+    from .paths import data_root
+except ImportError:  # script / Modal partial package
+    from shared.paths import data_root
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TOKENS_JS = (
     REPO_ROOT
@@ -23,7 +28,6 @@ DEFAULT_TOKENS_JS = (
     / "model"
     / "tokens.js"
 )
-_MAIN_QURAN = Path("/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json")
 
 _TOKENS_RE = re.compile(r"export const TOKENS = (\[[\s\S]*?\]);")
 _BLANK = "<blank>"
@@ -38,7 +42,7 @@ def resolve_quran_json() -> Path:
             p = p / "quran.json"
         if p.is_file():
             return p
-    for candidate in (REPO_ROOT / "data" / "prompter" / "quran.json", _MAIN_QURAN):
+    for candidate in (REPO_ROOT / "data" / "prompter" / "quran.json", data_root() / "prompter" / "quran.json"):
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(
@@ -55,8 +59,10 @@ def load_tokens(tokens_js_path: str | Path | None = None) -> list[str]:
     if m is None:
         raise ValueError(f"TOKENS array not found in {path}")
     tokens = json.loads(m.group(1))
-    assert len(tokens) == 251, f"expected 251 tokens, got {len(tokens)}"
-    assert tokens[-1] == _BLANK, f"last token must be {_BLANK!r}, got {tokens[-1]!r}"
+    if len(tokens) != 251:
+        raise ValueError(f"expected 251 tokens, got {len(tokens)}")
+    if tokens[-1] != _BLANK:
+        raise ValueError(f"last token must be {_BLANK!r}, got {tokens[-1]!r}")
     return tokens
 
 

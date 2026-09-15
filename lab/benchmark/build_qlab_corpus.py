@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from shared.quran_db import QuranDB  # noqa: E402
+from shared.paths import data_root  # noqa: E402
 
 # Helpers live next to the Modal staging job so thresholds stay in one place.
 _STAGING = PROJECT_ROOT / "scripts" / "prepare_zipformer_data_modal.py"
@@ -52,7 +53,7 @@ def _quran_path() -> Path:
     wt = PROJECT_ROOT / "data" / "quran.json"
     if wt.is_file():
         return wt
-    return Path("/Users/rock/ai/projects/offline-tarteel/data/quran.json")
+    return data_root() / "quran.json"
 
 
 def _word_count(db: QuranDB, surah: int, ayah: int) -> int:

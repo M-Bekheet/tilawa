@@ -11,13 +11,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from shared.audio import load_audio
 from shared.fbank import compute_fbank
+from shared.paths import data_root
 
 NODE = shutil.which("node")
 ROOT = Path(__file__).resolve().parent.parent
 DUMP = ROOT / "experiments" / "prompter-zipformer" / "fbank_dump.mjs"
-CORPUS_DIR = Path("/Users/rock/ai/projects/offline-tarteel/benchmark/test_corpus")
+CORPUS_DIR = ROOT / "benchmark" / "test_corpus"
 if not CORPUS_DIR.is_dir():
-    CORPUS_DIR = ROOT / "benchmark" / "test_corpus"
+    CORPUS_DIR = data_root().parent / "benchmark" / "test_corpus"
 
 N_BINS = 80
 MAX_ABS = 1e-3

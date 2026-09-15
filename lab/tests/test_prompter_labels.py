@@ -23,8 +23,9 @@ from shared.prompter_labels import (  # noqa: E402
     target_for_clip,
     write_tokens_txt,
 )
+from shared.paths import data_root  # noqa: E402
 
-MAIN_QURAN = Path("/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json")
+MAIN_QURAN = data_root() / "prompter" / "quran.json"
 
 
 def _find_quran_json() -> Path | None:
@@ -86,6 +87,10 @@ def test_longest_match_prefers_three_char_token(tokens: list[str], tokenizer: Ph
     assert ids == [tokens.index("ااۜ")]
     assert tokenizer.decode(ids) == "ااۜ"
     assert 250 not in ids
+
+
+def test_partition_convention_alef_madd(tokenizer: PhonemeTokenizer):
+    assert tokenizer.encode("ااا") == [45, 2]
 
 
 @skip_no_quran
