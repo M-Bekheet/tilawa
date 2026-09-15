@@ -177,3 +177,27 @@ def test_sample_window_gaps_seed_and_bounds():
     rng2 = __import__("random").Random(0)
     assert prep.sample_window_gaps(4, rng2) == gaps
     assert prep.sample_window_gaps(1, rng) == ()
+
+
+def test_supervision_covers_window_rejects_first_ayah_only():
+    assert prep.supervision_covers_window(10.0, 0.0, 10.0)
+    assert prep.supervision_covers_window(10.0, 0.0, 9.96)
+    assert not prep.supervision_covers_window(10.0, 0.0, 3.5)
+    assert not prep.supervision_covers_window(10.0, 0.2, 10.0)
+
+
+def test_whole_cut_supervision_fields_span_the_window():
+    d = prep.whole_cut_supervision_fields(
+        cut_id="w1",
+        duration=12.5,
+        recording_id="r",
+        text="abc",
+        speaker="s",
+        custom={"n_ayahs": 3, "source": "everyayah_multi"},
+    )
+    assert d["id"] == "w1"
+    assert d["start"] == 0.0
+    assert d["duration"] == 12.5
+    assert d["text"] == "abc"
+    assert d["custom"]["n_ayahs"] == 3
+    assert prep.supervision_covers_window(12.5, d["start"], d["duration"])

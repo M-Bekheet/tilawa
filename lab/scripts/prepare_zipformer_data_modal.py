@@ -36,6 +36,9 @@ Usage:
 
   modal run --detach scripts/prepare_zipformer_data_modal.py \\
       --multi-windows 40000 --force --fbank-shards 4
+
+  modal run --detach scripts/prepare_zipformer_data_modal.py \\
+      --flatten-multi   # MonoCut + whole-cut text; no re-extract
 """
 
 from __future__ import annotations
@@ -821,6 +824,39 @@ def n_ayahs_histogram(picks: list[MultiAyahWindowPick]) -> dict[str, int]:
         key = str(w.n_ayahs)
         hist[key] = int(hist.get(key) or 0) + 1
     return hist
+
+
+def supervision_covers_window(
+    cut_duration: float, sup_start: float, sup_duration: float, tol: float = 0.05
+) -> bool:
+    """Icefall ASR wants one supervision spanning the whole cut.
+
+    MixedCut.supervisions is derived from tracks; attaching the window text
+    on the first ayah track leaves ``sup.duration`` equal to ayah 1 only.
+    """
+    return abs(float(sup_start)) <= tol and abs(
+        float(sup_duration) - float(cut_duration)
+    ) <= tol
+
+
+def whole_cut_supervision_fields(
+    *,
+    cut_id: str,
+    duration: float,
+    recording_id: str,
+    text: str,
+    speaker: str,
+    custom: dict,
+) -> dict:
+    return {
+        "id": str(cut_id),
+        "recording_id": str(recording_id),
+        "start": 0.0,
+        "duration": float(duration),
+        "text": text,
+        "speaker": speaker,
+        "custom": dict(custom),
+    }
 
 
 def pick_surah_ayah(row: dict) -> tuple[int, int] | None:
@@ -2228,6 +2264,102 @@ def merge_fbank_shards(
     }
 
 
+@app.function(**_FN_KW)
+def flatten_multi_ayah_fbank():
+    """Rewrite everyayah_multi fbank cuts as MonoCuts with whole-cut text.
+
+    Does not re-extract features. Fixes icefall crash
+    ``ap-8UG5vomxNqwtHYeXNz7epn`` (supervision duration = first ayah).
+    """
+    _boot_remote()
+    from lhotse import CutSet, MonoCut
+
+    src = MULTI_SOURCE
+    path = Path(f"/vol/manifests/{src}_cuts_fbank.jsonl.gz")
+    if not path.is_file():
+        raise FileNotFoundError(f"missing {path}; run --multi-windows fbank first")
+    cuts = CutSet.from_file(str(path))
+    n = len(cuts)
+    types: dict[str, int] = {}
+    n_short = 0
+    n_no_feat = 0
+    n_ns = 0
+    samples = []
+    for i, cut in enumerate(cuts):
+        tname = type(cut).__name__
+        types[tname] = types.get(tname, 0) + 1
+        n_sup = len(cut.supervisions)
+        n_ns += n_sup
+        sup_dur = cut.supervisions[0].duration if n_sup else 0.0
+        if not cut.supervisions or not supervision_covers_window(
+            cut.duration, cut.supervisions[0].start, cut.supervisions[0].duration
+        ):
+            n_short += 1
+        if not getattr(cut, "has_features", False):
+            n_no_feat += 1
+        if i < 8:
+            samples.append(
+                {
+                    "id": cut.id,
+                    "type": tname,
+                    "duration": round(float(cut.duration), 3),
+                    "n_sup": n_sup,
+                    "sup_dur": round(float(sup_dur), 3),
+                    "has_features": bool(getattr(cut, "has_features", False)),
+                    "num_frames": getattr(cut, "num_frames", None),
+                    "text_len": len(cut.supervisions[0].text) if n_sup else 0,
+                }
+            )
+    print(
+        f"[{src}] inspect n={n} types={types} short_sup={n_short} "
+        f"no_features={n_no_feat} mean_n_sup={n_ns / n if n else 0:.2f}"
+    )
+    for s in samples:
+        print(f"  sample {s}")
+    if n_short == 0 and all(t == "MonoCut" for t in types):
+        print(f"[{src}] already flattened; skip rewrite")
+        return {
+            "source": src,
+            "cuts": n,
+            "types": types,
+            "short_sup": 0,
+            "rewritten": False,
+            "samples": samples,
+        }
+    flat = [_flatten_fbank_window_cut(cut) for cut in cuts]
+    n_still_short = sum(
+        1
+        for c in flat
+        if not supervision_covers_window(
+            c.duration, c.supervisions[0].start, c.supervisions[0].duration
+        )
+    )
+    if n_still_short:
+        raise RuntimeError(f"flatten left {n_still_short} short supervisions")
+    if any(not c.has_features for c in flat[: min(32, len(flat))]):
+        raise RuntimeError("flatten dropped features on a sample cut")
+    if any(not isinstance(c, MonoCut) for c in flat[: min(8, len(flat))]):
+        raise RuntimeError("flatten did not yield MonoCut")
+    tmp = path.parent / path.name.replace(".jsonl.gz", ".writing.jsonl.gz")
+    CutSet.from_cuts(flat).to_file(str(tmp))
+    os.replace(tmp, path)
+    vol.commit()
+    print(
+        f"[{src}] flattened {n} cuts → {path} short_before={n_short} "
+        f"types_before={types} all MonoCut with whole-cut text"
+    )
+    return {
+        "source": src,
+        "cuts": n,
+        "types_before": types,
+        "short_sup_before": n_short,
+        "no_features_before": n_no_feat,
+        "rewritten": True,
+        "samples": samples,
+        "path": str(path),
+    }
+
+
 def _wipe_multi_ayah_outputs() -> None:
     src = MULTI_SOURCE
     man = Path("/vol/manifests")
@@ -2333,6 +2465,84 @@ def _assign_window_supervision(cut, *, wid: str, text: str, speaker: str, custom
     else:
         cut = fastcopy(cut, id=wid)
     return cut
+
+
+def _flatten_fbank_window_cut(cut):
+    """MonoCut + one supervision covering the full window.
+
+    Icefall reads ``cut.supervisions[0].text`` against ``cut.num_frames``.
+    MixedCut keeps the window text on the first ayah track, so
+    ``sup.duration`` is ayah-1 only and DataLoader workers die (ft-multi
+    ``ap-8UG5vomxNqwtHYeXNz7epn``).
+    """
+    from lhotse import MonoCut, SupervisionSegment
+
+    try:
+        from lhotse.utils import fastcopy
+    except ImportError:
+        from dataclasses import replace as fastcopy
+
+    if not cut.supervisions:
+        raise RuntimeError(f"{cut.id} has no supervisions")
+    src_sup = cut.supervisions[0]
+    text = src_sup.text or ""
+    speaker = src_sup.speaker
+    custom = dict(src_sup.custom or {})
+    duration = float(cut.duration)
+    rec_id = getattr(cut, "recording_id", None) or cut.id
+    fields = whole_cut_supervision_fields(
+        cut_id=str(cut.id),
+        duration=duration,
+        recording_id=str(rec_id),
+        text=text,
+        speaker=speaker,
+        custom=custom,
+    )
+    sup = SupervisionSegment(
+        id=fields["id"],
+        recording_id=fields["recording_id"],
+        start=fields["start"],
+        duration=fields["duration"],
+        channel=0,
+        text=fields["text"],
+        language="quran-phonemes",
+        speaker=fields["speaker"],
+        custom=fields["custom"],
+    )
+    feats = None
+    if getattr(cut, "has_features", False):
+        feats = getattr(cut, "features", None)
+    else:
+        feats = getattr(cut, "features", None)
+    if type(cut).__name__ == "MonoCut":
+        out = fastcopy(cut, supervisions=[sup])
+        if not supervision_covers_window(out.duration, out.supervisions[0].start, out.supervisions[0].duration):
+            raise RuntimeError(
+                f"{cut.id} MonoCut supervision still short "
+                f"sup={out.supervisions[0].duration:.3f} cut={out.duration:.3f}"
+            )
+        return out
+    if feats is None:
+        raise RuntimeError(
+            f"{cut.id} type={type(cut).__name__} has no features to flatten"
+        )
+    kwargs = dict(
+        id=cut.id,
+        start=0.0,
+        duration=duration,
+        channel=0,
+        features=feats,
+        supervisions=[sup],
+    )
+    rec = getattr(cut, "recording", None)
+    if rec is not None:
+        kwargs["recording"] = rec
+    out = MonoCut(**kwargs)
+    if not supervision_covers_window(out.duration, out.supervisions[0].start, out.supervisions[0].duration):
+        raise RuntimeError(f"{cut.id} flatten did not cover window")
+    if not out.has_features:
+        raise RuntimeError(f"{cut.id} flatten dropped features")
+    return out
 
 
 @app.function(**_FN_KW)
@@ -2615,9 +2825,13 @@ def main(
     fbank_shards: int = 0,
     multi_windows: int = 0,
     seed: int = 0,
+    flatten_multi: bool = False,
 ):
     if summary_only:
         summarize.remote()
+        return
+    if flatten_multi:
+        print(f"FLATTEN {MULTI_SOURCE}: {flatten_multi_ayah_fbank.remote()}", flush=True)
         return
     if multi_windows > 0:
         print(
@@ -2644,6 +2858,7 @@ def main(
             _run_fbank_shards_local(src, n_shards, no_speed_perturb)
         else:
             print(f"FBANK {src}: {compute_fbank.remote(src, no_speed_perturb, force)}")
+        print(f"FLATTEN {src}: {flatten_multi_ayah_fbank.remote()}", flush=True)
         return
     selected = parse_sources(sources)
     if fbank_shards < 0:
