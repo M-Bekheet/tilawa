@@ -35,6 +35,10 @@ Usage::
         --run-name ft-v31 --num-epochs 5 --max-duration 1200 --avg 3 \\
         --init-from /vol/reference/zipformer_p_arabic_v3.1.pt
 
+    modal run --detach scripts/train_zipformer_ctc_modal.py \\
+        --run-name interp-ftv31-a0.5 --export-interp \\
+        /vol/reference/zipformer_p_arabic_v3.1.pt:/vol/exp/ft-v31/epoch-5.pt:0.5
+
 Do not download checkpoints/ONNX into git. After export::
 
     modal volume get zipformer-ctc-training /exports/<run_name> /tmp/zipformer-<run_name>
@@ -61,6 +65,7 @@ from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_NUM_EPOCHS,
     DEFAULT_TRAIN_SOURCES,
     DEFAULT_WARMUP_BATCHES,
+    parse_export_interp,
 )
 
 ICEFALL_SHA = "3f848bb6d0acc970c9b294a30ca0a04a7c9c78d1"
@@ -648,6 +653,71 @@ def _convert_reference_to_icefall_pt(src: Path, dest: Path) -> dict:
     return inspect
 
 
+def _tensor_to_numpy(value: object):
+    import numpy as np
+
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def _write_interpolated_checkpoint(
+    init_pt: str,
+    ft_pt: str,
+    alpha: float,
+    dest: Path,
+) -> dict:
+    """Load reference init + icefall FT, blend in icefall order, write ``epoch-*.pt``."""
+    import numpy as np
+    import torch
+
+    sys.path.insert(0, "/app")
+    from zipformer_ctc_utils import interpolate_state_dicts
+
+    src = _ensure_reference_pt(init_pt)
+    blob = torch.load(str(src), map_location="cpu", weights_only=False)
+    init_raw = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
+    if not isinstance(init_raw, dict):
+        raise TypeError(f"init checkpoint is {type(init_raw)}, not a state dict")
+    init_np = {k: _tensor_to_numpy(v) for k, v in init_raw.items()}
+
+    ft_path = Path(ft_pt)
+    if not ft_path.is_file():
+        raise FileNotFoundError(f"fine-tune checkpoint missing: {ft_path}")
+    ft_blob = torch.load(str(ft_path), map_location="cpu", weights_only=False)
+    ft_raw = (
+        ft_blob["model"] if isinstance(ft_blob, dict) and "model" in ft_blob else ft_blob
+    )
+    if not isinstance(ft_raw, dict):
+        raise TypeError(f"ft checkpoint is {type(ft_raw)}, not a state dict")
+    ft_np = {}
+    for key, value in ft_raw.items():
+        nk = key[7:] if key.startswith("module.") else key
+        if nk in ft_np:
+            raise RuntimeError(f"duplicate ft key after stripping module.: {nk}")
+        ft_np[nk] = _tensor_to_numpy(value)
+
+    print(
+        f"interpolating alpha={alpha} init={src} ({len(init_np)} tensors) "
+        f"ft={ft_path} ({len(ft_np)} tensors)"
+    )
+    blended = interpolate_state_dicts(init_np, ft_np, alpha, init_is_reference=True)
+    out = {k: torch.from_numpy(np.ascontiguousarray(v)) for k, v in blended.items()}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"model": out}, dest)
+    print(
+        f"wrote interpolated icefall checkpoint {dest} "
+        f"({dest.stat().st_size} bytes, {len(out)} tensors, alpha={alpha})"
+    )
+    return {
+        "init_pt": str(src),
+        "ft_pt": str(ft_path),
+        "alpha": float(alpha),
+        "n_tensors": len(out),
+        "icefall_pt": str(dest),
+    }
+
+
 def _write_tokens() -> Path:
     sys.path.insert(0, "/app")
     from shared.prompter_labels import load_tokens
@@ -1069,9 +1139,20 @@ def export_onnx(
     left_context_frames: int = 256,
     init_from: str = "",
     export_init: bool = False,
+    export_interp: str = "",
 ) -> dict:
     init_meta = None
-    if export_init:
+    if export_interp and export_init:
+        raise ValueError("pass only one of --export-interp and --export-init-only")
+    if export_interp:
+        init_pt, ft_pt, alpha = parse_export_interp(export_interp)
+        exp_dir = Path(f"/vol/exp/{run_name}")
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        dest = exp_dir / "epoch-1.pt"
+        init_meta = _write_interpolated_checkpoint(init_pt, ft_pt, alpha, dest)
+        epoch = 1
+        avg = 1
+    elif export_init:
         src_path = init_from or "/vol/reference/zipformer_p_arabic_v3.1.pt"
         src = _ensure_reference_pt(src_path)
         exp_dir = Path(f"/vol/exp/{run_name}")
@@ -1107,10 +1188,12 @@ def main(
     base_lr: float = DEFAULT_BASE_LR,
     warmup_batches: float = DEFAULT_WARMUP_BATCHES,
     skip_export: bool = False,
+    export_interp: str = "",
 ):
     """Fine-tune from Quran-Lab v3.1 (or from scratch if ``init_from=""``).
 
     ``--export-init-only``: load+permute+export, no training (load-path proof).
+    ``--export-interp INIT_PT:FT_PT:ALPHA``: WiSE-FT blend then export (CPU, no train).
     Smoke implies 1 epoch, max-duration 200, limit-cuts 800.
     """
     full_cmd = (
@@ -1125,15 +1208,16 @@ def main(
         f"--run-name ft-v31 --export-only --epoch 5 --avg 3 "
         f"--chunk-size {chunk_size} --left-context-frames {left_context_frames}"
     )
-    if export_only or export_init_only:
+    if export_only or export_init_only or export_interp:
         meta = export_onnx.remote(
             run_name=run_name,
             epoch=epoch,
-            avg=1 if export_init_only else avg,
+            avg=1 if (export_init_only or bool(export_interp)) else avg,
             chunk_size=chunk_size,
             left_context_frames=left_context_frames,
             init_from=init_from,
             export_init=export_init_only,
+            export_interp=export_interp,
         )
         print("export metadata:", meta)
         print("\nFull (detached) fine-tune command (do NOT run from this job):")

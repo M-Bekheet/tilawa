@@ -34,6 +34,10 @@ from zipformer_ctc_utils import (  # noqa: E402
     remap_quranlab_key,
     resolve_train_sources,
     write_icefall_tokens,
+    interpolate_state_dicts,
+    parse_export_interp,
+    CTC_ICEFALL_BIAS_KEY,
+    CTC_ICEFALL_WEIGHT_KEY,
 )
 
 REF_IO = (
@@ -274,6 +278,89 @@ def test_resolve_train_sources_full_run_fails_loud(tmp_path: Path):
     assert "resolve_train_sources" in train_py
     assert "dropping unstaged sources" not in train_py
     assert "falling back to --synthetic" not in train_py
+
+
+def test_parse_export_interp_and_alpha_endpoints():
+    init_pt, ft_pt, alpha = parse_export_interp(
+        "/vol/reference/zipformer_p_arabic_v3.1.pt:/vol/exp/ft-v31/epoch-5.pt:0.25"
+    )
+    assert init_pt.endswith("zipformer_p_arabic_v3.1.pt")
+    assert ft_pt.endswith("epoch-5.pt")
+    assert alpha == 0.25
+    with pytest.raises(ValueError, match="INIT_PT:FT_PT:ALPHA"):
+        parse_export_interp("only-one-path")
+    with pytest.raises(ValueError, match="in \\[0, 1\\]"):
+        parse_export_interp("/a.pt:/b.pt:1.5")
+
+
+def test_interpolate_alpha_endpoints_and_ctc_permute_before_blend():
+    rng = np.random.default_rng(7)
+    hidden = 4
+    init_w = rng.standard_normal((VOCAB_SIZE, hidden)).astype(np.float32)
+    init_b = rng.standard_normal(VOCAB_SIZE).astype(np.float32)
+    init_w[250] = 10.0
+    init_b[250] = 7.0
+    init_w[0] = 1.0
+    init_b[0] = 2.0
+    ft_w = rng.standard_normal((VOCAB_SIZE, hidden)).astype(np.float32)
+    ft_b = rng.standard_normal(VOCAB_SIZE).astype(np.float32)
+    ft_w[0] = 20.0
+    ft_b[0] = 14.0
+    ft_w[1] = 3.0
+    ft_b[1] = 4.0
+    encoder_init = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    encoder_ft = np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float32)
+    init_sd = {
+        "sub.conv.weight": encoder_init,
+        "ctc_head.weight": init_w,
+        "ctc_head.bias": init_b,
+        "decoder.embedding.weight": np.ones(3, dtype=np.float32),
+    }
+    ft_sd = {
+        "encoder_embed.conv.weight": encoder_ft,
+        CTC_ICEFALL_WEIGHT_KEY: ft_w,
+        CTC_ICEFALL_BIAS_KEY: ft_b,
+    }
+
+    ice_w, ice_b = inverse_permute_ctc_head(init_w, init_b)
+    np.testing.assert_array_equal(ice_w[0], 10.0)
+    assert ice_b[0] == 7.0
+    np.testing.assert_array_equal(ice_w[1], 1.0)
+    assert ice_b[1] == 2.0
+
+    out0 = interpolate_state_dicts(init_sd, ft_sd, 0.0)
+    np.testing.assert_allclose(out0["encoder_embed.conv.weight"], encoder_init)
+    np.testing.assert_allclose(out0[CTC_ICEFALL_WEIGHT_KEY], ice_w)
+    np.testing.assert_allclose(out0[CTC_ICEFALL_BIAS_KEY], ice_b)
+    assert "decoder.embedding.weight" not in out0
+
+    out1 = interpolate_state_dicts(init_sd, ft_sd, 1.0)
+    np.testing.assert_allclose(out1["encoder_embed.conv.weight"], encoder_ft)
+    np.testing.assert_allclose(out1[CTC_ICEFALL_WEIGHT_KEY], ft_w)
+    np.testing.assert_allclose(out1[CTC_ICEFALL_BIAS_KEY], ft_b)
+
+    out05 = interpolate_state_dicts(init_sd, ft_sd, 0.5)
+    np.testing.assert_allclose(
+        out05["encoder_embed.conv.weight"], 0.5 * encoder_init + 0.5 * encoder_ft
+    )
+    # Blend in icefall order: blank row 0 = 0.5 * ft[0] + 0.5 * init_ref[250]
+    np.testing.assert_allclose(out05[CTC_ICEFALL_WEIGHT_KEY][0], 0.5 * 20.0 + 0.5 * 10.0)
+    np.testing.assert_allclose(out05[CTC_ICEFALL_BIAS_KEY][0], 0.5 * 14.0 + 0.5 * 7.0)
+    np.testing.assert_allclose(out05[CTC_ICEFALL_WEIGHT_KEY][1], 0.5 * 3.0 + 0.5 * 1.0)
+    np.testing.assert_allclose(out05[CTC_ICEFALL_BIAS_KEY][1], 0.5 * 4.0 + 0.5 * 2.0)
+    # Wrong order (blend then permute) would mix ref row 0 with icefall row 0.
+    wrong_w = 0.5 * init_w + 0.5 * ft_w
+    assert not np.allclose(out05[CTC_ICEFALL_WEIGHT_KEY][0], wrong_w[0])
+
+    with pytest.raises(KeyError, match="key mismatch"):
+        interpolate_state_dicts(
+            init_sd,
+            {**ft_sd, "extra.weight": np.ones(2, dtype=np.float32)},
+            0.5,
+        )
+    train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
+    assert "export_interp" in train_py
+    assert "parse_export_interp" in train_py
 
 
 def test_default_train_sources_exclude_qurantts():

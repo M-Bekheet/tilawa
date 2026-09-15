@@ -62,6 +62,8 @@ DEFAULT_WARMUP_BATCHES = 500.0
 DEFAULT_INIT_FROM = "/vol/reference/zipformer_p_arabic_v3.1.pt"
 REF_HF_REPO = "Quran-Lab/zipformer_p-arabic-v3"
 REF_PT_NAME = "zipformer_p_arabic_v3.1.pt"
+CTC_ICEFALL_WEIGHT_KEY = "ctc_output.1.weight"
+CTC_ICEFALL_BIAS_KEY = "ctc_output.1.bias"
 
 # Quran-Lab custom AsrModel → icefall AsrModel (CTC-only).
 _QURANLAB_KEY_REMAP = (
@@ -193,6 +195,96 @@ def remap_quranlab_key(key: str) -> str | None:
 def remap_quranlab_state_keys(keys: Iterable[str]) -> dict[str, str | None]:
     """``old_key → new_key | None`` for every key in ``keys``."""
     return {k: remap_quranlab_key(k) for k in keys}
+
+
+def parse_export_interp(spec: str) -> tuple[str, str, float]:
+    """Parse ``INIT_PT:FT_PT:ALPHA`` (alpha last; paths may contain colons besides the two separators)."""
+    text = str(spec).strip()
+    parts = text.rsplit(":", 2)
+    if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2]:
+        raise ValueError(
+            f"export-interp must be INIT_PT:FT_PT:ALPHA, got {spec!r}"
+        )
+    init_pt, ft_pt, alpha_s = parts
+    try:
+        alpha = float(alpha_s)
+    except ValueError as exc:
+        raise ValueError(
+            f"export-interp alpha is not a float: {alpha_s!r}"
+        ) from exc
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError(f"export-interp alpha must be in [0, 1], got {alpha}")
+    return init_pt, ft_pt, alpha
+
+
+def icefall_state_from_reference(
+    init_sd: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Remap Quran-Lab keys and inverse-permute CTC rows to icefall blank=0 order."""
+    out: dict[str, np.ndarray] = {}
+    for key, value in init_sd.items():
+        new_key = remap_quranlab_key(key)
+        if new_key is None:
+            continue
+        if new_key in out:
+            raise RuntimeError(f"key collision after remap: {key} -> {new_key}")
+        out[new_key] = np.asarray(value)
+    if CTC_ICEFALL_WEIGHT_KEY not in out or CTC_ICEFALL_BIAS_KEY not in out:
+        ctc_keys = [k for k in out if "ctc" in k]
+        raise RuntimeError(
+            f"CTC Linear missing after remap: have {ctc_keys} "
+            f"(need {CTC_ICEFALL_WEIGHT_KEY}, {CTC_ICEFALL_BIAS_KEY})"
+        )
+    weight, bias = inverse_permute_ctc_head(
+        out[CTC_ICEFALL_WEIGHT_KEY], out[CTC_ICEFALL_BIAS_KEY]
+    )
+    out[CTC_ICEFALL_WEIGHT_KEY] = weight
+    out[CTC_ICEFALL_BIAS_KEY] = bias
+    return out
+
+
+def interpolate_state_dicts(
+    init_sd: dict[str, np.ndarray],
+    ft_sd: dict[str, np.ndarray],
+    alpha: float,
+    *,
+    init_is_reference: bool = True,
+) -> dict[str, np.ndarray]:
+    """WiSE-FT blend ``alpha * ft + (1 - alpha) * init`` in icefall key/CTC order.
+
+    ``init_is_reference=True`` applies the same remap + inverse blank permutation
+    as ``--init-from`` *before* blending, so CTC rows line up with the fine-tuned
+    icefall checkpoint. Matching keys only; missing/extra keys or shape mismatch
+    raise.
+    """
+    if not 0.0 <= float(alpha) <= 1.0:
+        raise ValueError(f"alpha must be in [0, 1], got {alpha}")
+    init = (
+        icefall_state_from_reference(init_sd)
+        if init_is_reference
+        else {k: np.asarray(v) for k, v in init_sd.items()}
+    )
+    ft = {k: np.asarray(v) for k, v in ft_sd.items()}
+    only_init = sorted(set(init) - set(ft))
+    only_ft = sorted(set(ft) - set(init))
+    if only_init or only_ft:
+        raise KeyError(
+            "state dict key mismatch before interpolation: "
+            f"only_init={only_init[:24]} only_ft={only_ft[:24]} "
+            f"n_only_init={len(only_init)} n_only_ft={len(only_ft)}"
+        )
+    out: dict[str, np.ndarray] = {}
+    for key in init:
+        left, right = init[key], ft[key]
+        if left.shape != right.shape:
+            raise ValueError(
+                f"shape mismatch for {key}: init {left.shape} vs ft {right.shape}"
+            )
+        blended = (1.0 - float(alpha)) * left.astype(np.float64) + float(alpha) * right.astype(
+            np.float64
+        )
+        out[key] = blended.astype(left.dtype, copy=False)
+    return out
 
 
 def arch_train_flags() -> list[str]:
