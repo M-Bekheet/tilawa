@@ -244,12 +244,20 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 | ft-v31 fp32 | 248 MB | 45/53 | 39/43 | 92.3 / 94.5 / 90.2 **(231/256)** | 566/583 (97.1%) | 184/184, 194/200, 188/199 | 0.85 s / 0.56 s |
 | ft-v31 int8 | 66 MB | 45/53 | 39/43 | same 231/256 | same 566/583 | same split | 0.68 s / 0.44 s |
 | ft-v31 fp32 + `ALLOW_GAPS=1` | 248 MB | 45/53 | 39/43 | 92.3 / 94.5 / 90.2 **(231/256)** | 566/583 (97.1%) | 184/184, 194/200, 188/199 | 1.48 s / — |
+| ft-gentle fp32 (1 ep, lr 0.001) | 248 MB | 44/53 | — | 90.5 / 94.5 / 87.9 **(225/256)** | 571/583 (97.9%) | 184/184, 194/200, 193/199 | 0.87 s / 0.55 s |
+| interp-ftv31-a0.5 fp32 | 248 MB | 52/53 | — | 96.9 / 96.9 / 96.9 **(248/256)** | **572/583** (98.1%) | 184/184, 194/200, 194/199 | 1.60 s / 1.13 s |
+| interp-ftv31-a0.25 fp32 | 248 MB | **53/53** | — | 96.8 / 96.7 / 96.1 **(246/256)** | 571/583 (97.9%) | 184/184, 193/200, 194/199 | 1.81 s / 0.97 s |
+| **interp-gentle-a0.5 fp32** | 248 MB | **53/53** | — | 96.9 / 96.9 / 96.9 **(248/256)** | **572/583** (98.1%) | 184/184, 194/200, 194/199 | 0.87 s / 0.91 s |
 
 v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1. ft-v31 fp32+int8 all corpora ×3 (scores identical across repeats).
 
 **PER (ONNX streaming greedy, v3.1 fp32, qlab):** overall **5.56%** (exact 49.1%); everyayah_heldout 2.39%, qul_alnufais 7.78%, tlog_holdout 7.06%. Not comparable 1:1 to the card (different decode, gold is `ordered_quran_phonemes.json` by surah:ayah, torchaudio kaldi fbank). Wrapper: `experiments/prompter-zipformer/reference_tools/per_onnx_wrapper.py`.
 
 **PER (ft-v31 fp32, same wrapper):** overall **4.37%** (exact 61.6%); EA 1.69%, nufais 4.59%, tlog 8.18%. int8 4.35%. Acoustic PER improved vs v3.1; tracker SeqAcc did not.
+
+**PER (ft-gentle fp32):** overall **4.32%** (exact 66.6%); EA 1.47%, nufais 4.55%, tlog 8.39%.
+
+**PER (interp-gentle-a0.5 fp32):** overall **4.09%** (exact 68.4%); EA 1.48%, nufais 6.57%, tlog 4.35%. Best PER of the three and the first to clear the tracker bar.
 
 Reproduction:
 
@@ -304,6 +312,12 @@ Most of the damage is epoch 1; epoch 2 is the trough; epoch 5 recovers some v3 b
 **Failure mode (ep5, 5 v3 multi clips):** mixed acoustic + matcher, acoustic first. CTC transcript **drops short connecting ayahs** (Fatiha 1:3/1:4/1:6 absent; Fil 105:2/105:4 absent; 25:66 head absent). Later ayahs that *are* in the transcript often still get tracker tallies (`ok` full), but (1) `MIN_WORD_FRACTION=0.5` rejects partials (109:4 ok+unsure=2/5 words; 25:66 unsure=1/4) and (2) `predict()` `_contiguous_head` stops at the first gap so SeqAcc looks like prefix truncation (1:1–7→1:1–2 even though 1:5 and 1:7 were emitted). Needs B1 multi-ayah windows and/or tracker re-tune (`okDistance`/`unsureDistance`/word-fraction + don't truncate at holes).
 
 Raw JSON: `benchmark/results/2026-09-15_18*.json` / `_19*.json`; ledger `benchmark/results/ft_v31_eval_ledger.json`; PER `benchmark/results/ft_v31_fp32_qlab_per.json`. Epoch-1/2: `2026-09-15_194659.json` (v1), `_195041.json` (v3), `_195131.json` (v1), `_195511.json` (v3). Export apps `ap-6aM9VJL2SXHIT54dfZMBMr` (ep1), `ap-MAxnoFmA6Ahh017w6RDpeu` (ep2).
+
+### E2 gentle fine-tune + interpolation (PROMOTED: interp-gentle-a0.5)
+
+Hypothesis: lr 0.005 over-fit in epoch 1; a 1-ep lr 0.001 FT, or a WiSE-FT blend with the v3.1 init, keeps PER gain without dropping multi-ayah. `--export-interp INIT_PT:FT_PT:ALPHA` inverse-permutes the reference CTC head to icefall blank=0 *before* `alpha*ft+(1-alpha)*init` (`998f34c`). ft-v31 blends used **epoch-5.pt** (not avg-3).
+
+`ft-gentle` (`ap-1tiu0kP4AiIsn2sxQzLooc`, H100:4, 1 ep, lr 0.001, warmup 1000, avg 1): train 0.1108 / valid 0.0832 / 1662 s — **not** gentler on the tracker (v1 44/53, v3 225/256, same prefix-truncation as ft-v31 ep1). **interp-gentle-a0.5** (init ⊕ ft-gentle ep1, `ap-qj8yZzLGTgg9CZnexqPIka`) is **53 / 248 / 572** (EA 184, nufais 194, tlog 194): v3 gained `tlog_m000_100_001`, qlab gained `qul_alnufais__37_43`. interp-ftv31-a0.5 hits 572/248 but v1 52 (`multi_036_001_005` 36:1–5→36:2–5); a0.25 keeps v1 53 but v3 246 (`ea_alafasy_multi_044_001_005`). **PROMOTED** vs bar qlab≥572 AND v1=53 AND v3≥247. Raw: `2026-09-15_210522.json`–`_220939.json`; PER `interp_gentle_a0.5_qlab_per.json`, `ft_gentle_qlab_per.json`.
 
 ### E3 tracker re-tune (diagnostic, NOT PROMOTED)
 
