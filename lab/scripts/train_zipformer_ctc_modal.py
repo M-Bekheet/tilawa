@@ -889,6 +889,7 @@ def _run_export_impl(
     timeout=24 * 3600,
     volumes={"/vol": vol},
     secrets=[modal.Secret.from_name("huggingface")],
+    env={"ZIPFORMER_GPU": _GPU_SPEC},
 )
 def train(
     run_name: str,
@@ -912,6 +913,16 @@ def train(
 
     sys.path.insert(0, "/app")
     from zipformer_ctc_utils import icefall_train_flags, resolve_train_sources
+
+    import torch
+
+    n_cuda = int(torch.cuda.device_count()) if torch.cuda.is_available() else 1
+    world_size = max(n_cuda, 1)
+    print(
+        f"DDP world_size={world_size} cuda.device_count={n_cuda} "
+        f"ZIPFORMER_GPU={os.environ.get('ZIPFORMER_GPU', '')!r} "
+        f"module_WORLD_SIZE={WORLD_SIZE}"
+    )
 
     t0 = time.time()
     work = Path("/vol/work")
@@ -954,7 +965,7 @@ def train(
         sys.executable,
         str(recipe / "train.py"),
         *icefall_train_flags(
-            world_size=WORLD_SIZE,
+            world_size=world_size,
             num_epochs=num_epochs,
             start_epoch=start_epoch,
             exp_dir=str(exp_dir),

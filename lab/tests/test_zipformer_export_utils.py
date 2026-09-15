@@ -147,6 +147,10 @@ def test_icefall_train_flags_init_from_chunk_lr():
     assert "0.005" in train_py
     assert DEFAULT_AVG == 3
     assert DEFAULT_NUM_EPOCHS == 5
+    ddp = icefall_train_flags(world_size=4)
+    assert ddp[ddp.index("--world-size") + 1] == "4"
+    assert "torch.cuda.device_count" in train_py
+    assert 'env={"ZIPFORMER_GPU": _GPU_SPEC}' in train_py
 
 
 def test_compute_T_hop_reference_chunk_24():
