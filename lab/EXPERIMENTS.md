@@ -289,7 +289,20 @@ Promotion bar (strict): qlab ≥ 572 AND v1 = 53 AND v3 ≥ 247 vs v3.1 baseline
 
 v1/v3 regressions are mostly multi-ayah truncation (first 1–2 ayahs only). qlab: −6 tlog_holdout, +1 nufais (`qul_alnufais__37_43`). ONNX PER **4.37%** (EA 1.69 / nufais 4.59 / tlog 8.18; exact 61.6%) vs v3.1 **5.56%** — acoustics improved, tracker SeqAcc did not.
 
-Raw JSON: `benchmark/results/2026-09-15_18*.json` / `_19*.json`; ledger `benchmark/results/ft_v31_eval_ledger.json`; PER `benchmark/results/ft_v31_fp32_qlab_per.json`.
+Epoch sweep (fp32 `--avg 1` except ep5 avg 3; one deterministic harness run):
+
+| ckpt | v1 | v3 |
+|---|---|---|
+| v3.1 init | **53/53** | **247/256** |
+| ep1 avg1 | 46/53 | 225/256 |
+| ep2 avg1 | 44/53 | 214/256 |
+| ep5 avg3 | 45/53 | 231/256 |
+
+Most of the damage is epoch 1; epoch 2 is the trough; epoch 5 recovers some v3 but not v1. Not a clean “more FT → worse” slope.
+
+**Failure mode (ep5, 5 v3 multi clips):** mixed acoustic + matcher, acoustic first. CTC transcript **drops short connecting ayahs** (Fatiha 1:3/1:4/1:6 absent; Fil 105:2/105:4 absent; 25:66 head absent). Later ayahs that *are* in the transcript often still get tracker tallies (`ok` full), but (1) `MIN_WORD_FRACTION=0.5` rejects partials (109:4 ok+unsure=2/5 words; 25:66 unsure=1/4) and (2) `predict()` `_contiguous_head` stops at the first gap so SeqAcc looks like prefix truncation (1:1–7→1:1–2 even though 1:5 and 1:7 were emitted). Needs B1 multi-ayah windows and/or tracker re-tune (`okDistance`/`unsureDistance`/word-fraction + don't truncate at holes).
+
+Raw JSON: `benchmark/results/2026-09-15_18*.json` / `_19*.json`; ledger `benchmark/results/ft_v31_eval_ledger.json`; PER `benchmark/results/ft_v31_fp32_qlab_per.json`. Epoch-1/2: `2026-09-15_194659.json` (v1), `_195041.json` (v3), `_195131.json` (v1), `_195511.json` (v3). Export apps `ap-6aM9VJL2SXHIT54dfZMBMr` (ep1), `ap-MAxnoFmA6Ahh017w6RDpeu` (ep2).
 
 ## Per-experiment notes
 
@@ -344,6 +357,7 @@ Use case: r7 remains the highest-accuracy distillation teacher; r15 is now a pla
 13. **v3 SeqAcc is mostly a tracker state problem, not a recognizability problem.** Exact-match diagnostics (`web/frontend/test/analyze-v3-stability.ts`) show the v3 gap is dominated by extra emissions: cached streaming exact-fail runs include 124 `extra_after_expected` and 29 `wrong_surah_jump` cases across 768 runs. Comparing those cached streaming outputs against the r7 batch oracle (`web/frontend/test/compare-streaming-oracle.ts --stability-json=... --oracle-results=benchmark/results/r7-v3-batch.json`) shows the first long/medium exact-fail samples are `streaming_tracker_loss`: r7 predicts the exact expected verse while streaming emits expected+extras. The old phoneme ONNX full-file path was too weak to serve as this oracle; it often missed the expected verse on those same long clips. Two tempting runtime invariants were falsified and reverted: consuming the buffer after evidence-backed stale exits, and blocking selected candidates dominated by the current fusion leader. The next tracker attempt needs explicit segment ownership / active-hypothesis comparison, not score-threshold or rank gates.
 14. **Alketab ships Quran-Lab v3.1 int8.** `quran_phoneme_zipformer.onnx` is byte-identical to `Quran-Lab/zipformer_p-arabic-v3` `zipformer_p_arabic_v3.1.int8.onnx` (NPL-1.2). Tracker scores are deterministic; v3.1 vs v3 only swap one v1/v2 crowd clip. Fine-tune v3.1 rather than training Zipformer CTC from scratch.
 15. **A 5-epoch full-mix fine-tune of v3.1 at lr 0.005 dropped tracker SeqAcc even as CTC valid loss fell 0.088→0.032 and ONNX PER 5.56%→4.37%.** ft-v31: v1 53→45, v3 247→231, qlab 571→566 (tlog −6, nufais +1). Failures are mostly multi-ayah truncations, not wrong-surah. Lower LR / fewer epochs / freeze encoder next — do not ship this checkpoint.
+16. **Fine-tuning v3.1 on isolated-ayah data lowers PER but breaks multi-ayah tracking; needs B1 multi-ayah windows and/or tracker re-tune.** Epoch sweep (fp32): v1 53→46→44→45 and v3 247→225→214→231 at init/ep1/ep2/ep5. CTC skips short connecting ayahs (acoustic); `MIN_WORD_FRACTION=0.5` plus `_contiguous_head` then report only the prefix (matcher).
 
 ## Methodology
 
