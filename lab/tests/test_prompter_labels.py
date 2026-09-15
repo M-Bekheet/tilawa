@@ -23,9 +23,7 @@ from shared.prompter_labels import (  # noqa: E402
     target_for_clip,
     write_tokens_txt,
 )
-from shared.paths import data_root  # noqa: E402
-
-MAIN_QURAN = data_root() / "prompter" / "quran.json"
+from shared.paths import resolve_data_file  # noqa: E402
 
 
 def _find_quran_json() -> Path | None:
@@ -36,10 +34,10 @@ def _find_quran_json() -> Path | None:
             p = p / "quran.json"
         if p.is_file():
             return p
-    for candidate in (ROOT / "data" / "prompter" / "quran.json", MAIN_QURAN):
-        if candidate.is_file():
-            return candidate
-    return None
+    try:
+        return resolve_data_file("prompter/quran.json")
+    except FileNotFoundError:
+        return None
 
 
 QURAN_JSON = _find_quran_json()

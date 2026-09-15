@@ -15,9 +15,9 @@ import re
 from pathlib import Path
 
 try:
-    from .paths import data_root
+    from .paths import resolve_data_file
 except ImportError:  # script / Modal partial package
-    from shared.paths import data_root
+    from shared.paths import resolve_data_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TOKENS_JS = (
@@ -34,7 +34,7 @@ _BLANK = "<blank>"
 
 
 def resolve_quran_json() -> Path:
-    """Locate `quran.json`: env, worktree data/, then the main checkout."""
+    """Locate prompter `quran.json`: TILAWA_PROMPTER_DATA, then per-file roots."""
     env = os.environ.get("TILAWA_PROMPTER_DATA")
     if env:
         p = Path(env)
@@ -42,13 +42,13 @@ def resolve_quran_json() -> Path:
             p = p / "quran.json"
         if p.is_file():
             return p
-    for candidate in (REPO_ROOT / "data" / "prompter" / "quran.json", data_root() / "prompter" / "quran.json"):
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(
-        "quran.json not found; set TILAWA_PROMPTER_DATA or place it at "
-        "data/prompter/quran.json"
-    )
+    try:
+        return resolve_data_file("prompter/quran.json")
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            "quran.json not found; set TILAWA_PROMPTER_DATA or place it at "
+            "data/prompter/quran.json"
+        ) from e
 
 
 def load_tokens(tokens_js_path: str | Path | None = None) -> list[str]:

@@ -47,7 +47,7 @@ _REPO = Path(__file__).resolve().parent.parent
 for _p in (_REPO, Path("/app")):
     if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-from shared.paths import data_root  # noqa: E402
+from shared.paths import resolve_data_file  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Pure helpers (imported by tests; no lhotse)
@@ -611,11 +611,7 @@ def load_token_inventory(path: str | Path) -> list[str]:
 
 
 def local_quran_json() -> Path:
-    project_root = Path(__file__).resolve().parent.parent
-    wt = project_root / "data" / "quran.json"
-    if wt.is_file():
-        return wt
-    return data_root() / "quran.json"
+    return resolve_data_file("quran.json")
 
 
 # ---------------------------------------------------------------------------
@@ -623,8 +619,7 @@ def local_quran_json() -> Path:
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_ROOT = data_root()
-_PROMPTER_QURAN = DATA_ROOT / "prompter" / "quran.json"
+_PROMPTER_QURAN = resolve_data_file("prompter/quran.json")
 _QURAN_JSON = local_quran_json()
 _TOKENS_TXT = (
     PROJECT_ROOT
