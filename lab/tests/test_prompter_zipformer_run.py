@@ -54,3 +54,111 @@ def test_ensure_assets_skips_default_download(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(run, "_fetch", _boom)
     run._ensure_assets()
+
+
+def test_allow_gaps_reads_env(monkeypatch):
+    monkeypatch.delenv("PROMPTER_ALLOW_GAPS", raising=False)
+    assert run._allow_gaps() is False
+    monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "1")
+    assert run._allow_gaps() is True
+    monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "0")
+    assert run._allow_gaps() is False
+
+
+def test_contiguous_head_default_stops_at_gap():
+    verses = [
+        {"surah": 1, "ayah": 1},
+        {"surah": 1, "ayah": 2},
+        {"surah": 1, "ayah": 5},
+    ]
+    assert run._contiguous_head(verses, allow_gaps=False) == (1, 1, 2)
+
+
+def test_contiguous_head_allow_gaps_bridges_short_ayah():
+    verses = [
+        {"surah": 1, "ayah": 5},
+        {"surah": 1, "ayah": 7},
+    ]
+    wc = {(1, 6): 3}
+
+    def count(s, a):
+        return wc.get((s, a), 99)
+
+    assert run._contiguous_head(verses, allow_gaps=True, word_count=count) == (1, 5, 7)
+
+
+def test_contiguous_head_allow_gaps_skips_long_hole():
+    verses = [
+        {"surah": 105, "ayah": 1},
+        {"surah": 105, "ayah": 3},
+    ]
+    wc = {(105, 2): 5}
+
+    def count(s, a):
+        return wc.get((s, a), 99)
+
+    assert run._contiguous_head(verses, allow_gaps=True, word_count=count) == (105, 1, None)
+
+
+def test_contiguous_head_allow_gaps_does_not_skip_two_ayahs():
+    verses = [
+        {"surah": 1, "ayah": 1},
+        {"surah": 1, "ayah": 2},
+        {"surah": 1, "ayah": 5},
+    ]
+    wc = {(1, 3): 2, (1, 4): 3}
+
+    def count(s, a):
+        return wc.get((s, a), 99)
+
+    assert run._contiguous_head(verses, allow_gaps=True, word_count=count) == (1, 1, 2)
+
+
+def test_contiguous_head_allow_gaps_follows_env(monkeypatch):
+    monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "1")
+    verses = [{"surah": 1, "ayah": 2}, {"surah": 1, "ayah": 4}]
+    wc = {(1, 3): 2}
+
+    def count(s, a):
+        return wc.get((s, a), 99)
+
+    assert run._contiguous_head(verses, word_count=count) == (1, 2, 4)
+
+
+def test_ensure_proc_forwards_prompter_knobs(monkeypatch):
+    knobs = {
+        "PROMPTER_MIN_WORD_FRACTION": "0.3",
+        "PROMPTER_ALLOW_GAPS": "1",
+        "PROMPTER_TAIL_SECONDS": "3.0",
+        "PROMPTER_OK_DISTANCE": "0.2",
+        "PROMPTER_UNSURE_DISTANCE": "0.5",
+        "PROMPTER_SEARCH_DECISIVE_DISTANCE": "0.45",
+    }
+    for k, v in knobs.items():
+        monkeypatch.setenv(k, v)
+
+    captured: dict = {}
+
+    class _Stdout:
+        def readline(self):
+            return '{"ready": true}\n'
+
+    class FakeProc:
+        def __init__(self, *args, **kwargs):
+            captured["env"] = kwargs["env"]
+            self.stdin = None
+            self.stdout = _Stdout()
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(run, "_ensure_assets", lambda: None)
+    monkeypatch.setattr(run.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(run.atexit, "register", lambda *_a, **_k: None)
+    run._proc = None
+    proc = run._ensure_proc()
+    assert proc is not None
+    env = captured["env"]
+    for k, v in knobs.items():
+        assert env[k] == v, k
+    run._proc = None

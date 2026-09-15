@@ -178,16 +178,58 @@ def recognize(audio_path: str) -> dict:
     return res
 
 
-def _contiguous_head(verses: list[dict]) -> tuple[int, int, int | None]:
-    """First verse plus the longest run of consecutive ayahs in the same surah."""
+GAP_MAX_WORDS = 3
+_ayah_words_cache: dict[tuple[int, int], int] | None = None
+
+
+def _allow_gaps() -> bool:
+    return os.environ.get("PROMPTER_ALLOW_GAPS") == "1"
+
+
+def _ayah_word_count(surah: int, ayah: int) -> int:
+    """Word count from the prompter corpus; 99 (do not bridge) if unknown."""
+    global _ayah_words_cache
+    if _ayah_words_cache is None:
+        _ayah_words_cache = {}
+        path = Path(os.environ.get("PROMPTER_CORPUS", CORPUS_PATH))
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for s in data.get("surahs", []):
+                n = int(s["n"])
+                for i, a in enumerate(s.get("ayahs", [])):
+                    _ayah_words_cache[(n, i + 1)] = len(a.get("w", []))
+    return _ayah_words_cache.get((surah, ayah), 99)
+
+
+def _contiguous_head(
+    verses: list[dict],
+    *,
+    allow_gaps: bool | None = None,
+    word_count=None,
+) -> tuple[int, int, int | None]:
+    """First verse plus the longest run of consecutive ayahs in the same surah.
+
+    When allow_gaps (PROMPTER_ALLOW_GAPS=1), skip a single missing ayah of
+    ≤ GAP_MAX_WORDS so a later emitted ayah still extends ayah_end.
+    """
+    if allow_gaps is None:
+        allow_gaps = _allow_gaps()
+    count_fn = word_count or _ayah_word_count
     first = verses[0]
     surah, ayah = first["surah"], first["ayah"]
     end = ayah
     for v in verses[1:]:
-        if v["surah"] == surah and v["ayah"] == end + 1:
-            end = v["ayah"]
-        else:
+        if v["surah"] != surah:
             break
+        if v["ayah"] == end + 1:
+            end = v["ayah"]
+            continue
+        if allow_gaps and v["ayah"] == end + 2:
+            skipped = end + 1
+            if count_fn(surah, skipped) <= GAP_MAX_WORDS:
+                end = v["ayah"]
+                continue
+        break
     return surah, ayah, (end if end != ayah else None)
 
 
