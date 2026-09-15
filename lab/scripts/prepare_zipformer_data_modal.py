@@ -30,12 +30,19 @@ Usage:
 
   modal run scripts/prepare_zipformer_data_modal.py \\
       --sources qua --fbank-shards 12              # skip prepare; sharded fbank + merge
+
+  modal run --detach scripts/prepare_zipformer_data_modal.py \\
+      --multi-windows 200 --skip-fbank             # B1 smoke: synthetic multi-ayah cuts
+
+  modal run --detach scripts/prepare_zipformer_data_modal.py \\
+      --multi-windows 40000 --force --fbank-shards 4
 """
 
 from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import sys
@@ -57,6 +64,16 @@ ALL_SOURCES = ("everyayah", "qua", "qurantts", "iqra", "retasy", "tlog")
 # QuranTTS is NPL-1.2 — keep the prepare function for opt-in ablation, but it
 # is not part of the shipped training mix.
 DEFAULT_SOURCES = ("everyayah", "qua", "iqra", "retasy", "tlog")
+# B1 synthetic source: built from everyayah_cuts.jsonl.gz, not an HF ingest.
+MULTI_SOURCE = "everyayah_multi"
+MULTI_MIN_AYAHS = 2
+MULTI_MAX_AYAHS = 4
+MULTI_MAX_DURATION_S = 25.0
+MULTI_GAP_MAX_S = 0.8
+# In-memory noise recordings do not round-trip through CutSet JSONL without new
+# files (inode cap). Skip the 30 % noise-gap mix; silence pad only.
+MULTI_NOISE_FRACTION = 0.0
+FBANK_SHARD_CUT_THRESHOLD = 60_000
 # q-lab everyayah_heldout wavs are curated *test* shards (test-000NN-of-00013_*).
 # Ingest train + validation only — never test — so the held-out set stays unseen.
 EVERYAYAH_SPLITS = ("train", "validation")
@@ -572,6 +589,238 @@ def fbank_shard_manifest_path(
 
 def expected_fbank_cut_count(n_raw: int, no_speed_perturb: bool) -> int:
     return int(n_raw) if no_speed_perturb else int(n_raw) * 3
+
+
+def consecutive_ayah_spans(
+    ayahs: list[int],
+    min_len: int = MULTI_MIN_AYAHS,
+    max_len: int = MULTI_MAX_AYAHS,
+) -> list[tuple[int, int]]:
+    """Inclusive (start, end) spans of consecutive ayahs, lengths min_len..max_len.
+
+    Gaps break runs. Duplicate ayah numbers are collapsed. Empty if no run is
+    long enough. Order is start-ascending, then length-ascending within a start.
+    """
+    uniq = sorted({int(a) for a in ayahs})
+    if not uniq:
+        return []
+    segments: list[tuple[int, int]] = []
+    start = prev = uniq[0]
+    for a in uniq[1:]:
+        if a == prev + 1:
+            prev = a
+        else:
+            segments.append((start, prev))
+            start = prev = a
+    segments.append((start, prev))
+    spans: list[tuple[int, int]] = []
+    for seg_s, seg_e in segments:
+        length = seg_e - seg_s + 1
+        for L in range(min_len, min(max_len, length) + 1):
+            for i in range(length - L + 1):
+                a0 = seg_s + i
+                spans.append((a0, a0 + L - 1))
+    return spans
+
+
+def cut_dict_window_record(cut_dict: dict) -> dict | None:
+    """Pull speaker/surah/ayah/duration/id from a lhotse cut dict. None if unusable.
+
+    Already-span cuts (``ayah_end != ayah``) are skipped so grouping stays
+    single-ayah EveryAyah rows.
+    """
+    cid = cut_id_of(cut_dict)
+    if not cid:
+        return None
+    duration = float(cut_dict.get("duration") or 0.0)
+    if duration <= 0:
+        return None
+    sups = cut_dict.get("supervisions") or []
+    if not sups or not isinstance(sups[0], dict):
+        return None
+    sup = sups[0]
+    custom = sup.get("custom") if isinstance(sup.get("custom"), dict) else {}
+    speaker = str(sup.get("speaker") or "unknown")
+    try:
+        surah = int(custom["surah"])
+        ayah = int(custom["ayah"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    ayah_end = int(custom["ayah_end"]) if custom.get("ayah_end") is not None else ayah
+    if ayah_end != ayah:
+        return None
+    return {
+        "id": cid,
+        "speaker": speaker,
+        "surah": surah,
+        "ayah": ayah,
+        "duration": duration,
+        "text": str(sup.get("text") or ""),
+    }
+
+
+def group_window_records(
+    records: list[dict],
+) -> dict[tuple[str, int], dict[int, dict]]:
+    """``(speaker, surah) -> {ayah: record}``. First record wins on duplicate ayah."""
+    groups: dict[tuple[str, int], dict[int, dict]] = {}
+    for rec in records:
+        key = (str(rec["speaker"]), int(rec["surah"]))
+        ayah = int(rec["ayah"])
+        bucket = groups.setdefault(key, {})
+        if ayah not in bucket:
+            bucket[ayah] = rec
+    return groups
+
+
+class MultiAyahWindowPick:
+    """One candidate 2–4 ayah run. Plain class so tests can exec_module this file."""
+
+    __slots__ = (
+        "speaker",
+        "surah",
+        "ayah",
+        "ayah_end",
+        "cut_ids",
+        "durations",
+        "n_ayahs",
+    )
+
+    def __init__(
+        self,
+        speaker: str,
+        surah: int,
+        ayah: int,
+        ayah_end: int,
+        cut_ids: tuple[str, ...],
+        durations: tuple[float, ...],
+        n_ayahs: int,
+    ):
+        self.speaker = speaker
+        self.surah = int(surah)
+        self.ayah = int(ayah)
+        self.ayah_end = int(ayah_end)
+        self.cut_ids = tuple(cut_ids)
+        self.durations = tuple(float(d) for d in durations)
+        self.n_ayahs = int(n_ayahs)
+
+    def max_duration_s(self, gap_max_s: float = MULTI_GAP_MAX_S) -> float:
+        n_gaps = max(self.n_ayahs - 1, 0)
+        return float(sum(self.durations)) + n_gaps * float(gap_max_s)
+
+
+def candidate_multi_ayah_windows(
+    groups: dict[tuple[str, int], dict[int, dict]],
+    *,
+    min_len: int = MULTI_MIN_AYAHS,
+    max_len: int = MULTI_MAX_AYAHS,
+    max_duration_s: float = MULTI_MAX_DURATION_S,
+    gap_max_s: float = MULTI_GAP_MAX_S,
+) -> list[MultiAyahWindowPick]:
+    """All 2–4 consecutive-ayah windows whose padded duration cannot exceed the cap."""
+    picks: list[MultiAyahWindowPick] = []
+    for speaker, surah in sorted(groups):
+        by_ayah = groups[(speaker, surah)]
+        ayahs = sorted(by_ayah)
+        for a0, a1 in consecutive_ayah_spans(ayahs, min_len, max_len):
+            recs = [by_ayah[a] for a in range(a0, a1 + 1)]
+            durs = tuple(float(r["duration"]) for r in recs)
+            n = a1 - a0 + 1
+            pick = MultiAyahWindowPick(
+                speaker=speaker,
+                surah=surah,
+                ayah=a0,
+                ayah_end=a1,
+                cut_ids=tuple(str(r["id"]) for r in recs),
+                durations=durs,
+                n_ayahs=n,
+            )
+            if pick.max_duration_s(gap_max_s) > max_duration_s:
+                continue
+            picks.append(pick)
+    return picks
+
+
+def allocate_stratified_counts(sizes: dict[str, int], n: int) -> dict[str, int]:
+    """Largest-remainder allocation of ``n`` slots, proportional to ``sizes``.
+
+    Keys in sorted order. Never more than available. If ``n`` exceeds the
+    total, returns a copy of ``sizes``.
+    """
+    keys = sorted(sizes)
+    total = sum(int(sizes[k]) for k in keys)
+    if not keys or n <= 0 or total <= 0:
+        return {k: 0 for k in keys}
+    if n >= total:
+        return {k: int(sizes[k]) for k in keys}
+    raw = {k: n * int(sizes[k]) / total for k in keys}
+    alloc = {k: min(int(raw[k]), int(sizes[k])) for k in keys}
+    assigned = sum(alloc.values())
+    remainders = sorted((-(raw[k] - int(raw[k])), k) for k in keys)
+    for _, k in remainders:
+        if assigned >= n:
+            break
+        if alloc[k] < int(sizes[k]):
+            alloc[k] += 1
+            assigned += 1
+    if assigned < n:
+        for k in keys:
+            while assigned < n and alloc[k] < int(sizes[k]):
+                alloc[k] += 1
+                assigned += 1
+    return alloc
+
+
+def select_windows_stratified(
+    candidates: list[MultiAyahWindowPick],
+    n_windows: int,
+    seed: int,
+) -> list[MultiAyahWindowPick]:
+    """Sample ``n_windows`` runs, stratified by reciter, seed-deterministic."""
+    rng = random.Random(int(seed))
+    by_speaker: dict[str, list[MultiAyahWindowPick]] = {}
+    for w in candidates:
+        by_speaker.setdefault(w.speaker, []).append(w)
+    for sp, items in by_speaker.items():
+        items.sort(key=lambda w: (w.surah, w.ayah, w.ayah_end, w.cut_ids))
+        rng.shuffle(items)
+        by_speaker[sp] = items
+    alloc = allocate_stratified_counts(
+        {sp: len(items) for sp, items in by_speaker.items()},
+        int(n_windows),
+    )
+    picked: list[MultiAyahWindowPick] = []
+    for sp in sorted(by_speaker):
+        picked.extend(by_speaker[sp][: alloc.get(sp, 0)])
+    rng.shuffle(picked)
+    return picked
+
+
+def sample_window_gaps(
+    n_ayahs: int,
+    rng: random.Random,
+    gap_max_s: float = MULTI_GAP_MAX_S,
+) -> tuple[float, ...]:
+    n_gaps = max(int(n_ayahs) - 1, 0)
+    return tuple(rng.uniform(0.0, float(gap_max_s)) for _ in range(n_gaps))
+
+
+def multi_ayah_window_text(corpus, surah: int, ayah: int, ayah_end: int) -> str:
+    """Phoneme string for ``[ayah, ayah_end]`` with no inserted spaces."""
+    text = corpus.span_phonemes(int(surah), int(ayah), int(ayah_end))
+    if " " in text:
+        raise ValueError(
+            f"span_phonemes inserted spaces for {surah}:{ayah}-{ayah_end}"
+        )
+    return text
+
+
+def n_ayahs_histogram(picks: list[MultiAyahWindowPick]) -> dict[str, int]:
+    hist = {str(k): 0 for k in range(MULTI_MIN_AYAHS, MULTI_MAX_AYAHS + 1)}
+    for w in picks:
+        key = str(w.n_ayahs)
+        hist[key] = int(hist.get(key) or 0) + 1
+    return hist
 
 
 def pick_surah_ayah(row: dict) -> tuple[int, int] | None:
@@ -1979,6 +2228,288 @@ def merge_fbank_shards(
     }
 
 
+def _wipe_multi_ayah_outputs() -> None:
+    src = MULTI_SOURCE
+    man = Path("/vol/manifests")
+    for p in (
+        man / f"{src}_cuts.jsonl.gz",
+        man / f"{src}_cuts_fbank.jsonl.gz",
+        man / f"{src}_stats.json",
+        man / f"{src}_progress.json",
+        man / f"{src}_cuts.partial.jsonl",
+    ):
+        if p.is_file():
+            p.unlink()
+    for p in man.glob(f"{src}_cuts_fbank.shard-*.jsonl.gz"):
+        if p.is_file():
+            p.unlink()
+    for d in (Path("/vol/fbank") / src, Path("/vol/fbank_sharded") / src):
+        if d.is_dir():
+            shutil.rmtree(d)
+
+
+def _chain_window_cuts(cuts: list, gaps: tuple[float, ...]):
+    """append() + optional right-pad silence. No new audio files."""
+    out = cuts[0]
+    for nxt, gap in zip(cuts[1:], gaps):
+        gap = float(gap)
+        if gap > 1e-4:
+            out = out.pad(duration=out.duration + gap, direction="right")
+        out = out.append(nxt)
+    return out
+
+
+def _assign_window_supervision(cut, *, wid: str, text: str, speaker: str, custom: dict):
+    from lhotse import SupervisionSegment
+
+    rec_id = getattr(cut, "recording_id", None) or wid
+    sup = SupervisionSegment(
+        id=wid,
+        recording_id=str(rec_id),
+        start=0.0,
+        duration=cut.duration,
+        channel=0,
+        text=text,
+        language="quran-phonemes",
+        speaker=speaker,
+        custom=custom,
+    )
+    if hasattr(cut, "drop_supervisions"):
+        cut = cut.drop_supervisions()
+    else:
+        cut.supervisions.clear()
+    cut.supervisions.append(sup)
+    if hasattr(cut, "with_id"):
+        cut = cut.with_id(wid)
+    else:
+        cut.id = wid
+    return cut
+
+
+@app.function(**_FN_KW)
+def build_multi_ayah_windows(n_windows: int, seed: int = 0, force: bool = False):
+    """Synthesize MixedCut windows of 2–4 consecutive EveryAyah ayahs (B1).
+
+    Reads raw ``/vol/manifests/everyayah_cuts.jsonl.gz`` (not perturbed).
+    Writes ``/vol/manifests/everyayah_multi_cuts.jsonl.gz`` via lhotse
+    ``append`` + silence pad (0–800 ms). Does not re-decode audio. Noise
+    mix is skipped (in-memory recordings would need new files; inode cap).
+    """
+    _boot_remote()
+    from lhotse import CutSet
+
+    n_windows = int(n_windows)
+    if n_windows <= 0:
+        raise ValueError(f"n_windows must be > 0, got {n_windows}")
+    src = MULTI_SOURCE
+    raw_path = Path("/vol/manifests/everyayah_cuts.jsonl.gz")
+    out_path = Path(f"/vol/manifests/{src}_cuts.jsonl.gz")
+    if not raw_path.is_file():
+        raise FileNotFoundError(f"missing {raw_path}; stage everyayah first")
+    if force:
+        _wipe_multi_ayah_outputs()
+        vol.commit()
+        print(f"[{src}] --force: wiped prior cuts/fbank")
+    elif out_path.is_file():
+        print(f"[{src}] {out_path} exists; skip (pass --force to redo)")
+        existing = Path(f"/vol/manifests/{src}_stats.json")
+        if existing.is_file():
+            return json.loads(existing.read_text(encoding="utf-8"))
+        return {"source": src, "skipped_existing": True, "clips": 0, "hours": 0.0}
+
+    print(f"[{src}] load {raw_path}")
+    cuts = CutSet.from_file(str(raw_path))
+    records = []
+    skipped_span = 0
+    by_id = {}
+    for cut in cuts:
+        by_id[cut.id] = cut
+        if not cut.supervisions:
+            skipped_span += 1
+            continue
+        sup = cut.supervisions[0]
+        rec = cut_dict_window_record(
+            {
+                "id": cut.id,
+                "duration": cut.duration,
+                "supervisions": [
+                    {
+                        "speaker": sup.speaker,
+                        "text": sup.text or "",
+                        "custom": sup.custom or {},
+                    }
+                ],
+            }
+        )
+        if rec is None:
+            skipped_span += 1
+            continue
+        records.append(rec)
+    print(
+        f"[{src}] everyayah cuts={len(cuts)} usable={len(records)} "
+        f"skipped_span_or_bad={skipped_span}"
+    )
+    groups = group_window_records(records)
+    candidates = candidate_multi_ayah_windows(groups)
+    print(f"[{src}] candidates={len(candidates)} groups={len(groups)}")
+    if len(candidates) < n_windows:
+        print(
+            f"[{src}] WARNING requested {n_windows} windows but only "
+            f"{len(candidates)} duration-eligible candidates"
+        )
+    picked = select_windows_stratified(candidates, n_windows, seed)
+    if not picked:
+        raise RuntimeError(f"[{src}] no windows selected")
+
+    corpus, tokenizer, _db, OOVError = _load_labelers()
+    rng = random.Random(int(seed) ^ 0xA5A5)
+    built = []
+    built_picks: list[MultiAyahWindowPick] = []
+    dropped_long = 0
+    dropped_missing = 0
+    phoneme_rates: list[float] = []
+    hours = 0.0
+    for i, pick in enumerate(picked):
+        try:
+            text = multi_ayah_window_text(corpus, pick.surah, pick.ayah, pick.ayah_end)
+            tokenizer.encode(text)
+        except OOVError:
+            raise RuntimeError(
+                f"[{src}] OOV on {pick.surah}:{pick.ayah}-{pick.ayah_end} "
+                f"speaker={pick.speaker}"
+            ) from None
+        except ValueError:
+            dropped_missing += 1
+            continue
+        window_cuts = []
+        missing = False
+        for cid in pick.cut_ids:
+            c = by_id.get(cid)
+            if c is None:
+                missing = True
+                break
+            window_cuts.append(c)
+        if missing:
+            dropped_missing += 1
+            continue
+        gaps = sample_window_gaps(pick.n_ayahs, rng)
+        chained = _chain_window_cuts(window_cuts, gaps)
+        if chained.duration > MULTI_MAX_DURATION_S:
+            dropped_long += 1
+            continue
+        wid = make_clip_id(src, i, pick.surah, pick.ayah)
+        custom = {
+            "surah": pick.surah,
+            "ayah": pick.ayah,
+            "ayah_end": pick.ayah_end,
+            "source": src,
+            "n_ayahs": pick.n_ayahs,
+        }
+        chained = _assign_window_supervision(
+            chained,
+            wid=wid,
+            text=text,
+            speaker=pick.speaker,
+            custom=custom,
+        )
+        built.append(chained)
+        built_picks.append(pick)
+        hours += chained.duration / 3600.0
+        if chained.duration > 0:
+            phoneme_rates.append(len(text) / chained.duration)
+        if len(built) % 5000 == 0:
+            vol.commit()
+            print(f"[{src}] built {len(built)} windows")
+
+    if not built:
+        raise RuntimeError(f"[{src}] built 0 windows")
+    try:
+        out = CutSet.from_cuts(built)
+    except AttributeError:
+        out = CutSet(built)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_file(str(out_path))
+    hist = n_ayahs_histogram(built_picks)
+    mean_pps = sum(phoneme_rates) / len(phoneme_rates) if phoneme_rates else 0.0
+    sample_n = min(8, len(built))
+    print(f"[{src}] sample text-vs-duration (phonemes/sec, expect ~8–25):")
+    for c in built[:sample_n]:
+        sup = c.supervisions[0]
+        pps = (len(sup.text) / c.duration) if c.duration else 0.0
+        custom = sup.custom or {}
+        print(
+            f"  {c.id} {custom.get('surah')}:{custom.get('ayah')}-"
+            f"{custom.get('ayah_end')} dur={c.duration:.2f}s "
+            f"chars={len(sup.text)} pps={pps:.1f} n={custom.get('n_ayahs')}"
+        )
+    stats = {
+        "source": src,
+        "clips": len(built),
+        "hours": hours,
+        "oov": 0,
+        "skipped": {
+            "dropped_long": dropped_long,
+            "dropped_missing": dropped_missing,
+            "skipped_span_or_bad": skipped_span,
+        },
+        "n_ayahs_hist": hist,
+        "n_requested": n_windows,
+        "n_candidates": len(candidates),
+        "seed": int(seed),
+        "mean_phonemes_per_sec": mean_pps,
+        "noise_mix": False,
+        "noise_skip_reason": (
+            "in-memory noise recordings do not round-trip through CutSet "
+            "JSONL without new files; volume near inode cap"
+        ),
+        "path": str(out_path),
+        "license_ok": True,
+        "reused_flac": len(built),
+    }
+    _write_stats(stats)
+    vol.commit()
+    print(
+        f"[{src}] wrote {out_path} clips={len(built)} hours={hours:.3f} "
+        f"hist={hist} mean_pps={mean_pps:.2f} oov=0"
+    )
+    return stats
+
+
+def _run_fbank_shards_local(
+    src: str, n_shards: int, no_speed_perturb: bool
+) -> dict:
+    print(f"[fbank/{src}] spawning {n_shards} shards", flush=True)
+    pending = list(range(n_shards))
+    results: list = [None] * n_shards
+    attempts = {i: 0 for i in pending}
+    max_attempts = 3
+    while pending:
+        handles = {
+            i: compute_fbank_shard.spawn(src, i, n_shards, no_speed_perturb)
+            for i in pending
+        }
+        next_pending: list[int] = []
+        for i, handle in handles.items():
+            try:
+                results[i] = handle.get()
+                print(f"  shard done: {results[i]}", flush=True)
+            except Exception as e:
+                attempts[i] += 1
+                print(
+                    f"  shard {i} FAILED attempt {attempts[i]}/{max_attempts}: "
+                    f"{type(e).__name__}: {e}",
+                    flush=True,
+                )
+                if attempts[i] < max_attempts:
+                    next_pending.append(i)
+                else:
+                    raise
+        pending = next_pending
+    merged = merge_fbank_shards.remote(src, n_shards, no_speed_perturb)
+    print(f"FBANK MERGED {src}: {merged}", flush=True)
+    return merged
+
+
 @app.function(**_FN_KW)
 def summarize():
     _boot_remote()
@@ -2033,9 +2564,37 @@ def main(
     no_speed_perturb: bool = False,
     crash_after: int = 0,
     fbank_shards: int = 0,
+    multi_windows: int = 0,
+    seed: int = 0,
 ):
     if summary_only:
         summarize.remote()
+        return
+    if multi_windows > 0:
+        print(
+            f"multi-ayah windows n={multi_windows} seed={seed} force={force} "
+            f"skip_fbank={skip_fbank} fbank_shards={fbank_shards}",
+            flush=True,
+        )
+        stats = build_multi_ayah_windows.remote(multi_windows, seed, force)
+        print(f"DONE {MULTI_SOURCE}: {stats}", flush=True)
+        if skip_fbank:
+            return
+        src = MULTI_SOURCE
+        n_raw = int(stats.get("clips") or 0)
+        n_shards = int(fbank_shards)
+        n_feat = expected_fbank_cut_count(n_raw, no_speed_perturb)
+        if n_shards <= 0 and n_feat > FBANK_SHARD_CUT_THRESHOLD:
+            n_shards = 4
+            print(
+                f"[fbank/{src}] auto n_shards={n_shards} "
+                f"(perturbed={n_feat} > {FBANK_SHARD_CUT_THRESHOLD})",
+                flush=True,
+            )
+        if n_shards > 0:
+            _run_fbank_shards_local(src, n_shards, no_speed_perturb)
+        else:
+            print(f"FBANK {src}: {compute_fbank.remote(src, no_speed_perturb, force)}")
         return
     selected = parse_sources(sources)
     if fbank_shards < 0:
