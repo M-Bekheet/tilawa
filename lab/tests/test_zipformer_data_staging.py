@@ -420,3 +420,63 @@ def test_corrupt_progress_restore_hours_from_cuts(tmp_path):
     restored = prep.restore_partial_state(source, tmp_path)
     assert abs(restored["hours_kept"] - 6.0 / 3600.0) < 1e-12
     assert restored["rows_seen"] == 9
+
+
+def test_fbank_shard_partition_exact_and_ordered():
+    items = list(range(10))
+    shards = [prep.shard_items(items, i, 3) for i in range(3)]
+    assert shards[0] == [0, 3, 6, 9]
+    assert shards[1] == [1, 4, 7]
+    assert shards[2] == [2, 5, 8]
+    flat = [x for s in shards for x in s]
+    assert sorted(flat) == items
+    assert len(flat) == len(set(flat)) == len(items)
+
+    ids = [f"c{i}" for i in range(12)]
+    parts = [prep.shard_items(ids, i, 5) for i in range(5)]
+    assert parts[0] == ["c0", "c5", "c10"]
+    assert parts[4] == ["c4", "c9"]
+    union = [x for p in parts for x in p]
+    assert sorted(union) == sorted(ids)
+    assert len(union) == len(set(union)) == 12
+
+    assert prep.shard_items(ids, 0, 1) == ids
+    assert prep.shard_items([], 0, 4) == []
+    for n, k in ((0, 1), (1, 1), (1, 7), (7, 3), (12, 4), (12, 5), (719925, 12), (384612, 8)):
+        xs = list(range(n))
+        parts = [prep.shard_items(xs, i, k) for i in range(k)]
+        flat = prep.merge_shard_items(parts)
+        assert sorted(flat) == xs
+        assert len(flat) == n
+        seen: set[int] = set()
+        for p in parts:
+            assert not seen.intersection(p)
+            seen.update(p)
+        assert seen == set(xs)
+        for i, p in enumerate(parts):
+            assert p == xs[i::k]
+
+    with pytest.raises(ValueError):
+        prep.shard_items([1], 0, 0)
+    with pytest.raises(ValueError):
+        prep.shard_items([1], 3, 3)
+
+
+def test_fbank_merge_shards_preserves_order():
+    shards = [[0, 3, 6, 9], [1, 4, 7], [2, 5, 8]]
+    assert prep.merge_shard_items(shards) == [0, 3, 6, 9, 1, 4, 7, 2, 5, 8]
+    assert prep.merge_shard_items([["a"], ["b", "c"], []]) == ["a", "b", "c"]
+    assert prep.merge_shard_items([]) == []
+
+    items = [f"cut-{i}" for i in range(20)]
+    parts = [prep.shard_items(items, i, 4) for i in range(4)]
+    merged = prep.merge_shard_items(parts)
+    assert merged == parts[0] + parts[1] + parts[2] + parts[3]
+    assert merged != items
+    assert sorted(merged) == sorted(items)
+    assert prep.expected_fbank_cut_count(239975, False) == 719925
+    assert prep.expected_fbank_cut_count(128204, True) == 128204
+    assert prep.fbank_shard_storage_path("qua", 3) == Path("/vol/fbank_sharded/qua/shard-3")
+    assert prep.fbank_shard_manifest_path("qua", 3) == Path(
+        "/vol/manifests/qua_cuts_fbank.shard-3.jsonl.gz"
+    )

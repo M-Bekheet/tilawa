@@ -27,6 +27,9 @@ Usage:
 
   modal run --detach scripts/prepare_zipformer_data_modal.py \\
       --sources qurantts --limit 20 --skip-fbank   # NPL-1.2 ablation, not shipped
+
+  modal run scripts/prepare_zipformer_data_modal.py \\
+      --sources qua --fbank-shards 12              # skip prepare; sharded fbank + merge
 """
 
 from __future__ import annotations
@@ -519,6 +522,41 @@ def parse_sources(csv: str) -> list[str]:
     return parts
 
 
+def shard_items(items: list, shard: int, n_shards: int) -> list:
+    """Every n-th item by index. Exact partition: union == full list, no overlap."""
+    if n_shards < 1:
+        raise ValueError(f"n_shards must be >= 1, got {n_shards}")
+    if shard < 0 or shard >= n_shards:
+        raise ValueError(f"shard must be in [0, {n_shards}), got {shard}")
+    return [item for i, item in enumerate(items) if i % n_shards == shard]
+
+
+def merge_shard_items(shards: list) -> list:
+    """Concatenate shard sequences in shard-index order (0, 1, …)."""
+    out = []
+    for part in shards:
+        out.extend(part)
+    return out
+
+
+def fbank_shard_storage_path(
+    source: str, shard: int, root: Path | str | None = None
+) -> Path:
+    base = Path(root) if root is not None else Path("/vol/fbank_sharded")
+    return base / source / f"shard-{shard}"
+
+
+def fbank_shard_manifest_path(
+    source: str, shard: int, manifest_root: Path | str | None = None
+) -> Path:
+    root = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
+    return root / f"{source}_cuts_fbank.shard-{shard}.jsonl.gz"
+
+
+def expected_fbank_cut_count(n_raw: int, no_speed_perturb: bool) -> int:
+    return int(n_raw) if no_speed_perturb else int(n_raw) * 3
+
+
 def pick_surah_ayah(row: dict) -> tuple[int, int] | None:
     for s_key, a_key in _SURA_AYAH_KEYS:
         if s_key in row and a_key in row and row[s_key] is not None and row[a_key] is not None:
@@ -686,6 +724,7 @@ def _boot_remote() -> None:
     Path("/vol/manifests").mkdir(parents=True, exist_ok=True)
     Path("/vol/licenses").mkdir(parents=True, exist_ok=True)
     Path("/vol/fbank").mkdir(parents=True, exist_ok=True)
+    Path("/vol/fbank_sharded").mkdir(parents=True, exist_ok=True)
     patch_hf_list_feature()
 
 
@@ -1810,6 +1849,129 @@ def compute_fbank(source: str, no_speed_perturb: bool = False, force: bool = Fal
 
 
 @app.function(**_FN_KW)
+def compute_fbank_shard(
+    source: str, shard: int, n_shards: int, no_speed_perturb: bool = False
+):
+    """Extract fbanks for one exact-partition shard (every n-th cut after perturb)."""
+    _boot_remote()
+    import time
+
+    import torch
+    from lhotse import CutSet, Fbank, FbankConfig
+    from lhotse.features.io import LilcomChunkyWriter
+    from shared.fbank import LHOTSE_FBANK_CONFIG
+
+    torch.set_num_threads(1)
+
+    cuts_path = Path(f"/vol/manifests/{source}_cuts.jsonl.gz")
+    if not cuts_path.is_file():
+        raise FileNotFoundError(f"missing {cuts_path}; run prepare first")
+    out_path = fbank_shard_manifest_path(source, shard)
+    if out_path.is_file():
+        print(
+            f"[fbank/{source} shard {shard}/{n_shards}] {out_path} exists; skip"
+        )
+        return {
+            "source": source,
+            "shard": shard,
+            "skipped_existing": True,
+            "path": str(out_path),
+        }
+    print(f"[fbank/{source} shard {shard}/{n_shards}] load {cuts_path}")
+    cuts = CutSet.from_file(str(cuts_path))
+    n_raw = len(cuts)
+    if not no_speed_perturb:
+        print(f"[fbank/{source} shard {shard}/{n_shards}] speed perturb 0.9/1.1")
+        cuts = cuts + cuts.perturb_speed(0.9) + cuts.perturb_speed(1.1)
+    ids = [c.id for c in cuts]
+    shard_ids = shard_items(ids, shard, n_shards)
+    cuts = cuts.subset(cut_ids=shard_ids)
+    storage = fbank_shard_storage_path(source, shard)
+    storage.mkdir(parents=True, exist_ok=True)
+    extractor = Fbank(FbankConfig(**LHOTSE_FBANK_CONFIG))
+    print(
+        f"[fbank/{source} shard {shard}/{n_shards}] extract → {storage} "
+        f"({len(cuts)} cuts of {len(ids)} perturbed, raw={n_raw}, "
+        f"num_jobs={FBANK_NUM_JOBS})"
+    )
+    t0 = time.time()
+    cuts = cuts.compute_and_store_features(
+        extractor=extractor,
+        storage_path=str(storage),
+        storage_type=LilcomChunkyWriter,
+        num_jobs=FBANK_NUM_JOBS,
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cuts.to_file(str(out_path))
+    elapsed = time.time() - t0
+    rate = (len(cuts) / elapsed) if elapsed else 0.0
+    print(
+        f"[fbank/{source} shard {shard}/{n_shards}] wrote {out_path} "
+        f"cuts={len(cuts)} {elapsed:.1f}s {rate:.1f} cuts/s"
+    )
+    vol.commit()
+    return {
+        "source": source,
+        "shard": shard,
+        "n_shards": n_shards,
+        "cuts": len(cuts),
+        "n_raw": n_raw,
+        "seconds": elapsed,
+        "cuts_per_s": rate,
+        "path": str(out_path),
+    }
+
+
+@app.function(**_FN_KW)
+def merge_fbank_shards(
+    source: str, n_shards: int, no_speed_perturb: bool = False
+):
+    """Concatenate shard manifests in order into the training fbank CutSet path."""
+    _boot_remote()
+    from lhotse import CutSet
+
+    parts = []
+    for i in range(n_shards):
+        p = fbank_shard_manifest_path(source, i)
+        if not p.is_file():
+            raise FileNotFoundError(f"missing shard manifest {p}")
+        print(f"[fbank/{source}] load shard {i}/{n_shards} {p}")
+        parts.append(CutSet.from_file(str(p)))
+    merged_ids = merge_shard_items([[c.id for c in cs] for cs in parts])
+    cuts = parts[0]
+    for extra in parts[1:]:
+        cuts = cuts + extra
+    if [c.id for c in cuts] != merged_ids:
+        raise RuntimeError(f"[fbank/{source}] merge order mismatch vs shard concat")
+    out_path = Path(f"/vol/manifests/{source}_cuts_fbank.jsonl.gz")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cuts.to_file(str(out_path))
+    raw_path = Path(f"/vol/manifests/{source}_cuts.jsonl.gz")
+    n_raw = len(CutSet.from_file(str(raw_path))) if raw_path.is_file() else None
+    expected = (
+        None if n_raw is None else expected_fbank_cut_count(n_raw, no_speed_perturb)
+    )
+    print(
+        f"[fbank/{source}] merged {n_shards} shards → {out_path} "
+        f"cuts={len(cuts)} expected={expected} (3× raw when perturb on)"
+    )
+    if expected is not None and len(cuts) != expected:
+        raise RuntimeError(
+            f"[fbank/{source}] merged cuts={len(cuts)} != expected={expected} "
+            f"(raw={n_raw}, no_speed_perturb={no_speed_perturb})"
+        )
+    vol.commit()
+    return {
+        "source": source,
+        "cuts": len(cuts),
+        "n_raw": n_raw,
+        "expected": expected,
+        "n_shards": n_shards,
+        "path": str(out_path),
+    }
+
+
+@app.function(**_FN_KW)
 def summarize():
     _boot_remote()
     rows = []
@@ -1862,11 +2024,30 @@ def main(
     summary_only: bool = False,
     no_speed_perturb: bool = False,
     crash_after: int = 0,
+    fbank_shards: int = 0,
 ):
     if summary_only:
         summarize.remote()
         return
     selected = parse_sources(sources)
+    if fbank_shards < 0:
+        raise ValueError(f"fbank_shards must be >= 0, got {fbank_shards}")
+    if fbank_shards > 0:
+        print(
+            f"sharded fbank sources={selected} n_shards={fbank_shards} "
+            f"no_speed_perturb={no_speed_perturb}"
+        )
+        for src in selected:
+            args = [
+                (src, i, fbank_shards, no_speed_perturb) for i in range(fbank_shards)
+            ]
+            print(f"[fbank/{src}] spawning {fbank_shards} shards", flush=True)
+            results = list(compute_fbank_shard.starmap(args))
+            for r in results:
+                print(f"  shard done: {r}", flush=True)
+            merged = merge_fbank_shards.remote(src, fbank_shards, no_speed_perturb)
+            print(f"FBANK MERGED {src}: {merged}", flush=True)
+        return
     print(
         f"staging sources={selected} limit={limit} force={force} "
         f"skip_fbank={skip_fbank} crash_after={crash_after}"
