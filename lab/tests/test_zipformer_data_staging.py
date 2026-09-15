@@ -277,6 +277,30 @@ def test_force_wipe_also_removes_fbank_gzip(tmp_path):
     assert not (tmp_path / f"{source}_cuts.jsonl.gz").is_file()
 
 
+def test_force_wipe_also_removes_sharded_fbank(tmp_path):
+    vol = tmp_path
+    man = vol / "manifests"
+    man.mkdir()
+    source = "qua"
+    shard0 = man / f"{source}_cuts_fbank.shard-0.jsonl.gz"
+    shard3 = man / f"{source}_cuts_fbank.shard-3.jsonl.gz"
+    shard0.write_bytes(b"s0")
+    shard3.write_bytes(b"s3")
+    (man / f"{source}_cuts_fbank.jsonl.gz").write_bytes(b"merged")
+    sharded = vol / "fbank_sharded" / source / "shard-0"
+    sharded.mkdir(parents=True)
+    (sharded / "feats").write_bytes(b"feat")
+    other = vol / "fbank_sharded" / "tlog" / "shard-0"
+    other.mkdir(parents=True)
+    (other / "keep").write_bytes(b"x")
+    prep.restore_partial_state(source, man, force=True)
+    assert not shard0.is_file()
+    assert not shard3.is_file()
+    assert not (man / f"{source}_cuts_fbank.jsonl.gz").is_file()
+    assert not (vol / "fbank_sharded" / source).exists()
+    assert (other / "keep").is_file()
+
+
 def test_crash_resume_finalize_prefix_plus_suffix_no_duplicates(tmp_path):
     source = "retasy"
     prefix = [{"id": f"retasy_{i:08d}_1_1", "duration": 1.0} for i in range(12)]

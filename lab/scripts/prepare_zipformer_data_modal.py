@@ -43,6 +43,11 @@ from pathlib import Path
 
 import modal
 
+_REPO = Path(__file__).resolve().parent.parent
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+from shared.paths import data_root  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Pure helpers (imported by tests; no lhotse)
 # ---------------------------------------------------------------------------
@@ -448,6 +453,11 @@ def restore_partial_state(
     `hours_kept` is always recomputed from cut durations (never summed on top of
     a stale progress value). Missing/corrupt progress with leftover cuts falls
     back to `rows_seen = clips_kept = len(cuts)`.
+
+    `--force` also deletes `*_cuts_fbank.jsonl.gz`, every
+    `*_cuts_fbank.shard-*.jsonl.gz`, and `<vol>/fbank_sharded/<source>/`
+    (`vol` = `manifest_root.parent`, so default `/vol/manifests` →
+    `/vol/fbank_sharded/<source>/`).
     """
     man = Path(manifest_root) if manifest_root is not None else Path("/vol/manifests")
     partial = partial_cuts_path(source, man)
@@ -464,6 +474,12 @@ def restore_partial_state(
         ):
             if p.is_file():
                 p.unlink()
+        for p in man.glob(f"{source}_cuts_fbank.shard-*.jsonl.gz"):
+            if p.is_file():
+                p.unlink()
+        sharded = man.parent / "fbank_sharded" / source
+        if sharded.is_dir():
+            shutil.rmtree(sharded)
         state = empty_progress()
         state["cut_dicts"] = []
         return state
@@ -593,21 +609,12 @@ def load_token_inventory(path: str | Path) -> list[str]:
     return [by_id[i] for i in range(n)]
 
 
-def data_root() -> Path:
-    project_root = Path(__file__).resolve().parent.parent
-    if (project_root / "data" / "prompter" / "quran.json").is_file():
-        return project_root
-    return Path(
-        os.environ.get("TILAWA_DATA_ROOT", "/Users/rock/ai/projects/offline-tarteel")
-    )
-
-
 def local_quran_json() -> Path:
     project_root = Path(__file__).resolve().parent.parent
     wt = project_root / "data" / "quran.json"
     if wt.is_file():
         return wt
-    return data_root() / "data" / "quran.json"
+    return data_root() / "quran.json"
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +623,7 @@ def local_quran_json() -> Path:
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = data_root()
-_PROMPTER_QURAN = DATA_ROOT / "data" / "prompter" / "quran.json"
+_PROMPTER_QURAN = DATA_ROOT / "prompter" / "quran.json"
 _QURAN_JSON = local_quran_json()
 _TOKENS_TXT = (
     PROJECT_ROOT
@@ -650,6 +657,7 @@ image = (
     )
     .pip_install("lilcom", "kaldi-native-fbank")
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .add_local_file(str(_SHARED / "paths.py"), remote_path="/app/shared/paths.py")
     .add_local_file(str(_SHARED / "prompter_labels.py"), remote_path="/app/shared/prompter_labels.py")
     .add_local_file(str(_SHARED / "normalizer.py"), remote_path="/app/shared/normalizer.py")
     .add_local_file(str(_SHARED / "quran_db.py"), remote_path="/app/shared/quran_db.py")
@@ -945,7 +953,8 @@ def _begin_or_skip(source: str, force: bool, stats: dict) -> tuple[dict | None, 
 
     A leftover `*_cuts.partial.jsonl` means a crash mid-run: resume even if a
     stale final gzip exists. `--force` deletes partial + progress + final + audio
-    + fbank dir + `*_cuts_fbank.jsonl.gz` (smoke leftovers must not skip fbank).
+    + fbank dir + `*_cuts_fbank.jsonl.gz` + `*_cuts_fbank.shard-*.jsonl.gz` +
+    `/vol/fbank_sharded/<source>/` (smoke leftovers must not skip fbank).
     """
     if force:
         state = restore_partial_state(source, force=True)
@@ -955,10 +964,13 @@ def _begin_or_skip(source: str, force: bool, stats: dict) -> tuple[dict | None, 
         fbank_dir = Path("/vol/fbank") / source
         if fbank_dir.is_dir():
             shutil.rmtree(fbank_dir)
+        sharded_dir = Path("/vol/fbank_sharded") / source
+        if sharded_dir.is_dir():
+            shutil.rmtree(sharded_dir)
         vol.commit()
         print(
             f"[{source}] --force: cleared partial, progress, final cuts, "
-            f"fbank gzip, {audio_dir}, and {fbank_dir}"
+            f"fbank gzip, shard gzip, {audio_dir}, {fbank_dir}, and {sharded_dir}"
         )
         return state, None
     partial = partial_cuts_path(source)
