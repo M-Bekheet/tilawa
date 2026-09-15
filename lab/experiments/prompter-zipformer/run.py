@@ -119,7 +119,7 @@ def _ensure_assets() -> None:
 
 
 def _ensure_proc() -> subprocess.Popen:
-    global _proc
+    global _proc, _HARNESS_GAP_MAX_WORDS
     if _proc is not None and _proc.poll() is None:
         return _proc
     _ensure_assets()
@@ -127,6 +127,7 @@ def _ensure_proc() -> subprocess.Popen:
     env.setdefault("PROMPTER_MODEL", str(MODEL_PATH))
     env.setdefault("PROMPTER_CORPUS", str(CORPUS_PATH))
     env.setdefault("PROMPTER_ORT_DIR", str(ORT_DIR))
+    env.setdefault("PROMPTER_GAP_MAX_WORDS", str(_gap_max_words()))
     _proc = subprocess.Popen(
         ["node", str(HERE / "harness.mjs")],
         stdin=subprocess.PIPE,
@@ -137,8 +138,11 @@ def _ensure_proc() -> subprocess.Popen:
         bufsize=1,
     )
     ready = _proc.stdout.readline()
-    if not ready or not json.loads(ready).get("ready"):
+    parsed = json.loads(ready) if ready else {}
+    if not parsed.get("ready"):
         raise RuntimeError(f"harness failed to start: {ready!r}")
+    if "gapMaxWords" in parsed:
+        _HARNESS_GAP_MAX_WORDS = int(parsed["gapMaxWords"])
     atexit.register(_shutdown)
     return _proc
 
@@ -179,11 +183,21 @@ def recognize(audio_path: str) -> dict:
 
 
 GAP_MAX_WORDS = 3
+_HARNESS_GAP_MAX_WORDS: int | None = None
 _ayah_words_cache: dict[tuple[int, int], int] | None = None
 
 
 def _allow_gaps() -> bool:
     return os.environ.get("PROMPTER_ALLOW_GAPS") == "1"
+
+
+def _gap_max_words() -> int:
+    raw = os.environ.get("PROMPTER_GAP_MAX_WORDS")
+    if raw not in (None, ""):
+        return int(raw)
+    if _HARNESS_GAP_MAX_WORDS is not None:
+        return _HARNESS_GAP_MAX_WORDS
+    return GAP_MAX_WORDS
 
 
 def _ayah_word_count(surah: int, ayah: int) -> int:
@@ -201,6 +215,43 @@ def _ayah_word_count(surah: int, ayah: int) -> int:
     return _ayah_words_cache.get((surah, ayah), 99)
 
 
+def _bridge_extras(
+    accepted: list[dict],
+    tallies: list[dict],
+    *,
+    gap_max_words: int | None = None,
+) -> list[dict]:
+    """Inject a below-threshold short ayah only when both neighbours already emit.
+
+    Prefix fill is forbidden: a tally for ayah 3 with accepted [4, 5] stays out.
+    Requires ok+unsure >= 1.
+    """
+    limit = _gap_max_words() if gap_max_words is None else gap_max_words
+    have = {(t["surah"], t["ayah"]) for t in accepted}
+    extra = []
+    for t in tallies:
+        key = (t["surah"], t["ayah"])
+        if key in have:
+            continue
+        if t.get("words", 99) > limit:
+            continue
+        if t.get("ok", 0) + t.get("unsure", 0) < 1:
+            continue
+        if t.get("wrong", 0) > t.get("ok", 0) + t.get("unsure", 0):
+            continue
+        if (t["surah"], t["ayah"] - 1) not in have:
+            continue
+        if (t["surah"], t["ayah"] + 1) not in have:
+            continue
+        extra.append({**t, "bridged": True})
+        have.add(key)
+    if not extra:
+        return accepted
+    out = list(accepted) + extra
+    out.sort(key=lambda t: t.get("firstSeen", 0))
+    return out
+
+
 def _contiguous_head(
     verses: list[dict],
     *,
@@ -210,11 +261,14 @@ def _contiguous_head(
     """First verse plus the longest run of consecutive ayahs in the same surah.
 
     When allow_gaps (PROMPTER_ALLOW_GAPS=1), skip a single missing ayah of
-    ≤ GAP_MAX_WORDS so a later emitted ayah still extends ayah_end.
+    ≤ gap-max words *only if that ayah is already in `verses`* (harness-bridged).
+    Does not invent a hole from the corpus, and does not walk backward: [4, 5]
+    stays start=4.
     """
     if allow_gaps is None:
         allow_gaps = _allow_gaps()
     count_fn = word_count or _ayah_word_count
+    present = {(v["surah"], v["ayah"]) for v in verses}
     first = verses[0]
     surah, ayah = first["surah"], first["ayah"]
     end = ayah
@@ -226,7 +280,7 @@ def _contiguous_head(
             continue
         if allow_gaps and v["ayah"] == end + 2:
             skipped = end + 1
-            if count_fn(surah, skipped) <= GAP_MAX_WORDS:
+            if (surah, skipped) in present and count_fn(surah, skipped) <= _gap_max_words():
                 end = v["ayah"]
                 continue
         break
@@ -237,6 +291,10 @@ def predict(audio_path: str) -> dict:
     res = recognize(audio_path)
     provenance = _provenance()
     verses = res["verses"]
+    if _allow_gaps():
+        accepted = [v for v in verses if not v.get("bridged")]
+        tallies = res.get("all") or verses
+        verses = _bridge_extras(accepted, tallies)
     if not verses:
         return {
             "surah": 0,

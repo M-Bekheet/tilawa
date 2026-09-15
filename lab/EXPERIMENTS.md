@@ -243,7 +243,7 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 | v3 int8 | 69 MB | 52/53 | **43/43** | same 247/256 | same 571/583 | same split | 0.75 s / 0.48 s |
 | ft-v31 fp32 | 248 MB | 45/53 | 39/43 | 92.3 / 94.5 / 90.2 **(231/256)** | 566/583 (97.1%) | 184/184, 194/200, 188/199 | 0.85 s / 0.56 s |
 | ft-v31 int8 | 66 MB | 45/53 | 39/43 | same 231/256 | same 566/583 | same split | 0.68 s / 0.44 s |
-| ft-v31 fp32 + `ALLOW_GAPS=1` | 248 MB | 46/53 | 40/43 | 92.5 / 94.5 / 90.6 **(232/256)** | 566/583 (97.1%) | 184/184, 194/200, 188/199 | 1.78 s / 1.17 s |
+| ft-v31 fp32 + `ALLOW_GAPS=1` | 248 MB | 45/53 | 39/43 | 92.3 / 94.5 / 90.2 **(231/256)** | 566/583 (97.1%) | 184/184, 194/200, 188/199 | 1.48 s / — |
 
 v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1. ft-v31 fp32+int8 all corpora ×3 (scores identical across repeats).
 
@@ -307,7 +307,7 @@ Raw JSON: `benchmark/results/2026-09-15_18*.json` / `_19*.json`; ledger `benchma
 
 ### E3 tracker re-tune (diagnostic, NOT PROMOTED)
 
-Matcher-only probe on ft-v31 ep5 avg-3 (`sha256` `7c7f0f4d…`). 12-config v2 grid: only `PROMPTER_ALLOW_GAPS=1` moved the needle (40/43 vs 39; tie-break: one knob). Word-fraction 0.3/0.4, tail 3 s, looser `okDistance`/`unsureDistance`/`searchDecisiveDistance` were no-ops on v2. Verify: ft-v31 46/53, 232/256, 566/583 — recovers 1 of 8 v1 misses (`multi_036_001_005`) and 1 of 16 net v3 misses (`ea_alafasy_multi_095_001_005`); qlab unchanged. Reference + gaps stays 53/247/571 (no regress). Fatiha/Fil/25:66 connector holes still truncate (two consecutive shorts, or skipped ayah > 3 words). Not a promotion candidate. Raw: `2026-09-15_205959.json`–`_214705.json`.
+Matcher-only probe on ft-v31 ep5 avg-3 (`sha256` `7c7f0f4d…`). v2 grid of 12 configs: only `PROMPTER_ALLOW_GAPS=1` appeared to move v2 (40/43), via `_contiguous_head` inventing a corpus-short hole. Fix round 1 requires both neighbours already emitted and `ok+unsure≥1`, and Python skips a hole only if that ayah is already in `verses`. After that, ft-v31+gaps = default: **45/53, 39/43, 231/256, 566/583**. The three “recovered” clips (`multi_036_001_005`, `ea_multi_056_001_004`, `ea_alafasy_multi_095_001_005`) revert. Reference + gaps stays **53/247/571**. Not a promotion candidate — the loss is acoustic, not a prefix-fill matcher bug. Raw: grid `2026-09-15_205959.json`–`_211248.json`; honest re-verify `_220245` (v1), `_222224` (v2), `_220911` (v3), ref `_221000`/`_221313`/`_222037`.
 
 ## Per-experiment notes
 

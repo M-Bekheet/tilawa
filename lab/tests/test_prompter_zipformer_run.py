@@ -74,7 +74,21 @@ def test_contiguous_head_default_stops_at_gap():
     assert run._contiguous_head(verses, allow_gaps=False) == (1, 1, 2)
 
 
-def test_contiguous_head_allow_gaps_bridges_short_ayah():
+def test_contiguous_head_allow_gaps_bridges_short_ayah_only_if_present():
+    verses = [
+        {"surah": 1, "ayah": 5},
+        {"surah": 1, "ayah": 7},
+        {"surah": 1, "ayah": 6, "words": 3},
+    ]
+    wc = {(1, 6): 3}
+
+    def count(s, a):
+        return wc.get((s, a), 99)
+
+    assert run._contiguous_head(verses, allow_gaps=True, word_count=count) == (1, 5, 7)
+
+
+def test_contiguous_head_allow_gaps_does_not_invent_missing_ayah():
     verses = [
         {"surah": 1, "ayah": 5},
         {"surah": 1, "ayah": 7},
@@ -84,7 +98,28 @@ def test_contiguous_head_allow_gaps_bridges_short_ayah():
     def count(s, a):
         return wc.get((s, a), 99)
 
-    assert run._contiguous_head(verses, allow_gaps=True, word_count=count) == (1, 5, 7)
+    assert run._contiguous_head(verses, allow_gaps=True, word_count=count) == (1, 5, None)
+
+
+def test_contiguous_head_four_five_does_not_start_at_three():
+    verses = [
+        {"surah": 36, "ayah": 4},
+        {"surah": 36, "ayah": 5},
+    ]
+    assert run._contiguous_head(verses, allow_gaps=True, word_count=lambda *_: 3) == (
+        36,
+        4,
+        5,
+    )
+    bridged = run._bridge_extras(
+        verses,
+        verses
+        + [{"surah": 36, "ayah": 3, "ok": 1, "unsure": 0, "wrong": 0, "words": 3, "firstSeen": 0}],
+        gap_max_words=3,
+    )
+    assert [v["ayah"] for v in bridged] == [4, 5]
+    surah, ayah, end = run._contiguous_head(bridged, allow_gaps=True, word_count=lambda *_: 3)
+    assert (surah, ayah, end) == (36, 4, 5)
 
 
 def test_contiguous_head_allow_gaps_skips_long_hole():
@@ -116,13 +151,45 @@ def test_contiguous_head_allow_gaps_does_not_skip_two_ayahs():
 
 def test_contiguous_head_allow_gaps_follows_env(monkeypatch):
     monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "1")
-    verses = [{"surah": 1, "ayah": 2}, {"surah": 1, "ayah": 4}]
+    verses = [
+        {"surah": 1, "ayah": 2},
+        {"surah": 1, "ayah": 4},
+        {"surah": 1, "ayah": 3, "words": 2},
+    ]
     wc = {(1, 3): 2}
 
     def count(s, a):
         return wc.get((s, a), 99)
 
     assert run._contiguous_head(verses, word_count=count) == (1, 2, 4)
+
+
+def test_bridge_extras_between_neighbours_not_prefix():
+    accepted = [
+        {"surah": 1, "ayah": 2, "ok": 2, "unsure": 0, "wrong": 0, "words": 4, "firstSeen": 0},
+        {"surah": 1, "ayah": 4, "ok": 2, "unsure": 0, "wrong": 0, "words": 4, "firstSeen": 2},
+    ]
+    mid = {"surah": 1, "ayah": 3, "ok": 1, "unsure": 0, "wrong": 0, "words": 2, "firstSeen": 1}
+    out = run._bridge_extras(accepted, accepted + [mid], gap_max_words=3)
+    assert {(v["surah"], v["ayah"]) for v in out} == {(1, 2), (1, 3), (1, 4)}
+
+
+def test_bridge_extras_requires_evidence():
+    accepted = [
+        {"surah": 1, "ayah": 2, "ok": 2, "unsure": 0, "wrong": 0, "words": 4, "firstSeen": 0},
+        {"surah": 1, "ayah": 4, "ok": 2, "unsure": 0, "wrong": 0, "words": 4, "firstSeen": 2},
+    ]
+    ghost = {"surah": 1, "ayah": 3, "ok": 0, "unsure": 0, "wrong": 0, "words": 2, "firstSeen": 1}
+    out = run._bridge_extras(accepted, accepted + [ghost], gap_max_words=3)
+    assert {(v["surah"], v["ayah"]) for v in out} == {(1, 2), (1, 4)}
+
+
+def test_gap_max_words_reads_env(monkeypatch):
+    monkeypatch.delenv("PROMPTER_GAP_MAX_WORDS", raising=False)
+    run._HARNESS_GAP_MAX_WORDS = None
+    assert run._gap_max_words() == 3
+    monkeypatch.setenv("PROMPTER_GAP_MAX_WORDS", "2")
+    assert run._gap_max_words() == 2
 
 
 def test_ensure_proc_forwards_prompter_knobs(monkeypatch):
@@ -133,6 +200,7 @@ def test_ensure_proc_forwards_prompter_knobs(monkeypatch):
         "PROMPTER_OK_DISTANCE": "0.2",
         "PROMPTER_UNSURE_DISTANCE": "0.5",
         "PROMPTER_SEARCH_DECISIVE_DISTANCE": "0.45",
+        "PROMPTER_GAP_MAX_WORDS": "3",
     }
     for k, v in knobs.items():
         monkeypatch.setenv(k, v)
