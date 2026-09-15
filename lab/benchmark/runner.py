@@ -247,6 +247,11 @@ def run_experiment(
         chunk_seconds: Chunk duration for streaming mode.
     """
     mod = _load_module(exp["name"].replace("/", "_").replace("-", "_"), exp["run_path"])
+    name_fn = getattr(mod, "benchmark_name", None)
+    if callable(name_fn):
+        labeled = name_fn()
+        if labeled:
+            exp = {**exp, "name": labeled}
 
     use_predict = hasattr(mod, "predict") and (mode == "full" or mode == "streaming")
 
@@ -306,6 +311,7 @@ def run_experiment(
             "expected_verses", [{"surah": sample["surah"], "ayah": sample["ayah"]}]
         )
 
+        result = None
         try:
             start = time.perf_counter()
             if use_predict:
@@ -331,17 +337,20 @@ def run_experiment(
         total_seq_acc += scores["sequence_accuracy"]
         latencies.append(elapsed)
 
-        per_sample.append(
-            {
-                "id": sample["id"],
-                "expected": expected,
-                "predicted": emissions,
-                "recall": scores["recall"],
-                "precision": scores["precision"],
-                "sequence_accuracy": scores["sequence_accuracy"],
-                "latency": elapsed,
-            }
-        )
+        row = {
+            "id": sample["id"],
+            "expected": expected,
+            "predicted": emissions,
+            "recall": scores["recall"],
+            "precision": scores["precision"],
+            "sequence_accuracy": scores["sequence_accuracy"],
+            "latency": elapsed,
+        }
+        if isinstance(result, dict):
+            for k in ("model", "model_sha256_prefix"):
+                if k in result:
+                    row[k] = result[k]
+        per_sample.append(row)
 
     n = len(per_sample)
     avg_latency = sum(latencies) / n if n else 0
@@ -352,7 +361,7 @@ def run_experiment(
         else f"{exp['name']} (stream {chunk_seconds:.0f}s)"
     )
 
-    return {
+    out = {
         "name": exp_name,
         "recall": total_recall / n if n else 0,
         "precision": total_precision / n if n else 0,
@@ -362,6 +371,11 @@ def run_experiment(
         "model_size": size,
         "per_sample": per_sample,
     }
+    if per_sample:
+        for k in ("model", "model_sha256_prefix"):
+            if k in per_sample[0]:
+                out[k] = per_sample[0][k]
+    return out
 
 
 def format_size(size_bytes: int) -> str:
@@ -504,11 +518,11 @@ def main():
     CORPUS_DIR = Path(__file__).parent / args.corpus
 
     samples = load_manifest()
-    if args.limit > 0:
-        samples = samples[: args.limit]
     if args.category:
         samples = [s for s in samples if s["category"] == args.category]
         print(f"Filtered to {len(samples)} samples in category '{args.category}'")
+    if args.limit > 0:
+        samples = samples[: args.limit]
 
     experiments = discover_experiments(args.experiment)
     if not experiments:

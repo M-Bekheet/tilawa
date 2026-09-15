@@ -3,20 +3,23 @@ run as-is under Node, wrapped in the benchmark's predict() contract.
 
 Pipeline (all vendored JS, recovered from the site's source maps -- see README.md):
   16 kHz PCM -> Kaldi fbank (80 mel) -> streaming Zipformer2-CTC ONNX (251
-  tajweed-phoneme tokens, 72 MB fp32) -> greedy CTC -> whole-Quran 5-gram
-  search + per-surah online DP tracker -> per-word verdicts.
+  tajweed-phoneme tokens, 72.7 MB int8; onnxruntime dynamic quant, byte-identical
+  to Quran-Lab zipformer_p_arabic_v3.1.int8.onnx — see EXPERIMENTS.md
+  "Zipformer2-CTC (Quran-Lab v3 reference + fine-tunes)") -> greedy CTC ->
+  whole-Quran 5-gram search + per-surah online DP tracker -> per-word verdicts.
 
 This file only: decodes audio with shared.audio, ships raw float32 to a
 long-lived `node harness.mjs` over stdin/stdout, and turns the harness's
 per-ayah verdict tallies into {surah, ayah, ayah_end}.
 
 Model + corpus are fetched on first use into data/prompter/ (env override:
-PROMPTER_DATA_DIR).
+PROMPTER_DATA_DIR) unless PROMPTER_MODEL already points at an existing file.
 """
 
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import subprocess
@@ -44,6 +47,48 @@ CORPUS_URL = f"{SITE}/data/quran.json?v=24360c05"
 
 _proc: subprocess.Popen | None = None
 _req_id = 0
+_model_sha_cache: dict[str, str] = {}
+
+
+def resolved_model_path() -> Path:
+    override = os.environ.get("PROMPTER_MODEL")
+    if override:
+        return Path(override)
+    return MODEL_PATH
+
+
+def benchmark_name(base: str = "prompter-zipformer") -> str:
+    """Result JSON `name`; suffix only when PROMPTER_MODEL is set."""
+    override = os.environ.get("PROMPTER_MODEL")
+    if override:
+        return f"{base}[{Path(override).name}]"
+    return base
+
+
+def model_sha256_prefix(path: Path | None = None) -> str:
+    """First 8 hex chars of the ONNX file sha256; cached per resolved path."""
+    p = path if path is not None else resolved_model_path()
+    key = str(p.resolve()) if p.is_file() else str(p)
+    cached = _model_sha_cache.get(key)
+    if cached is not None:
+        return cached
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    prefix = h.hexdigest()[:8]
+    _model_sha_cache[key] = prefix
+    return prefix
+
+
+def _provenance(path: Path | None = None) -> dict:
+    p = path if path is not None else resolved_model_path()
+    out = {"model": p.name, "model_sha256_prefix": ""}
+    try:
+        out["model_sha256_prefix"] = model_sha256_prefix(p)
+    except OSError:
+        pass
+    return out
 
 
 def _fetch(url: str, dest: Path) -> None:
@@ -55,7 +100,14 @@ def _fetch(url: str, dest: Path) -> None:
 
 
 def _ensure_assets() -> None:
-    if not MODEL_PATH.exists():
+    override = os.environ.get("PROMPTER_MODEL")
+    if override:
+        model = Path(override)
+        if not model.is_file():
+            raise FileNotFoundError(
+                f"PROMPTER_MODEL={override!r} is not an existing file"
+            )
+    elif not MODEL_PATH.exists():
         _fetch(MODEL_URL, MODEL_PATH)
     if not CORPUS_PATH.exists():
         _fetch(CORPUS_URL, CORPUS_PATH)
@@ -141,6 +193,7 @@ def _contiguous_head(verses: list[dict]) -> tuple[int, int, int | None]:
 
 def predict(audio_path: str) -> dict:
     res = recognize(audio_path)
+    provenance = _provenance()
     verses = res["verses"]
     if not verses:
         return {
@@ -149,6 +202,7 @@ def predict(audio_path: str) -> dict:
             "ayah_end": None,
             "score": 0.0,
             "transcript": res["transcript"],
+            **provenance,
         }
     surah, ayah, ayah_end = _contiguous_head(verses)
     ok = sum(v["ok"] for v in verses)
@@ -160,6 +214,7 @@ def predict(audio_path: str) -> dict:
         "score": ok / max(1, words),
         "transcript": res["transcript"],
         "verses": [(v["surah"], v["ayah"]) for v in verses],
+        **provenance,
     }
 
 
@@ -168,7 +223,7 @@ def transcribe(audio_path: str) -> str:
 
 
 def model_size() -> int:
-    p = Path(os.environ.get("PROMPTER_MODEL", str(MODEL_PATH)))
+    p = resolved_model_path()
     try:
         return p.stat().st_size
     except OSError:
