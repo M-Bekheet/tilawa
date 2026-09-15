@@ -248,6 +248,7 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 | interp-ftv31-a0.5 fp32 | 248 MB | 52/53 | — | 96.9 / 96.9 / 96.9 **(248/256)** | **572/583** (98.1%) | 184/184, 194/200, 194/199 | 1.60 s / 1.13 s |
 | interp-ftv31-a0.25 fp32 | 248 MB | **53/53** | — | 96.8 / 96.7 / 96.1 **(246/256)** | 571/583 (97.9%) | 184/184, 193/200, 194/199 | 1.81 s / 0.97 s |
 | **interp-gentle-a0.5 fp32** | 248 MB | **53/53** | — | 96.9 / 96.9 / 96.9 **(248/256)** | **572/583** (98.1%) | 184/184, 194/200, 194/199 | 0.87 s / 0.91 s |
+| **interp-gentle-a0.5 int8** | 66 MB | **53/53** | **43/43** | same 248/256 | same 572/583 | same split | 0.67 s / 0.44 s |
 
 v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1. ft-v31 fp32+int8 all corpora ×3 (scores identical across repeats).
 
@@ -317,7 +318,7 @@ Raw JSON: `benchmark/results/2026-09-15_18*.json` / `_19*.json`; ledger `benchma
 
 Hypothesis: lr 0.005 over-fit in epoch 1; a 1-ep lr 0.001 FT, or a WiSE-FT blend with the v3.1 init, keeps PER gain without dropping multi-ayah. `--export-interp INIT_PT:FT_PT:ALPHA` inverse-permutes the reference CTC head to icefall blank=0 *before* `alpha*ft+(1-alpha)*init` (`998f34c`). ft-v31 blends used **epoch-5.pt** (not avg-3).
 
-`ft-gentle` (`ap-1tiu0kP4AiIsn2sxQzLooc`, H100:4, 1 ep, lr 0.001, warmup 1000, avg 1): train 0.1108 / valid 0.0832 / 1662 s — **not** gentler on the tracker (v1 44/53, v3 225/256, same prefix-truncation as ft-v31 ep1). **interp-gentle-a0.5** (init ⊕ ft-gentle ep1, `ap-qj8yZzLGTgg9CZnexqPIka`) is **53 / 248 / 572** (EA 184, nufais 194, tlog 194): v3 gained `tlog_m000_100_001`, qlab gained `qul_alnufais__37_43`. interp-ftv31-a0.5 hits 572/248 but v1 52 (`multi_036_001_005` 36:1–5→36:2–5); a0.25 keeps v1 53 but v3 246 (`ea_alafasy_multi_044_001_005`). **PROMOTED** vs bar qlab≥572 AND v1=53 AND v3≥247. Raw: `2026-09-15_210522.json`–`_220939.json`; PER `interp_gentle_a0.5_qlab_per.json`, `ft_gentle_qlab_per.json`.
+`ft-gentle` (`ap-1tiu0kP4AiIsn2sxQzLooc`, H100:4, 1 ep, lr 0.001, warmup 1000, avg 1): train 0.1108 / valid 0.0832 / 1662 s — **not** gentler on the tracker (v1 44/53, v3 225/256, same prefix-truncation as ft-v31 ep1). **interp-gentle-a0.5** (init ⊕ ft-gentle ep1, `ap-qj8yZzLGTgg9CZnexqPIka`) is **53 / 248 / 572** (EA 184, nufais 194, tlog 194): v3 gained `tlog_m000_100_001`, qlab gained `qul_alnufais__37_43`. interp-ftv31-a0.5 hits 572/248 but v1 52 (`multi_036_001_005` 36:1–5→36:2–5); a0.25 keeps v1 53 but v3 246 (`ea_alafasy_multi_044_001_005`). **PROMOTED** vs bar qlab≥572 AND v1=53 AND v3≥247. Shipping artefact is dynamic-int8 MatMul QInt8: **259,593,848 B fp32 / 69,245,985 B int8**; int8 matches fp32 on v1/v3/qlab and is **43/43** on v2 (recovers `retasy_v2_012`). Raw: `2026-09-15_210522.json`–`_220939.json`; int8 `_224627` (v1) `_224703` (v2) `_225000` (v3) `_225419` (qlab); PER `interp_gentle_a0.5_qlab_per.json`, `ft_gentle_qlab_per.json`.
 
 ### E3 tracker re-tune (diagnostic, NOT PROMOTED)
 
