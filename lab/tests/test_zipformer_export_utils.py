@@ -22,6 +22,7 @@ from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_TRAIN_CHUNK_SIZES,
     DEFAULT_TRAIN_SOURCES,
     VOCAB_SIZE,
+    build_metadata,
     compute_T_hop,
     detect_state_space,
     icefall_to_ref_ids,
@@ -29,6 +30,7 @@ from zipformer_ctc_utils import (  # noqa: E402
     inverse_permute_ctc_head,
     io_inputs_match,
     io_json_from_session,
+    json_plain,
     missing_fbank_sources,
     permute_ctc_head,
     ref_to_icefall_ids,
@@ -235,6 +237,62 @@ def test_io_json_from_session_matches_reference_schema():
     broken = json.loads(json.dumps(built))
     broken["inputs"][0]["dims"] = [1, 60, 80]
     assert not io_inputs_match(broken, ref)
+
+
+def test_build_metadata_json_dumps_with_type_objects():
+    """Export metadata.json must survive Python type objects (k2 stub / NodeArg)."""
+    with_cuda = type("with_cuda", (), {})
+    meta = build_metadata(
+        run="interp-multi-a0.5",
+        epoch=1,
+        avg=1,
+        chunk=24,
+        left=256,
+        icefall_sha="3f848bb6d0acc970c9b294a30ca0a04a7c9c78d1",
+        k2="cpu-stub",
+        param_count=64_684_786,
+        fp32_bytes=259_593_848,
+        int8_bytes=69_245_985,
+        T=61,
+        hop=48,
+        io_diff=[],
+        init_meta={
+            "init_pt": "/vol/reference/zipformer_p_arabic_v3.1.pt",
+            "ft_pt": Path("/vol/exp/ft-multi/epoch-1.pt"),
+            "alpha": 0.5,
+            "n_tensors": 829,
+            "icefall_pt": Path("/vol/exp/interp-multi-a0.5/epoch-1.pt"),
+            "init_space": "reference",
+            "ft_state_key": "model",
+            "ft_top_keys": ["epoch", "model", "model_avg", "optimizer"],
+            "k2-with-cuda": with_cuda,
+            "node_type": np.float32,
+        },
+    )
+    dumped = json.dumps(meta)
+    loaded = json.loads(dumped)
+    assert loaded["run"] == "interp-multi-a0.5"
+    assert loaded["T"] == 61
+    assert loaded["hop"] == 48
+    assert loaded["init_meta"]["init_space"] == "reference"
+    assert loaded["init_meta"]["ft_state_key"] == "model"
+    assert loaded["init_meta"]["ft_top_keys"][0] == "epoch"
+    assert loaded["init_meta"]["ft_pt"] == "/vol/exp/ft-multi/epoch-1.pt"
+    assert isinstance(loaded["init_meta"]["k2-with-cuda"], str)
+    assert "with_cuda" in loaded["init_meta"]["k2-with-cuda"]
+    assert isinstance(loaded["init_meta"]["node_type"], str)
+    assert json_plain(with_cuda) == str(with_cuda)
+
+    node = SimpleNamespace(name="x", shape=[1, 61, 80], type=np.float32)
+    io = io_json_from_session(
+        [node],
+        [SimpleNamespace(name="log_probs", shape=[1, 24, 251], type=float)],
+        model="model.onnx",
+        T=61,
+        hop=48,
+    )
+    json.dumps(io)
+    assert io["inputs"][0]["dtype"] == "float32"
 
 
 def test_arch_flags_reference_cnn_kernels():

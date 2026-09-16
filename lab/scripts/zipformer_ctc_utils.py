@@ -527,6 +527,8 @@ def _as_list(shape: Any) -> list[int]:
 def _dtype_str(typ: Any) -> str:
     if typ is None:
         return "float32"
+    if isinstance(typ, type):
+        typ = getattr(typ, "__name__", str(typ))
     s = str(typ).lower()
     if s in _ORT_DTYPE:
         return _ORT_DTYPE[s]
@@ -658,3 +660,66 @@ class IcefallPhonemeEncoder:
 
 def load_json(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def json_plain(value: Any) -> Any:
+    """Recursively convert ``value`` into JSON-serialisable Python types.
+
+    Python ``type`` objects (the k2 CPU stub's ``k2.with_cuda`` is a class,
+    and ONNX Runtime ``NodeArg.type`` can be a dtype class) are ``str()``'d.
+    """
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, type):
+        return str(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        return {str(k): json_plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_plain(v) for v in value]
+    if isinstance(value, np.generic):
+        return json_plain(value.item())
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        return json_plain(value.item())
+    return str(value)
+
+
+def build_metadata(
+    *,
+    run: str,
+    epoch: int,
+    avg: int,
+    chunk: int,
+    left: int,
+    icefall_sha: str,
+    k2: str,
+    param_count: int | None,
+    fp32_bytes: int,
+    int8_bytes: int,
+    T: int,
+    hop: int,
+    io_diff: Sequence[Any] | None = None,
+    init_meta: dict | None = None,
+) -> dict:
+    """Build the export ``metadata.json`` dict (always ``json.dumps``-able)."""
+    meta: dict[str, Any] = {
+        "run": run,
+        "epoch": epoch,
+        "avg": avg,
+        "chunk": chunk,
+        "left": left,
+        "icefall_sha": icefall_sha,
+        "k2": k2,
+        "param_count": param_count,
+        "fp32_bytes": fp32_bytes,
+        "int8_bytes": int8_bytes,
+        "T": T,
+        "hop": hop,
+        "io_diff": list(io_diff or []),
+    }
+    if init_meta is not None:
+        meta["init_meta"] = init_meta
+    return json_plain(meta)

@@ -66,6 +66,7 @@ from zipformer_ctc_utils import (  # noqa: E402
     DEFAULT_NUM_EPOCHS,
     DEFAULT_TRAIN_SOURCES,
     DEFAULT_WARMUP_BATCHES,
+    build_metadata,
     icefall_state_from_reference,
     parse_export_interp,
     remap_quranlab_key,
@@ -789,7 +790,11 @@ class SymbolTable(dict):
             table[sym] = int(idx)
         return table
 
+with_cuda = False
+
 def __getattr__(name):
+    if name == "with_cuda":
+        return False
     return type(name, (), {})
 """,
         encoding="utf-8",
@@ -827,10 +832,12 @@ def _run_export_impl(
     sys.path.insert(0, "/app")
     from zipformer_ctc_utils import (
         ARCH_FLAGS,
+        build_metadata,
         compute_T_hop,
         diff_io_json,
         io_inputs_match,
         io_json_from_session,
+        json_plain,
         load_json,
     )
 
@@ -902,14 +909,16 @@ def _run_export_impl(
             x_shape = list(inp.shape)
     t_from_x = int(x_shape[1]) if x_shape and x_shape[1] not in (None, "N") else t_expected
     print(f"T/hop derivation: chunk_size={chunk_size} -> compute_T_hop={t_expected}/{hop}; x dim={x_shape}")
-    io = io_json_from_session(
-        sess.get_inputs(),
-        sess.get_outputs(),
-        model="model.onnx",
-        T=t_from_x,
-        hop=hop,
-        feature_dim=80,
-        vocab_size=251,
+    io = json_plain(
+        io_json_from_session(
+            sess.get_inputs(),
+            sess.get_outputs(),
+            model="model.onnx",
+            T=t_from_x,
+            hop=hop,
+            feature_dim=80,
+            vocab_size=251,
+        )
     )
     io_path = export_dir / "model.io.json"
     io_path.write_text(json.dumps(io, indent=4) + "\n", encoding="utf-8")
@@ -951,21 +960,21 @@ def _run_export_impl(
         print(f"param count failed: {exc}")
     print(f"param_count={param_count}")
 
-    meta = {
-        "run": run_name,
-        "epoch": epoch,
-        "avg": avg,
-        "chunk": chunk_size,
-        "left": left_context,
-        "icefall_sha": sha,
-        "k2": K2_VERSION,
-        "param_count": param_count,
-        "fp32_bytes": fp32_bytes,
-        "int8_bytes": int8_bytes,
-        "T": io["T"],
-        "hop": io["hop"],
-        "io_diff": diffs,
-    }
+    meta = build_metadata(
+        run=run_name,
+        epoch=epoch,
+        avg=avg,
+        chunk=chunk_size,
+        left=left_context,
+        icefall_sha=sha,
+        k2=K2_VERSION,
+        param_count=param_count,
+        fp32_bytes=fp32_bytes,
+        int8_bytes=int8_bytes,
+        T=io["T"],
+        hop=io["hop"],
+        io_diff=diffs,
+    )
     (export_dir / "metadata.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )
@@ -1159,7 +1168,24 @@ def export_onnx(
     if init_meta is not None:
         import json
 
-        meta["init_meta"] = init_meta
+        from zipformer_ctc_utils import build_metadata
+
+        meta = build_metadata(
+            run=meta["run"],
+            epoch=meta["epoch"],
+            avg=meta["avg"],
+            chunk=meta["chunk"],
+            left=meta["left"],
+            icefall_sha=meta["icefall_sha"],
+            k2=meta["k2"],
+            param_count=meta["param_count"],
+            fp32_bytes=meta["fp32_bytes"],
+            int8_bytes=meta["int8_bytes"],
+            T=meta["T"],
+            hop=meta["hop"],
+            io_diff=meta["io_diff"],
+            init_meta=init_meta,
+        )
         export_dir = Path(f"/vol/exports/{run_name}")
         (export_dir / "metadata.json").write_text(
             json.dumps(meta, indent=2) + "\n", encoding="utf-8"
