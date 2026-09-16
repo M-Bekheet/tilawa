@@ -390,13 +390,7 @@ if exactly one empty: 1
 else: DP / max(|a|, |b|)
 ```
 
-Standard NW recurrence. Tie-break inside a cell (exact):
-
-```
-best = (diag < up) ? (diag < left ? diag : left) : (up < left ? up : left)
-```
-
-So **left wins ties** with diag or up; **up wins** diag-vs-up when both beat left. (Only the **cost** is used; no traceback.)
+Standard NW recurrence on a **float32** row (assign into a `Float32Array` cell, then compare the stored value). Tie-break inside a cell: take the cheapest of diagonal (substitute), up (insert), and left (delete). On a cost tie, left wins over both diagonal and up; up wins over diagonal when both beat left. Only the cost is used; there is no traceback. Oracle for the store width: `alignment.json` (hamza 0.10000000149011612, 1:1-vs-1:2).
 
 Worked pairs: `docs/specs/vectors/alignment.json` (20 pairs). Examples:
 
@@ -412,9 +406,9 @@ Worked pairs: `docs/specs/vectors/alignment.json` (20 pairs). Examples:
 
 Used by verdicts to assign heard chars to reference positions.
 
-Init: `C[0][j] = j` (delete prefix), `C[i][0] = i` (insert prefix).
+Init: first row is prefix-deletes (`C[0][j] = j`); first column is prefix-inserts (`C[i][0] = i`). The cost matrix is **float32**; traceback compares after the store (same as §6.1).
 
-Trace: 0 = diagonal (substitute), 1 = up (insert heard), 2 = left (delete ref). At each cell prefer diag, then up if **strictly** cheaper, then left if **strictly** cheaper → **diag wins ties**, then up, then left.
+Traceback at each cell prefers diagonal (substitute a heard char onto a ref char), then up if strictly cheaper (insert heard / skip a heard char), then left if strictly cheaper (delete a ref char). Diagonal therefore wins ties, then up, then left.
 
 Traceback yields `assign[i] = refIndex` or `-1` if that heard char was inserted.
 
@@ -437,7 +431,7 @@ left  = cur[j-1]  + 1                    inherit from left
 fresh = i · 0.5                          start = j, q = i   # skip i query chars, begin at ref j
 ```
 
-Take the minimum; **strict `<`**, so preference on ties: **diag, then up, then left, then fresh**.
+Take the minimum; **strict `<`**, so preference on ties: **diag, then up, then left, then fresh**. Costs live in **float32** rows; `i · 0.5` and the three step costs are rounded to float32 before the compare (oracle: `search.json` fatiha@200, 0.4439999771118164).
 
 After the last query row, pick `j* = argmin_j C[n][j]` (ties → **smallest j**).
 
@@ -520,7 +514,7 @@ Sort verified by **distance asc, then wordIndex asc**. Greedily keep hits that d
 
 ### 7.3 Hint (optional `{surah, ayah}`)
 
-Among hits with `distance ≤ best.distance + searchDecisiveMargin` (0.1), if any share the hinted surah, pick the one whose `wordIndex` is nearest that ayah’s first word (tie → smaller `wordIndex`). **Rivals** become hits that are neither the chosen best **nor** in that tie set — so a hinted surah can make the search decisive by silencing same-distance copies.
+Among hits with `distance ≤ best.distance + searchDecisiveMargin` (0.1), if any share the hinted surah, pick the one whose `wordIndex` is nearest that ayah’s first word (tie → smaller `wordIndex`). That same gate — “at least one near hit shares the hinted surah” — is what switches the rival rule: the rival is then the first hit that is **not** the chosen best **and** sits **outside** the near-cap, so a hinted surah can make the search decisive by silencing same-distance copies. If no near hit shares the hinted surah (or there is no hint), the rival is simply the second-ranked hit.
 
 ### 7.4 Decisive
 
@@ -589,7 +583,7 @@ One contiguous reference: a **whole surah** (`fromAyah=1 … toAyah=ayahCount`).
 
 ### Initial column
 
-Let `len` be the surah’s phoneme length, `start` the char position of the start word.
+Let `len` be the surah’s phoneme length, `start` the char position of the start word. The live column is a **float32** vector (oracle: `events_ea_alafasy_multi` cursor.cost / `alignment.json`).
 
 - Word-start positions: `0` if this is the start word, else `jumpCost`.
 - Other positions: `column[m-1] + 1` (delete from the previous word start).
@@ -606,12 +600,11 @@ if word-start at 0:
     next[0] = min(next[0], ayah[0]==cursorAyah ? repeat : jump)
 
 for m = 1..len:
-    sub = prev[m-1] + cost(h, ref[m-1])
-    ins = prev[m]   + 1
-    del = next[m-1] + 1
-    next[m] = min(sub, ins, del)
-        # ties: ins beats sub (because `sub < ins ? sub : ins`);
-        # del wins only if strictly cheaper than that
+    substitute from prev[m-1] plus the phoneme cost
+    insert  from prev[m] plus 1
+    delete  from next[m-1] plus 1
+    next[m] is the cheapest of those three. Insert wins a tie with
+    substitute; delete wins only if strictly cheaper than that pair.
 ```
 
 Then **restart floor** at every word start, applied *after* the sweep so deletions can propagate from a restart:
@@ -657,7 +650,7 @@ costRate(window):
 
 ### Retract `n`
 
-Increment `revision`. Target length = `max(0, heard.length−n)`. Restore the latest snapshot with `length ≤ target` (snapshots every **32** chars, keep **16**), else `resetColumn`. Replay the chars between snapshot and target. Result ≡ never having fed the retracted tail.
+If `n ≤ 0`, do nothing. Otherwise increment `revision`. Target length = `max(0, heard.length−n)`. Restore the latest snapshot with `length ≤ target` (snapshots every **32** chars, keep **16**), else `resetColumn`. Replay the chars between snapshot and target. Result ≡ never having fed the retracted tail.
 
 ---
 
@@ -671,7 +664,7 @@ A **run** starts wherever `trail[g] < trail[g-1]` (cursor moved backwards: repea
 
 `refFrom` = start of the word containing the char just before `trail[segStart]` (0 if cell≤0). `refTo` = `trail[end-1]`.
 
-Context: the first segment of a run uses no extra heard context. Later segments of the same run set `contextFrom = max(prevSegStart, segStart − 6)`.
+Context: only the first segment of **run 0** (the very first run) uses no extra heard context. Every later run start, and later segments of any run, set `contextFrom = max(prevSegStart, segStart − 6)`.
 
 The last segment is **open** (not cached). Closed segments are cached by `(contextFrom, heardTo, refFrom, refTo)`. A tracker `revision` change (retract) drops the cache.
 
@@ -693,7 +686,7 @@ A word is **pending** if any of:
 
 If **not** pending and `heardCount < 0.34 · expLen`:
 
-- if `minWord < w < maxWord` → emit **skipped** (distance 1, margin 0)
+- if `minWord < w < maxWord` → emit **skipped** (distance 1, margin 0, `heardRatio = heardCount / expLen`)
 - else emit nothing (`continue`)
 
 If no span: emit nothing.
@@ -736,7 +729,7 @@ Waqf is used **only** in verdicts, and only when a pause is detected. The online
 Walk heard chars from `span.from+1` through `min(heard.length, span.to+4)`:
 
 - if `i === heard.length` → `i` (stream ended: the silence now settling it)
-- if `heard[i].frame − heard[i-1].frame ≥ 25` → `i`
+- if `heard[i].frame − heard[i-1].frame ≥ settleFrames` (`cfg.settleFrames`, default 25) → `i`
 - else −1 (no stop; do not apply pausal)
 
 If the stop index ≠ `span.to`, re-slice uttered chars to `[span.from, stop)` (alignment against the flowing form can glue a following utterance onto the stopped word).
@@ -812,7 +805,7 @@ After 375 frames from `searchStartFrame` with no lock: emit `locateFailed` once.
 
 ### `lock(wordIndex, replay, how, from?)`
 
-Build a Tracker on that **whole surah**, start word = `wordIndex`. State → `tracking`. Reset lost/struggle/completed/relocate-candidate/last-cursor/last-states. Emit `located` or `relocated`. **Then** `tracker.feed(replay)` and emit tracking events (cursor/verdicts/completed). `replayed` is the char count, not the token count.
+Build a Tracker on that **whole surah**, start word = `wordIndex`. State → `tracking`. Reset lost/struggle/completed/relocate-candidate/last-cursor/last-states. Emit `located` or `relocated`. **Then** `tracker.feed(replay)` and emit tracking events (cursor/verdicts/completed). `replayed` is the char count, not the token count. `how` is `"located"` or `"relocated"`. On `"relocated"` the host may snapshot the abandoned tracker first (`onBeforeRelocate`).
 
 ### Tracking
 
@@ -820,6 +813,7 @@ Feed the new chars. Emit tracking events. Edge-trigger `lost`.
 
 Every 37 frames, a relocate tick (always advance the tick baseline, even when `stay`):
 
+- Snapshot `heardSinceTick = heardTotal − lastStruggleChars`, then set `lastStruggleChars = heardTotal`. This counts chars since the previous **tick**, not chars in the current `feed` call.
 - **`stay` on:** zero the struggle counter; do not search; fall through to silent-idle.
 - **else `maybeRelocate`:** need `buffer ≥ 12`. Search last **100** chars, `limit=1`, **no hint**. Let `rate = costRate()`. Candidate = hit’s `(surah,ayah)` or null. `agrees` = candidate equals the **previous** tick’s candidate (same surah **and** ayah). Store candidate. Relocate only if **all** of:
   - a hit exists
@@ -828,8 +822,8 @@ Every 37 frames, a relocate tick (always advance the tick baseline, even when `s
   - `hit.distance ≤ 0.3`
   - `hit.distance + 0.12 ≤ rate` (equivalently not `hit.distance + 0.12 > rate`)
   - `agrees` (must see the same candidate on **two consecutive** ticks)
-- If that moved, return those events (skip struggle/idle on this call).
-- Else if this tick **heard at least one new char**: `struggles = (lost || held) ? struggles+1 : 0`. If `maxStruggles > 0` and `struggles ≥ 3`: emit `{idle, reason:"lost"}`, reset struggles, poke `lastProgressFrame` so a silent-idle does not fire on the next feed. (`maxStruggles=0` disables this.)
+- If that moved: first keep this tick’s already-computed cursor/verdict/`lost` events for the **abandoned** surah, then append the relocation events (`relocated` + new-surah tracking). Skip struggle/idle on this call.
+- Else if `heardSinceTick > 0`: `struggles = (lost || held) ? struggles+1 : 0`. If `maxStruggles > 0` and `struggles ≥ 3`: emit `{idle, reason:"lost"}`, reset struggles, poke `lastProgressFrame` so a silent-idle does not fire on the next feed. (`maxStruggles=0` disables this.)
 
 Silent idle: if `framesDecoded − lastProgressFrame ≥ 200`, emit `{idle, reason:"silent"}` and bump `lastProgressFrame`. `lastProgressFrame` advances on a real cursor move and on a non-pending verdict change that is **not** a settle-on-silence.
 
