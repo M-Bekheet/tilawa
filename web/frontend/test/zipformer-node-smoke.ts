@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import type { WorkerOutbound } from "../src/lib/types.ts";
 import { displayQuranFromRaw, ZipformerHost } from "../src/worker/zipformer-session.ts";
-import type { ZipformerIo } from "../src/vendor/alketab-engine/browser/zipformerRunner.js";
+import type { ZipformerIo } from "../src/lib/recitation/zipformerRunner.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRONTEND = resolve(HERE, "..");

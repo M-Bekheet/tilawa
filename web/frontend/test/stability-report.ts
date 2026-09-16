@@ -12,7 +12,8 @@
  *   npx tsx test/stability-report.ts --json=out.json    # save JSON report
  *   npx tsx test/stability-report.ts --focus=exact      # print exact-set failures
  *   npx tsx test/stability-report.ts --limit=3          # smoke-test first N samples
- *   npx tsx test/stability-report.ts --hypothesis=nextAyah=0.4,backward=-1.2
+ *   npx tsx test/stability-report.ts --engine=zipformer --repeats=1 --json=test/track-c-v1.json
+ *   npx tsx test/stability-report.ts --engine=zipformer --corpus=test_corpus_v2 --repeats=1 --json=test/track-c-v2.json
  */
 
 import { execSync } from "node:child_process";
@@ -55,6 +56,8 @@ const hypothesisArg = args.find((a) => a.startsWith("--hypothesis="));
 const hypothesisParams = parseHypothesisParams(
   hypothesisArg ? hypothesisArg.slice("--hypothesis=".length) : "",
 );
+const engineArg = args.find((a) => a.startsWith("--engine="));
+const engineName = engineArg ? engineArg.split("=")[1] : "fastconformer";
 const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
 
 for (const [name, value] of Object.entries(hypothesisParams)) {
@@ -602,6 +605,17 @@ function formatNullableSeconds(value: number | null): string {
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
+  if (engineName === "zipformer") {
+    const { runZipformerStability } = await import("./zipformer-stability.ts");
+    await runZipformerStability({
+      repeats,
+      corpusName,
+      jsonOutPath,
+      sampleLimit,
+    });
+    return;
+  }
+
   console.log(`=== STABILITY REPORT (${repeats} repeats, corpus: ${corpusName}) ===\n`);
 
   // Setup

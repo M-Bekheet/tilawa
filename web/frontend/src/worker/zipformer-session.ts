@@ -16,17 +16,21 @@ import {
   type FallbackHit,
   type WordVerdict,
 } from "../lib/zipformer-emission";
-import { KaldiFbank } from "../vendor/alketab-engine/browser/kaldiFbank.js";
-import { GreedyCtcDecoder } from "../vendor/alketab-engine/browser/ctcDecoder.js";
-import { ZipformerRunner } from "../vendor/alketab-engine/browser/zipformerRunner.js";
-import type { ZipformerIo } from "../vendor/alketab-engine/browser/zipformerRunner.js";
-import { QuranCorpus } from "../vendor/alketab-engine/core/corpus.js";
-import { QuranIndex, stripPreambles } from "../vendor/alketab-engine/core/search.js";
-import { costTable } from "../vendor/alketab-engine/core/phonemeCost.js";
-import { normalizedDistance } from "../vendor/alketab-engine/core/alignment.js";
-import { RecitationEngine } from "../vendor/alketab-engine/core/engine.js";
-import { DEFAULT_CONFIG } from "../vendor/alketab-engine/core/types.js";
-import { TOKENS, BLANK_ID } from "../vendor/alketab-engine/model/tokens.js";
+import {
+  BLANK_ID,
+  DEFAULT_CONFIG,
+  GreedyCtcDecoder,
+  KaldiFbank,
+  QuranCorpus,
+  QuranIndex,
+  RecitationEngine,
+  TOKENS,
+  ZipformerRunner,
+  costTable,
+  normalizedDistance,
+  stripPreambles,
+  type ZipformerIo,
+} from "../lib/recitation";
 
 const SAMPLE_RATE = 16000;
 const TAIL_SECONDS = 2.0;

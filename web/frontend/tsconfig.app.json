@@ -27,6 +27,5 @@
     "noUncheckedSideEffectImports": true,
     "resolveJsonModule": true
   },
-  "include": ["src"],
-  "exclude": ["src/vendor/alketab-engine"]
+  "include": ["src"]
 }

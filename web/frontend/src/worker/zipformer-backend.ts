@@ -10,7 +10,7 @@ import {
   ZipformerHost,
   displayQuranFromRaw,
 } from "./zipformer-session";
-import type { ZipformerIo } from "../vendor/alketab-engine/browser/zipformerRunner.js";
+import type { ZipformerIo } from "../lib/recitation";
 
 let host: ZipformerHost | null = null;
 let debugEnabled = false;
@@ -79,7 +79,7 @@ self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
     debugEnabled = msg.enabled;
     if (host) host.debugEnabled = msg.enabled;
   } else if (msg.type === "set_config") {
-    // Zipformer host uses the alketab engine config, not FastConformer streaming knobs.
+    // Zipformer host uses the recitation-engine config, not FastConformer streaming knobs.
   } else if (msg.type === "stop") {
     if (!host) return;
     for (const m of await host.stop()) post(m);

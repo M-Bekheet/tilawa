@@ -5,7 +5,7 @@ This repository is MIT-licensed (`LICENSE`). Some vendored models, lexicons, and
 ## Acknowledgements
 
 - **Quran-Lab** ([`Quran-Lab/zipformer_p-arabic-v3`](https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3), author Muno459 / Quran-Lab): streaming Zipformer2-CTC acoustic model, 251-token vocabulary, phoneme lexicon (`quran_text2phoneme.json`), and eval/export scripts. NPL-1.2 §6 does not require attribution; we credit them anyway. Full text: [`licenses/NPL-1.2.txt`](licenses/NPL-1.2.txt).
-- **alketab** ([ملقّن القرآن](https://prompter.alketab.app/), `@alketab/quran-engine`): JS under `experiments/prompter-zipformer/engine/` (recovered from published source maps) and the phoneme corpus in `data/prompter/quran.json` (from alketab; itself derived from Quran-Lab's `quran_text2phoneme.json`). Licence unstated; research reference only — see `experiments/prompter-zipformer/README.md`.
+- **alketab** ([ملقّن القرآن](https://prompter.alketab.app/), `@alketab/quran-engine`): recovered JS under `experiments/prompter-zipformer/engine/` (research reference only) and the phoneme corpus in `data/prompter/quran.json` (from alketab; itself derived from Quran-Lab's `quran_text2phoneme.json`). Licence unstated — see `experiments/prompter-zipformer/README.md`. The shipped frontend no longer vendors that engine; `web/frontend/src/lib/recitation/` is a clean-room MIT reimplementation from `docs/specs/recitation-engine-spec.md`.
 - **k2 / icefall** (Apache-2.0) and **lhotse** (Apache-2.0): Zipformer training and export stack.
 - **onnxruntime** (MIT): ONNX inference.
 - Training audio for our fine-tunes: EveryAyah (`tarteel-ai/everyayah` / `greentechapps/everyayah_curated_1s_20s`, MIT); QUA (`hetchyy/quranic-universal-ayahs`, CC-BY-4.0); Iqra (`IqraEval/Iqra_train`, unstated); RetaSy (`RetaSy/quranic_audio_dataset`, unstated); TLOG (`tarteel-ai/tlog`, unstated). QuranTTS (`Quran-Lab/QuranTTS`, NPL-1.2) is excluded. See `docs/plans/2026-09-14-sota-tilawa.md` §3.1 and `scripts/prepare_zipformer_data_modal.py`.
@@ -26,4 +26,4 @@ NPL-1.2 §§3/5/9: you may not charge for the Work or any feature it powers; hos
 
 Repository code and non-derived assets remain MIT.
 
-The alketab engine JS is vendored for research reference only. We grant no licence to it.
+The alketab engine is no longer vendored in the frontend. Algorithms were reimplemented from a behavioural spec; alketab is still the design source and `experiments/prompter-zipformer/engine/` remains research-only. We grant no licence to that recovered source.

@@ -1,0 +1,880 @@
+{
+  "engine": "zipformer",
+  "corpus": "test_corpus_v2",
+  "repeats": 1,
+  "timestamp": "2026-09-16T18:35:13.543Z",
+  "aggregate": {
+    "totalSamples": 43,
+    "orderedStablePass": 43,
+    "exactStablePass": 43,
+    "lastRunOrdered": 43,
+    "finalSequence": {
+      "meanRecall": 1,
+      "meanPrecision": 1
+    }
+  },
+  "samples": [
+    {
+      "id": "retasy_v2_000",
+      "category": "short",
+      "expected": [
+        "1:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:3"
+          ],
+          "final": [
+            "1:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_001",
+      "category": "short",
+      "expected": [
+        "1:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:3"
+          ],
+          "final": [
+            "1:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_002",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_003",
+      "category": "short",
+      "expected": [
+        "1:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:3"
+          ],
+          "final": [
+            "1:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_004",
+      "category": "short",
+      "expected": [
+        "114:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "114:5"
+          ],
+          "final": [
+            "114:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_005",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_006",
+      "category": "short",
+      "expected": [
+        "114:4"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "114:4"
+          ],
+          "final": [
+            "114:4"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_007",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_008",
+      "category": "short",
+      "expected": [
+        "112:2"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "112:2"
+          ],
+          "final": [
+            "112:2"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_009",
+      "category": "short",
+      "expected": [
+        "109:6"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "109:6"
+          ],
+          "final": [
+            "109:6"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_010",
+      "category": "short",
+      "expected": [
+        "112:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "112:3"
+          ],
+          "final": [
+            "112:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_011",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_012",
+      "category": "short",
+      "expected": [
+        "1:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:3"
+          ],
+          "final": [
+            "1:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_013",
+      "category": "short",
+      "expected": [
+        "112:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "112:3"
+          ],
+          "final": [
+            "112:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_014",
+      "category": "short",
+      "expected": [
+        "1:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:3"
+          ],
+          "final": [
+            "1:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_015",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_016",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_017",
+      "category": "short",
+      "expected": [
+        "109:2"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "109:2"
+          ],
+          "final": [
+            "109:2"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_018",
+      "category": "short",
+      "expected": [
+        "1:3"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:3"
+          ],
+          "final": [
+            "1:3"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_019",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_020",
+      "category": "short",
+      "expected": [
+        "1:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "1:5"
+          ],
+          "final": [
+            "1:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_021",
+      "category": "short",
+      "expected": [
+        "113:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "113:5"
+          ],
+          "final": [
+            "113:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_022",
+      "category": "short",
+      "expected": [
+        "114:6"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "114:6"
+          ],
+          "final": [
+            "114:6"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_023",
+      "category": "short",
+      "expected": [
+        "114:4"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "114:4"
+          ],
+          "final": [
+            "114:4"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_024",
+      "category": "short",
+      "expected": [
+        "109:2"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "109:2"
+          ],
+          "final": [
+            "109:2"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "retasy_v2_025",
+      "category": "medium",
+      "expected": [
+        "42:4"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "42:4"
+          ],
+          "final": [
+            "42:4"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_016090",
+      "category": "long",
+      "expected": [
+        "16:90"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "16:90"
+          ],
+          "final": [
+            "16:90"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_031013",
+      "category": "medium",
+      "expected": [
+        "31:13"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "31:13"
+          ],
+          "final": [
+            "31:13"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_049013",
+      "category": "long",
+      "expected": [
+        "49:13"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "49:13"
+          ],
+          "final": [
+            "49:13"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_039053",
+      "category": "long",
+      "expected": [
+        "39:53"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "39:53"
+          ],
+          "final": [
+            "39:53"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_021087",
+      "category": "long",
+      "expected": [
+        "21:87"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "21:87"
+          ],
+          "final": [
+            "21:87"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_003026",
+      "category": "long",
+      "expected": [
+        "3:26"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "3:26"
+          ],
+          "final": [
+            "3:26"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_007023",
+      "category": "medium",
+      "expected": [
+        "7:23"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "7:23"
+          ],
+          "final": [
+            "7:23"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_040060",
+      "category": "medium",
+      "expected": [
+        "40:60"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "40:60"
+          ],
+          "final": [
+            "40:60"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_004012",
+      "category": "long",
+      "expected": [
+        "4:12"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "4:12"
+          ],
+          "final": [
+            "4:12"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_005006",
+      "category": "long",
+      "expected": [
+        "5:6"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "5:6"
+          ],
+          "final": [
+            "5:6"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_006151",
+      "category": "long",
+      "expected": [
+        "6:151"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "6:151"
+          ],
+          "final": [
+            "6:151"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_017023",
+      "category": "long",
+      "expected": [
+        "17:23"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "17:23"
+          ],
+          "final": [
+            "17:23"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_004034",
+      "category": "long",
+      "expected": [
+        "4:34"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "4:34"
+          ],
+          "final": [
+            "4:34"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_multi_002_001_005",
+      "category": "multi",
+      "expected": [
+        "2:1",
+        "2:2",
+        "2:3",
+        "2:4",
+        "2:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "2:1",
+            "2:2",
+            "2:3",
+            "2:4",
+            "2:5"
+          ],
+          "final": [
+            "2:1",
+            "2:2",
+            "2:3",
+            "2:4",
+            "2:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_multi_019_001_005",
+      "category": "multi",
+      "expected": [
+        "19:1",
+        "19:2",
+        "19:3",
+        "19:4",
+        "19:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "19:1",
+            "19:2",
+            "19:3",
+            "19:4",
+            "19:5"
+          ],
+          "final": [
+            "19:1",
+            "19:2",
+            "19:3",
+            "19:4",
+            "19:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_multi_056_001_004",
+      "category": "multi",
+      "expected": [
+        "56:1",
+        "56:2",
+        "56:3",
+        "56:4"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "56:1",
+            "56:2",
+            "56:3",
+            "56:4"
+          ],
+          "final": [
+            "56:1",
+            "56:2",
+            "56:3",
+            "56:4"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "id": "ea_multi_091_001_005",
+      "category": "multi",
+      "expected": [
+        "91:1",
+        "91:2",
+        "91:3",
+        "91:4",
+        "91:5"
+      ],
+      "runs": [
+        {
+          "matches": [
+            "91:1",
+            "91:2",
+            "91:3",
+            "91:4",
+            "91:5"
+          ],
+          "final": [
+            "91:1",
+            "91:2",
+            "91:3",
+            "91:4",
+            "91:5"
+          ],
+          "exact": true,
+          "ordered": true
+        }
+      ]
+    }
+  ]
+}
