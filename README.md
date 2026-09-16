@@ -228,6 +228,8 @@ The full `StreamingConfig` interface, the three presets (`CONSERVATIVE_STREAMING
 
 [`web/frontend/`](web/frontend/) is a complete browser app that runs the SDK live — record and watch verses lock in in real time. It's also the regression guard for the SDK.
 
+The demo defaults to Zipformer2-CTC (`interp-gentle-a0.5` int8, 66 MB): **100% recall / 100% precision / 100% sequence accuracy** on v1 (53/53) and v2 (43/43), median of 3 streaming repeats. Append `?engine=fastconformer` (or set `localStorage.tilawaEngine`) to fall back to the previous FastConformer worker.
+
 ```bash
 cd web/frontend && npm run dev
 ```

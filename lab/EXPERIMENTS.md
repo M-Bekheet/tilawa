@@ -10,16 +10,16 @@ ONNX inference is non-deterministic at **±3–6 samples per run** on v1 — str
 
 ## Shipped model
 
-Current browser/runtime model: Cyberistic's full-mixed text CTC FastConformer, `web/frontend/public/fastconformer_full_mixed.onnx` (88 MB, mixed int4 MatMul + int8 Conv/LayerNorm). It takes raw 16 kHz waveform input (`audio_signal`, `length`), emits 1025-token Arabic BPE CTC logprobs, then uses greedy text retrieval plus CTC reranking against `quran_ctc_tokens.json`.
+Current browser/runtime model: Zipformer2-CTC `interp-gentle-a0.5` int8 (`web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx`, 66 MB). Default engine in the Vite demo; FastConformer stays behind `?engine=fastconformer`. The acoustic model is NPL-1.2; the tracker is the vendored alketab engine pending a native port. Batch champion is unchanged: Cyberistic's full-mixed text CTC FastConformer (`fastconformer_full_mixed.onnx`, 88 MB).
 
 | Mode | Corpus | Recall | Precision | ExactSetAcc | Notes |
 |---|---|---|---|---|---|
+| **Zipformer browser streaming** (300ms chunks, alketab engine) | v1 | **100%** | **100%** | **100%** | 3-repeat median; OrderedSeqAcc also 100% (53/53 every run) |
+| **Zipformer browser streaming** | v2 | **100%** | **100%** | **100%** | blind check; 43/43 every run |
 | **`c2c-direct-mixed-tta` full-file batch** | v1 | **100%** | **100%** | **100%** | Cyberistic champion, median across 3 reproduced runs |
 | **`c2c-direct-mixed` full-file batch** | v1 | 98% | 98% | 98% | Same ONNX without 0.9x/1.1x TTA |
 
-The browser worker now uses the non-TTA full-mixed ONNX (`fastconformer_full_mixed.onnx`) because TTA is too expensive for live streaming. Run the v2/v3 stability reports before replacing the historical streaming rows below with post-swap numbers.
-
-Historical pre-Cyberistic browser/RN streaming baseline, using `fastconformer-phoneme v4-tlog` (131 MB quantized ONNX):
+Historical pre-Zipformer browser/RN streaming baseline, using `fastconformer-phoneme v4-tlog` (131 MB quantized ONNX):
 
 | Mode | Corpus | Recall | Precision | ExactSetAcc | Correct |
 |---|---|---|---|---|---|
@@ -29,6 +29,18 @@ Historical pre-Cyberistic browser/RN streaming baseline, using `fastconformer-ph
 | Non-streaming (full-file, single `matchVerse()`) | v2 | 78.1% | 79.1% | 74.4% | 32/43 |
 
 ### Streaming changelog
+
+**2026-09-16 — Zipformer (interp-gentle-a0.5) is the default browser engine** (commit `9cfd295`)
+The Vite demo now loads streaming Zipformer2-CTC (`interp-gentle-a0.5` int8, 66 MB) by default so the live UI matches the promoted acoustic model. FastConformer remains a complete fallback (`?engine=fastconformer` or `localStorage.tilawaEngine=fastconformer`); the status pill shows which engine is running. The ONNX and `prompter_quran.json` lexicon are NPL-1.2 Derivatives; the word-level tracker is the vendored alketab engine pending a native port. Deploy pulls those two assets from GitHub release `yazinsai/tilawa` v0.3.0; `zipformer_interp_gentle_a05.io.json` is committed.
+
+Numbers: precision 66.8% → **100.0%** (+33.2pp), SeqAcc 47.2% → **100.0%** (+52.8pp), recall 78.6% → **100.0%** (+21.4pp) on v1. Same pattern on v2 blind check: precision 68.9% → **100.0%** (+31.1pp), SeqAcc 55.8% → **100.0%** (+44.2pp), recall 87.9% → **100.0%** (+12.1pp). All three repeats were identical (v1 53/53, v2 43/43). v1 "before" is the last measured v1 streaming row (deferred-emission, 5-run); later tracker gates were scored on v2/v3 only. v2 "before" is the shipped phoneme FastConformer headline. `fastconformer_phoneme_q8.onnx` is not in this checkout, so the FastConformer path of `stability-report.ts` was not re-run.
+
+Measurement commands:
+```
+npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --json=test/zipformer-default-stability.json
+npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --corpus=test_corpus_v2 --json=test/zipformer-default-v2-stability.json
+```
+Raw JSON at `web/frontend/test/zipformer-default-stability.json` and `…-v2-stability.json`. 72 vitest cases pass (5 new: default engine is zipformer; `?engine=fastconformer` is honoured).
 
 **2026-04-25 — decode-stability gate on single-cycle commits** (file: `web/frontend/src/lib/tracker.ts`)
 A context-sweep diagnostic (`web/frontend/test/diagnose-context-sweep.ts`) measured how the model's CTC greedy decode of audio prefixes compares to its decode of the full audio. On v1 the result was striking: across prefix lengths from 1s to 5s, **~50% of every prefix-decode token gets revised** when full audio context arrives (median LCP / |prefix-decode| ≈ 0.50). Full-audio WER vs the expected phoneme reference is 14%, so the offline ceiling is fine — but every short-prefix decode sits in a regime where half its emissions are non-final because the FastConformer encoder uses bidirectional attention to refine early frames once more audio is in.
