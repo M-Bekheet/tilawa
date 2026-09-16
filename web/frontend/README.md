@@ -4,7 +4,7 @@ Vanilla TypeScript + Vite 7. Default engine is Zipformer2-CTC (`interp-gentle-a0
 
 ## Zipformer (default, `interp-gentle-a0.5`)
 
-Streaming Zipformer2-CTC. The status pill shows the active engine. Model artefacts are NPL-1.2; the tracker is the vendored alketab engine pending a native port.
+Streaming Zipformer2-CTC. The status pill shows the active engine. Model artefacts are NPL-1.2; the word-level tracker is the native MIT recitation engine (`src/lib/recitation/`), written from `docs/specs/recitation-engine-spec.md` plus 23 vector oracles.
 
 Assets are gitignored (ONNX + NPL-derived lexicon). `zipformer_interp_gentle_a05.io.json` is committed. Fetch the rest once:
 
@@ -33,8 +33,9 @@ npx tsx test/zipformer-node-smoke.ts
 Streaming stability (same JSON shape as the FastConformer report):
 
 ```bash
-npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --json=test/zipformer-default-stability.json
-npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --corpus=test_corpus_v2 --json=test/zipformer-default-v2-stability.json
+npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --json=test/track-c-v1-stability.json
+npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --corpus=test_corpus_v2 --json=test/track-c-v2-stability.json
+npx tsx test/stability-report.ts --engine=zipformer --repeats=1 --corpus=test_corpus_v3 --json=test/track-c-v3-stability.json
 ```
 
 int8 ONNX sha256 `eaf099af…` (66 MB). Threads stay off (`numThreads=1`, EP `wasm`). First load is ~66 MB into IndexedDB under `zipformer-interp-gentle-a05-int8`.

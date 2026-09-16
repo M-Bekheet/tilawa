@@ -26,4 +26,4 @@ NPL-1.2 §§3/5/9: you may not charge for the Work or any feature it powers; hos
 
 Repository code and non-derived assets remain MIT.
 
-The alketab engine is no longer vendored in the frontend. Algorithms were reimplemented from a behavioural spec; alketab is still the design source and `experiments/prompter-zipformer/engine/` remains research-only. We grant no licence to that recovered source.
+The alketab engine is no longer vendored in the frontend. Algorithms were reimplemented from a behavioural spec plus 23 dump-vector oracles; alketab is still the design source and `experiments/prompter-zipformer/engine/` remains research-only. We grant no licence to that recovered source.

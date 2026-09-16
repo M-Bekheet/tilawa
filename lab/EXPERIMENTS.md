@@ -10,11 +10,11 @@ ONNX inference is non-deterministic at **±3–6 samples per run** on v1 — str
 
 ## Shipped model
 
-Current browser/runtime model: Zipformer2-CTC `interp-gentle-a0.5` int8 (`web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx`, 66 MB). Default engine in the Vite demo; FastConformer stays behind `?engine=fastconformer`. The acoustic model is NPL-1.2; the tracker is the vendored alketab engine pending a native port. Batch champion is unchanged: Cyberistic's full-mixed text CTC FastConformer (`fastconformer_full_mixed.onnx`, 88 MB).
+Current browser/runtime model: Zipformer2-CTC `interp-gentle-a0.5` int8 (`web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx`, 66 MB). Default engine in the Vite demo; FastConformer stays behind `?engine=fastconformer`. The acoustic model is NPL-1.2; the word-level tracker is the native MIT recitation engine (`web/frontend/src/lib/recitation/`). Batch champion is unchanged: Cyberistic's full-mixed text CTC FastConformer (`fastconformer_full_mixed.onnx`, 88 MB).
 
 | Mode | Corpus | Recall | Precision | ExactSetAcc | Notes |
 |---|---|---|---|---|---|
-| **Zipformer browser streaming** (300ms chunks, alketab engine) | v1 | **100%** | **100%** | **100%** | 3-repeat median; OrderedSeqAcc also 100% (53/53 every run) |
+| **Zipformer browser streaming** (300ms chunks, native MIT engine) | v1 | **100%** | **100%** | **100%** | 3-repeat median; OrderedSeqAcc also 100% (53/53 every run) |
 | **Zipformer browser streaming** | v2 | **100%** | **100%** | **100%** | blind check; 43/43 every run |
 | **`c2c-direct-mixed-tta` full-file batch** | v1 | **100%** | **100%** | **100%** | Cyberistic champion, median across 3 reproduced runs |
 | **`c2c-direct-mixed` full-file batch** | v1 | 98% | 98% | 98% | Same ONNX without 0.9x/1.1x TTA |
@@ -29,6 +29,19 @@ Historical pre-Zipformer browser/RN streaming baseline, using `fastconformer-pho
 | Non-streaming (full-file, single `matchVerse()`) | v2 | 78.1% | 79.1% | 74.4% | 32/43 |
 
 ### Streaming changelog
+
+**2026-09-16 — native MIT recitation engine replaces vendored tracker** (commit `9fd87fd`)
+The Zipformer worker now runs `web/frontend/src/lib/recitation/`, a clean-room MIT TypeScript engine written from the behavioural spec (`docs/specs/recitation-engine-spec.md`) plus 23 dump-vector oracles. The vendored alketab tree is gone from the frontend; recovered source stays research-only under `experiments/prompter-zipformer/engine/`. Nothing was copied from that tree — vectors stayed exact, and ZipformerHost scores did not move.
+
+Numbers: precision 100.0% → **100.0%** (0pp), SeqAcc 100.0% → **100.0%** (0pp), recall 100.0% → **100.0%** (0pp) on v1. Same pattern on v2 blind check. v3 248/256 unchanged (same 8 misses).
+
+Measurement commands:
+```
+npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --json=test/track-c-v1-stability.json
+npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --corpus=test_corpus_v2 --json=test/track-c-v2-stability.json
+npx tsx test/stability-report.ts --engine=zipformer --repeats=1 --corpus=test_corpus_v3 --json=test/track-c-v3-stability.json
+```
+Raw JSON at `web/frontend/test/track-c-v{1,2}-stability.json` and `track-c-v3-stability.json`. 3-repeat medians: v1 53/53 every run, v2 43/43 every run; v3 248/256; q-lab 572/583.
 
 **2026-09-16 — Zipformer (interp-gentle-a0.5) is the default browser engine** (commit `9cfd295`)
 The Vite demo now loads streaming Zipformer2-CTC (`interp-gentle-a0.5` int8, 66 MB) by default so the live UI matches the promoted acoustic model. FastConformer remains a complete fallback (`?engine=fastconformer` or `localStorage.tilawaEngine=fastconformer`); the status pill shows which engine is running. The ONNX and `prompter_quran.json` lexicon are NPL-1.2 Derivatives; the word-level tracker is the vendored alketab engine pending a native port. Deploy pulls those two assets from GitHub release `yazinsai/tilawa` v0.3.0; `zipformer_interp_gentle_a05.io.json` is committed.
