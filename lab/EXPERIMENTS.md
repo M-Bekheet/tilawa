@@ -363,6 +363,37 @@ Hypothesis: E1's tlog collapse was the missing qua/full mix, not the windows; co
 
 Matcher-only probe on ft-v31 ep5 avg-3 (`sha256` `7c7f0f4d…`). v2 grid of 12 configs: only `PROMPTER_ALLOW_GAPS=1` appeared to move v2 (40/43), via `_contiguous_head` inventing a corpus-short hole. Fix round 1 requires both neighbours already emitted and `ok+unsure≥1`, and Python skips a hole only if that ayah is already in `verses`. After that, ft-v31+gaps = default: **45/53, 39/43, 231/256, 566/583**. The three “recovered” clips (`multi_036_001_005`, `ea_multi_056_001_004`, `ea_alafasy_multi_095_001_005`) revert. Reference + gaps stays **53/247/571**. Not a promotion candidate — the loss is acoustic, not a prefix-fill matcher bug. Raw: grid `2026-09-15_205959.json`–`_211248.json`; honest re-verify `_220245` (v1), `_222224` (v2), `_220911` (v3), ref `_221000`/`_221313`/`_222037`.
 
+### Miss adjudication with Gemini 3.1 Pro
+
+Blind + A/B informed listen of the 22 v3.1/interp-gentle misses (21 v3+qlab + `retasy_v2_012`). `gemini-3.1-pro-preview` / `gemini-pro-latest` return free-tier limit 0 on the AI Studio key; ran `generateContent` on Flash (`gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.1-flash-lite`), temperature 0, JSON schema. Control: 3/3 unique v3 shorts (`ea_alafasy_056058` 56:58, `ea_husary_081008` 81:8, `ea_husary_106003` 106:3) identified blindly. Script `benchmark/adjudicate_gemini.py`; raw `benchmark/results/gemini_adjudication_2026-09-16.json`.
+
+| id | corpus | expected | predicted | text-similarity | Gemini blind surah:ayah | Gemini informed verdict | class | notes |
+|---|---|---|---|---|---|---|---|---|
+| qul_alnufais__21_38 | qlab | 21:38 | 10:48 | 1.000 | 67:25 | both-identical | IDENTICAL_TEXT | same wording as 10:48 / 21:38 / 67:25 |
+| qul_alnufais__37_43 | qlab | 37:43 | 52:17 | 0.632 | 56:12 | A | LABEL_OK_MODEL_WRONG | audio is 37:43/56:12 «في جنات النعيم»; 52:17 has extra words. v3.1 only; gentle recovered |
+| qul_alnufais__55_30 | qlab | 55:30 | 55:13 | 1.000 | 55:13 | both-identical | IDENTICAL_TEXT | Ar-Rahman refrain |
+| qul_alnufais__55_40 | qlab | 55:40 | 55:13 | 1.000 | 55:13 | both-identical | IDENTICAL_TEXT | Ar-Rahman refrain |
+| qul_alnufais__56_12 | qlab | 56:12 | 37:43 | 1.000 | 56:12 | both-identical | IDENTICAL_TEXT | «في جنات النعيم» |
+| qul_alnufais__83_13 | qlab | 83:13 | 68:15 | 1.000 | 68:15 | both-identical | IDENTICAL_TEXT | |
+| qul_alnufais__8_51 | qlab | 8:51 | 3:182 | 1.000 | 3:182 | both-identical | IDENTICAL_TEXT | |
+| tlog_holdout__37_176_undefined_Bc1Te4g | qlab | 37:176 | 26:204 | 1.000 | 37:176 | both-identical | IDENTICAL_TEXT | |
+| tlog_holdout__38_73_1028803212 | qlab | 38:73 | 15:30 | 1.000 | 15:30 | both-identical | IDENTICAL_TEXT | |
+| tlog_holdout__38_79_1059280208 | qlab | 38:79 | 15:36 | 1.000 | 15:36 | both-identical | IDENTICAL_TEXT | |
+| tlog_holdout__70_29_3740714225 | qlab | 70:29 | 23:5 | 1.000 | 23:5 | both-identical | IDENTICAL_TEXT | |
+| tlog_holdout__77_45_6585124791 | qlab | 77:45 | 77:15 | 1.000 | 77:15 | both-identical | IDENTICAL_TEXT | |
+| ea_alafasy_030001 | v3 | 30:1 | 2:1 | 1.000 | 2:1 | both-identical | IDENTICAL_TEXT | muqattaʿat الم |
+| ea_alafasy_055053 | v3 | 55:53 | 55:13 | 1.000 | 55:13 | both-identical | IDENTICAL_TEXT | Ar-Rahman refrain |
+| ea_alafasy_081019 | v3 | 81:19 | 69:40 | 1.000 | 81:19 | both-identical | IDENTICAL_TEXT | |
+| ea_husary_026122 | v3 | 26:122 | 26:9 | 1.000 | 26:9 | both-identical | IDENTICAL_TEXT | |
+| ea_husary_037082 | v3 | 37:82 | 26:66 | 1.000 | 37:82 | both-identical | IDENTICAL_TEXT | |
+| tlog_m000_100_001 | v3 | 100:1 | 100:1–2 | 0.835 | 100:1–2 | B | LABEL_WRONG | clip continues into 100:2; gold is truncated. v3.1 only (gentle matches truncated gold) |
+| tlog_m008_107_001 | v3 | 107:1 | 106:4 | 0.304 | 106:4 | B | LABEL_WRONG | audio is 106:4, not 107:1 |
+| tlog_m043_010_043 | v3 | 10:43 | 10:42 | 0.804 | 10:42 | B | LABEL_WRONG | audio is 10:42 |
+| tlog_m044_010_043 | v3 | 10:43 | 10:42 | 0.804 | 10:42 | B | LABEL_WRONG | audio is 10:42 (same mislabel as m043) |
+| retasy_v2_012 | v2 | 1:3 | 55:1 | 0.622 | 1:3 | A | LABEL_OK_MODEL_WRONG | audio is 1:3 «الرحمن الرحيم»; 55:1 adds basmala. v3.1 only; gentle recovered |
+
+**16 IDENTICAL_TEXT / 4 LABEL_WRONG / 2 LABEL_OK_MODEL_WRONG / 0 BAD_CLIP / 0 UNCLEAR.** Duplicate-ayah collisions are the bulk (qlab 11/12, v3 5/9): ASR cannot pick among textually identical copies, and Gemini's own blind ID hops between those copies too. The four LABEL_WRONG are all v3 tlog gold errors (100:1 missing 100:2; 107:1 is 106:4; two clips labelled 10:43 are 10:42). The only genuine v3.1 errors are `qul_alnufais__37_43` (37:43 → 52:17) and `retasy_v2_012` (1:3 → 55:1); interp-gentle-a0.5 already recovers both. **Ceiling on current labels:** v3.1 is one qlab + one v2 miss behind the unsolvable-duplicate floor; interp-gentle-a0.5 is **at** that floor (**248/256**, **572/583**). Further SeqAcc requires a duplicate-ayah tie-break and/or relabeling those four tlog clips — not more fine-tuning.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
