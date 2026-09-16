@@ -15,6 +15,7 @@ import type {
   QuranVerse,
   DebugMessage,
 } from "./lib/types";
+import { engineLabel, resolveEngine } from "./lib/engine";
 import { DEFAULT_STREAMING_CONFIG } from "./lib/types";
 
 addCollection({
@@ -75,29 +76,16 @@ const MAX_DEBUG_EVENTS = 80;
 const DIAGNOSTIC_COOLDOWN_MS = 30_000;
 const DEBUG_VIEW_ENABLED = Boolean(import.meta.env.VITE_DEBUG_MODE);
 
-type EngineName = "zipformer" | "fastconformer";
-
-function resolveEngine(): EngineName {
-  const fromUrl = new URLSearchParams(location.search).get("engine");
-  if (fromUrl === "zipformer" || fromUrl === "fastconformer") {
-    try {
-      localStorage.setItem("tilawaEngine", fromUrl);
-    } catch {
-      /* ignore quota / private mode */
-    }
-    return fromUrl;
-  }
+function browserStorage(): Storage | null {
   try {
-    const stored = localStorage.getItem("tilawaEngine");
-    if (stored === "zipformer" || stored === "fastconformer") return stored;
+    return localStorage;
   } catch {
-    /* ignore */
+    return null;
   }
-  return "fastconformer";
 }
 
-const ENGINE = resolveEngine();
-const ENGINE_LABEL = ENGINE === "zipformer" ? "Zipformer" : "FastConformer";
+const ENGINE = resolveEngine(location.search, browserStorage());
+const ENGINE_LABEL = engineLabel(ENGINE);
 
 const state = {
   groups: [] as VerseGroup[],
@@ -129,6 +117,8 @@ const $indicator = document.getElementById("listening-indicator")!;
 const $permissionPrompt = document.getElementById("permission-prompt")!;
 const $listeningStatus = document.getElementById("listening-status")!;
 const $modelStatus = document.getElementById("model-status")!;
+const $engineStatus = document.getElementById("engine-status");
+if ($engineStatus) $engineStatus.textContent = ENGINE_LABEL;
 const $loadingStatus = document.getElementById("loading-status")!;
 const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
@@ -820,7 +810,7 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
 // ---------------------------------------------------------------------------
 function handleWorkerMessage(msg: WorkerOutbound): void {
   if (msg.type === "loading") {
-    $modelStatus.textContent = `Loading model... ${msg.percent}%`;
+    $modelStatus.textContent = `Loading ${ENGINE_LABEL}... ${msg.percent}%`;
     $modelStatus.classList.remove("ready");
     $loadingProgress.style.width = `${msg.percent}%`;
     $loadingDetail.textContent = `Downloading model — ${msg.percent}%`;
@@ -831,7 +821,7 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     $modelStatus.textContent = "Error";
     console.error("Worker reported error:", msg.message);
   } else if (msg.type === "ready") {
-    $modelStatus.textContent = ENGINE === "zipformer" ? "Zipformer ready" : "Model ready";
+    $modelStatus.textContent = `${ENGINE_LABEL} ready`;
     $modelStatus.classList.add("ready");
     state.modelReady = true;
     $loadingStatus.hidden = true;
@@ -980,7 +970,7 @@ function initializeModel(): void {
   $introScreen.hidden = true;
   $loadingStatus.hidden = false;
   $debugPanel.hidden = !DEBUG_VIEW_ENABLED;
-  $modelStatus.textContent = ENGINE === "zipformer" ? "Loading Zipformer..." : "Loading model...";
+  $modelStatus.textContent = `Loading ${ENGINE_LABEL}...`;
   $loadingDetail.textContent = "Starting download";
 
   const worker = new Worker(

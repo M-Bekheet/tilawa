@@ -6,18 +6,19 @@
  * ordered sequence accuracy explicitly.
  *
  * Usage:
- *   npx tsx test/stability-report.ts                    # 5 repeats (default)
+ *   npx tsx test/stability-report.ts                    # FastConformer phoneme path, 5 repeats
  *   npx tsx test/stability-report.ts --repeats=3        # custom repeats
  *   npx tsx test/stability-report.ts --corpus=test_v2   # different corpus
  *   npx tsx test/stability-report.ts --json=out.json    # save JSON report
  *   npx tsx test/stability-report.ts --focus=exact      # print exact-set failures
  *   npx tsx test/stability-report.ts --limit=3          # smoke-test first N samples
- *   npx tsx test/stability-report.ts --engine=zipformer --repeats=1 --json=test/track-c-v1.json
- *   npx tsx test/stability-report.ts --engine=zipformer --corpus=test_corpus_v2 --repeats=1 --json=test/track-c-v2.json
+ *   npx tsx test/stability-report.ts --hypothesis=nextAyah=0.4,backward=-1.2
+ *   npx tsx test/stability-report.ts --engine=zipformer # ZipformerHost (browser default)
  */
 
+import { createRequire } from "node:module";
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +30,8 @@ import { QuranDB } from "../src/lib/quran-db.ts";
 import { RecitationTracker } from "../src/lib/tracker.ts";
 import type { TranscribeResult, BeamVerseMatch } from "../src/lib/tracker.ts";
 import type { VerseCandidate, WorkerOutbound } from "../src/lib/types.ts";
+import { displayQuranFromRaw, ZipformerHost } from "../src/worker/zipformer-session.ts";
+import type { ZipformerIo } from "../src/vendor/alketab-engine/browser/zipformerRunner.js";
 import { createSession, runInference } from "./session-node.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -57,7 +60,13 @@ const hypothesisParams = parseHypothesisParams(
   hypothesisArg ? hypothesisArg.slice("--hypothesis=".length) : "",
 );
 const engineArg = args.find((a) => a.startsWith("--engine="));
-const engineName = engineArg ? engineArg.split("=")[1] : "fastconformer";
+const engineName = (engineArg ? engineArg.split("=")[1] : "fastconformer") as
+  | "zipformer"
+  | "fastconformer";
+if (engineName !== "zipformer" && engineName !== "fastconformer") {
+  throw new Error(`Unknown --engine=${engineName} (expected zipformer|fastconformer)`);
+}
+const ZIPFORMER_TAIL_SECONDS = 2.0;
 const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
 
 for (const [name, value] of Object.entries(hypothesisParams)) {
@@ -178,6 +187,7 @@ interface SampleStability {
 
 interface StabilityReport {
   corpus: string;
+  engine: "zipformer" | "fastconformer";
   repeats: number;
   timestamp: string;
   metrics: {
@@ -192,6 +202,7 @@ interface StabilityReport {
     chunkSeconds: number;
     tailSilenceSeconds: number;
     hypothesisParams: Record<string, number>;
+    engine: "zipformer" | "fastconformer";
   };
   samples: SampleStability[];
   aggregate: {
@@ -501,6 +512,168 @@ async function runSample(
   };
 }
 
+function recordWorkerMessages(
+  msgs: WorkerOutbound[],
+  chunkIndex: number,
+  timeSec: number,
+  rawCommitVerses: string[],
+  candidateHistory: CandidateHistoryEntry[],
+  visibleEvents: VisibleEvent[],
+  setFinal: (verses: string[]) => void,
+): void {
+  for (const msg of msgs) {
+    if (msg.type === "verse_match") {
+      const key = verseKey(msg.surah, msg.ayah);
+      rawCommitVerses.push(key);
+      visibleEvents.push({
+        type: "commit",
+        key,
+        verses: [key],
+        timeSec,
+      });
+    } else if (msg.type === "verse_candidate") {
+      const candidates = msg.candidates.map((candidate) => ({
+        ref: refForCandidate(candidate),
+        verses: expandCandidateKeys(candidate),
+        confidence: candidate.confidence,
+        rank: candidate.rank,
+      }));
+      candidateHistory.push({
+        chunkIndex,
+        timeSec,
+        stable: msg.stable,
+        finalFlush: msg.final_flush,
+        candidates,
+      });
+      const top = candidates[0];
+      if (top?.verses[0]) {
+        visibleEvents.push({
+          type: "candidate",
+          key: top.verses[0],
+          verses: top.verses,
+          timeSec,
+        });
+      }
+    } else if (msg.type === "final_sequence") {
+      setFinal(msg.verses.map((v) => verseKey(v.surah, v.ayah)));
+    }
+  }
+}
+
+function finishSampleRun(
+  sample: Sample,
+  rawCommitVerses: string[],
+  finalSequenceVerses: string[],
+  candidateHistory: CandidateHistoryEntry[],
+  visibleEvents: VisibleEvent[],
+): SampleRunResult {
+  const expectedVerses = sample.expected_verses.map((v) => verseKey(v.surah, v.ayah));
+  const dedupedRawCommits = dedupeOrdered(rawCommitVerses);
+  const dedupedFinalSequence = dedupeOrdered(finalSequenceVerses);
+  const rawCommitMetrics = computeSequenceMetrics(expectedVerses, dedupedRawCommits);
+  const finalSequenceMetrics = computeSequenceMetrics(expectedVerses, dedupedFinalSequence);
+  const productMetrics = computeProductMetrics(expectedVerses, candidateHistory, visibleEvents);
+
+  return {
+    passed: finalSequenceMetrics.recallPassed,
+    exactPassed: finalSequenceMetrics.exactSetPassed,
+    orderedPassed: finalSequenceMetrics.orderedSeqPassed,
+    rawCommitVerses: dedupedRawCommits,
+    finalSequenceVerses: dedupedFinalSequence,
+    candidateHistory,
+    rawCommitMetrics,
+    finalSequenceMetrics,
+    productMetrics,
+  };
+}
+
+async function loadZipformerHost(): Promise<ZipformerHost> {
+  const modelPath = process.env.PROMPTER_MODEL
+    ?? resolve(ROOT, "public/models/zipformer_interp_gentle_a05.int8.onnx");
+  const ioPath = process.env.PROMPTER_IO
+    ?? resolve(ROOT, "public/models/zipformer_interp_gentle_a05.io.json");
+  const corpusPath = process.env.PROMPTER_CORPUS
+    ?? resolve(ROOT, "public/prompter_quran.json");
+  const quranPath = resolve(ROOT, "public/quran.json");
+  const ortDir = process.env.PROMPTER_ORT_DIR ?? resolve(ROOT, "node_modules");
+
+  for (const [path, hint] of [
+    [modelPath, "Run: bash web/frontend/scripts/fetch-zipformer-assets.sh"],
+    [ioPath, "committed io.json should be in public/models/"],
+    [corpusPath, "Run: bash web/frontend/scripts/fetch-zipformer-assets.sh"],
+    [quranPath, "public/quran.json should be in the repo"],
+  ] as const) {
+    if (!existsSync(path)) throw new Error(`missing ${path}\n${hint}`);
+  }
+
+  const require = createRequire(`${ortDir}/`);
+  const ort = require("onnxruntime-node");
+  const io = JSON.parse(readFileSync(ioPath, "utf8")) as ZipformerIo;
+  const corpusJson = JSON.parse(readFileSync(corpusPath, "utf8"));
+  const quranDb = displayQuranFromRaw(JSON.parse(readFileSync(quranPath, "utf8")));
+
+  return ZipformerHost.create({
+    ort,
+    modelBytes: new Uint8Array(readFileSync(modelPath)),
+    io,
+    corpusJson,
+    quranDb,
+    executionProviders: ["cpu"],
+  });
+}
+
+async function runZipformerSample(
+  host: ZipformerHost,
+  sample: Sample,
+  audio: Float32Array,
+): Promise<SampleRunResult> {
+  host.reset();
+  const rawCommitVerses: string[] = [];
+  let finalSequenceVerses: string[] = [];
+  const candidateHistory: CandidateHistoryEntry[] = [];
+  const visibleEvents: VisibleEvent[] = [];
+  const setFinal = (verses: string[]) => {
+    finalSequenceVerses = verses;
+  };
+
+  let chunkIndex = 0;
+  for (let offset = 0; offset < audio.length; offset += CHUNK_SAMPLES) {
+    const end = Math.min(offset + CHUNK_SAMPLES, audio.length);
+    const chunk = audio.slice(offset, end);
+    const msgs = await host.feed(chunk);
+    chunkIndex++;
+    recordWorkerMessages(
+      msgs,
+      chunkIndex,
+      chunkIndex * CHUNK_SECONDS,
+      rawCommitVerses,
+      candidateHistory,
+      visibleEvents,
+      setFinal,
+    );
+  }
+
+  const stopMsgs = await host.stop();
+  chunkIndex++;
+  recordWorkerMessages(
+    stopMsgs,
+    chunkIndex,
+    audio.length / SAMPLE_RATE + ZIPFORMER_TAIL_SECONDS,
+    rawCommitVerses,
+    candidateHistory,
+    visibleEvents,
+    setFinal,
+  );
+
+  return finishSampleRun(
+    sample,
+    rawCommitVerses,
+    finalSequenceVerses,
+    candidateHistory,
+    visibleEvents,
+  );
+}
+
 function buildAggregateSequenceMetrics(
   samples: Sample[],
   sampleResults: Map<string, SampleRunResult[]>,
@@ -605,33 +778,30 @@ function formatNullableSeconds(value: number | null): string {
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
+  console.log(`=== STABILITY REPORT (${repeats} repeats, corpus: ${corpusName}, engine: ${engineName}) ===\n`);
+
+  let runOne: (sample: Sample, audio: Float32Array) => Promise<SampleRunResult>;
+
   if (engineName === "zipformer") {
-    const { runZipformerStability } = await import("./zipformer-stability.ts");
-    await runZipformerStability({
-      repeats,
-      corpusName,
-      jsonOutPath,
-      sampleLimit,
-    });
-    return;
+    console.log("Loading Zipformer host (onnxruntime-node, cpu)...");
+    const host = await loadZipformerHost();
+    runOne = (sample, audio) => runZipformerSample(host, sample, audio);
+  } else {
+    const modelPath = resolve(ROOT, "public/fastconformer_phoneme_q8.onnx");
+    console.log("Loading ONNX model...");
+    await createSession(modelPath);
+
+    const vocabJson = JSON.parse(readFileSync(resolve(ROOT, "public/phoneme_vocab.json"), "utf-8"));
+    decoder = new CTCDecoder(vocabJson);
+
+    const quranData = JSON.parse(readFileSync(resolve(ROOT, "public/quran_phonemes.json"), "utf-8"));
+    const db = new QuranDB(quranData, decoder);
+    console.log(`Loaded ${db.totalVerses} verses`);
+
+    const built = buildTrie(quranData, vocabJson, 3);
+    trie = built.trie;
+    runOne = (sample, audio) => runSample(sample, db, audio);
   }
-
-  console.log(`=== STABILITY REPORT (${repeats} repeats, corpus: ${corpusName}) ===\n`);
-
-  // Setup
-  const modelPath = resolve(ROOT, "public/fastconformer_phoneme_q8.onnx");
-  console.log("Loading ONNX model...");
-  await createSession(modelPath);
-
-  const vocabJson = JSON.parse(readFileSync(resolve(ROOT, "public/phoneme_vocab.json"), "utf-8"));
-  decoder = new CTCDecoder(vocabJson);
-
-  const quranData = JSON.parse(readFileSync(resolve(ROOT, "public/quran_phonemes.json"), "utf-8"));
-  const db = new QuranDB(quranData, decoder);
-  console.log(`Loaded ${db.totalVerses} verses`);
-
-  const built = buildTrie(quranData, vocabJson, 3);
-  trie = built.trie;
 
   const manifest: { samples: Sample[] } = JSON.parse(
     readFileSync(resolve(BENCHMARK, "manifest.json"), "utf-8"),
@@ -661,7 +831,7 @@ async function main() {
     let rawExactCorrect = 0;
     for (const sample of samples) {
       const audio = audioCache.get(sample.id)!;
-      const result = await runSample(sample, db, audio);
+      const result = await runOne(sample, audio);
       sampleResults.get(sample.id)!.push(result);
       if (result.passed) finalCorrect++;
       if (result.exactPassed) finalExactCorrect++;
@@ -754,6 +924,7 @@ async function main() {
 
   const report: StabilityReport = {
     corpus: corpusName,
+    engine: engineName,
     repeats,
     timestamp: new Date().toISOString(),
     metrics: {
@@ -766,8 +937,9 @@ async function main() {
     },
     config: {
       chunkSeconds: CHUNK_SECONDS,
-      tailSilenceSeconds: TAIL_SILENCE_SECONDS,
+      tailSilenceSeconds: engineName === "zipformer" ? ZIPFORMER_TAIL_SECONDS : TAIL_SILENCE_SECONDS,
       hypothesisParams,
+      engine: engineName,
     },
     samples: sampleStabilities,
     aggregate: {
@@ -793,7 +965,7 @@ async function main() {
   console.log("=".repeat(60));
   console.log("STABILITY SUMMARY");
   console.log("=".repeat(60));
-  console.log(`Corpus: ${corpusName} | Repeats: ${repeats}`);
+  console.log(`Corpus: ${corpusName} | Engine: ${engineName} | Repeats: ${repeats}`);
   printAggregate("Raw commits (verse_match)", report.aggregate.rawCommits);
   printAggregate("Final sequence", report.aggregate.finalSequence);
   console.log(
@@ -839,6 +1011,9 @@ async function main() {
   }
 
   console.log();
+  // onnxruntime-node can abort in native destructors after a clean run
+  // (mutex lock failed). Artifacts are already on disk; force a 0 exit.
+  process.exit(0);
 }
 
 main()
