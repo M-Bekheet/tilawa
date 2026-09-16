@@ -40,6 +40,8 @@ export class RecitationEngine {
   private lastCursorWord = -1;
   private lastStates = new Map<number, string>();
   private prevSettled = false;
+  private lastStruggleChars = 0;
+  onBeforeRelocate: (() => void) | null = null;
 
   constructor(corpus: QuranCorpus, index: QuranIndex, cfg: EngineConfig = DEFAULT_CONFIG) {
     this.corpus = corpus;
@@ -75,6 +77,7 @@ export class RecitationEngine {
     this.lastCursorWord = -1;
     this.lastStates.clear();
     this.prevSettled = false;
+    this.lastStruggleChars = 0;
   }
 
   track(surah: number, ayah: number, word = 0): EngineEvent[] {
@@ -100,16 +103,17 @@ export class RecitationEngine {
         this.buffer.splice(0, this.buffer.length - BUFFER_CAP);
       }
     }
-    if (this.state === "searching") return this.feedSearching(chars);
+    if (this.state === "searching") return this.feedSearching();
     return this.feedTracking(chars);
   }
 
-  lock = (
+  lock(
     wordIndex: number,
     replay: readonly HeardChar[],
-    how: string,
+    how: "located" | "relocated",
     from?: { surah: number; ayah: number },
-  ): EngineEvent[] => {
+  ): EngineEvent[] {
+    if (how === "relocated") this.onBeforeRelocate?.();
     const surah = this.corpus.wordSurah[wordIndex]!;
     const ayah = this.corpus.wordAyah[wordIndex]!;
     const word = this.corpus.wordInAyah[wordIndex]!;
@@ -130,6 +134,7 @@ export class RecitationEngine {
     this.lastStates.clear();
     this.prevSettled = false;
     this.lastRelocateFrame = this.framesDecoded;
+    this.lastStruggleChars = this.heardTotal;
     const events: EngineEvent[] = [];
     if (how === "relocated" && prev) {
       events.push({
@@ -149,9 +154,9 @@ export class RecitationEngine {
     if (replay.length) this.tracker.feed(replay);
     events.push(...this.trackingEvents(false));
     return events;
-  };
+  }
 
-  private feedSearching(chars: readonly HeardChar[]): EngineEvent[] {
+  private feedSearching(): EngineEvent[] {
     const events: EngineEvent[] = [];
     const minC = this.cfg.searchMinChars;
     const due =
@@ -179,7 +184,6 @@ export class RecitationEngine {
       this.locateFailedEmitted = true;
       events.push({ type: "locateFailed" });
     }
-    void chars;
     return events;
   }
 
@@ -198,12 +202,14 @@ export class RecitationEngine {
 
     if (this.framesDecoded - this.lastRelocateFrame >= this.cfg.relocateEveryFrames) {
       this.lastRelocateFrame = this.framesDecoded;
+      const heardSinceTick = this.heardTotal - this.lastStruggleChars;
+      this.lastStruggleChars = this.heardTotal;
       if (this.stay) {
         this.struggles = 0;
       } else {
         const moved = this.maybeRelocate();
-        if (moved) return moved;
-        if (chars.length > 0) {
+        if (moved) return [...events, ...moved];
+        if (heardSinceTick > 0) {
           const held = this.isHeld();
           this.struggles = this.tracker.lost || held ? this.struggles + 1 : 0;
           if (this.cfg.maxStruggles > 0 && this.struggles >= this.cfg.maxStruggles) {
@@ -300,6 +306,9 @@ export class RecitationEngine {
       }
     }
     if (changes.length) events.push({ type: "verdicts", changes });
+    for (const key of this.lastStates.keys()) {
+      if (!vs.some((v) => v.wordIndex === key)) this.lastStates.delete(key);
+    }
     this.prevSettled = settled;
     if (!this.completedEmitted && this.tracker.reachedEnd) {
       const lastW = this.tracker.endWord - 1;

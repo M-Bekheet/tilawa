@@ -22,7 +22,7 @@ export class Tracker {
   readonly localWordOfPos: Int32Array;
   readonly startLocal: number;
 
-  column: Float64Array;
+  column: Float32Array;
   cursorCell: number;
   cursorLocalWord: number;
   cursorCost: number;
@@ -34,7 +34,7 @@ export class Tracker {
 
   private readonly snapshots: Array<{
     length: number;
-    column: Float64Array;
+    column: Float32Array;
     cursorCell: number;
     cursorLocalWord: number;
     cursorCost: number;
@@ -77,7 +77,8 @@ export class Tracker {
       0,
       corpus.wordStart[startWordIndex]! - this.surahStart,
     );
-    this.column = new Float64Array(this.len + 1);
+    // Float32 store: events_ea_alafasy_multi cursor.cost / alignment.json.
+    this.column = new Float32Array(this.len + 1);
     this.column.fill(Number.POSITIVE_INFINITY);
     const jump = cfg.jumpCost;
     for (let i = 0; i < nWords; i++) {
@@ -113,6 +114,7 @@ export class Tracker {
   }
 
   retract(n: number): void {
+    if (n <= 0) return;
     this.revision++;
     const target = Math.max(0, this.heard.length - n);
     const snap = [...this.snapshots].reverse().find((s) => s.length <= target);
@@ -154,7 +156,7 @@ export class Tracker {
 
   private feedOne(h: HeardChar): void {
     const prev = this.column;
-    const next = new Float64Array(this.len + 1);
+    const next = new Float32Array(this.len + 1);
     let colMin = prev[0]!;
     for (let m = 1; m <= this.len; m++) if (prev[m]! < colMin) colMin = prev[m]!;
     const jump = colMin + this.cfg.jumpCost;
@@ -169,12 +171,11 @@ export class Tracker {
       if (r < next[0]!) next[0] = r;
     }
     for (let m = 1; m <= this.len; m++) {
-      const sub = prev[m - 1]! + this.table.cost(hid, this.ref[m - 1]!);
+      next[m] = prev[m - 1]! + this.table.cost(hid, this.ref[m - 1]!);
       const ins = prev[m]! + 1;
       const del = next[m - 1]! + 1;
-      let v = sub < ins ? sub : ins;
-      if (del < v) v = del;
-      next[m] = v;
+      if (ins < next[m]!) next[m] = ins;
+      if (del < next[m]!) next[m] = del;
     }
     for (let i = 0; i < this.wordStarts.length; i++) {
       const m = this.wordStarts[i]!;

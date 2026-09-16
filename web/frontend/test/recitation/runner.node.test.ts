@@ -84,6 +84,7 @@ describe.skipIf(!haveModel || !haveOrt)("zipformer runner (onnxruntime-node)", (
     expect(tokens.map((t) => t.sym).join("")).toBe(vec.transcript);
     expect(tokens.map((t) => t.sym)).toEqual(vec.tokens.map((t) => t.sym));
     expect(tokens.map((t) => t.frame)).toEqual(vec.tokens.map((t) => t.frame));
+    // 1e-4: int8 EP softmax margin jitter vs the dump machine.
     for (let i = 0; i < tokens.length; i++) {
       expect(Math.abs(tokens[i]!.margin - vec.tokens[i]!.margin), `margin[${i}]`).toBeLessThan(1e-4);
     }

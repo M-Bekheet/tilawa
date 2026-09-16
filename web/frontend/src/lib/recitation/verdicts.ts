@@ -6,7 +6,6 @@ import type { HeardChar, VerdictState, WordVerdict } from "./types";
 
 const SEGMENT_CUT = 300;
 const CONTEXT_CHARS = 6;
-const STOP_GAP_FRAMES = 25;
 const TANWEEN = ["ً", "ٌ", "ٍ"] as const;
 const CLUSTER = new Set(["ن", "ں", "م", "۾", "و", "ۥ", "ي", "ۦ", "ل", "ر"]);
 const SHORT_VOWELS = new Set(["َ", "ُ", "ِ"]);
@@ -42,11 +41,16 @@ export function pausalPhonemes(
   return result;
 }
 
-function stopBoundary(heard: readonly HeardChar[], from: number, to: number): number {
+function stopBoundary(
+  heard: readonly HeardChar[],
+  from: number,
+  to: number,
+  settleFrames: number,
+): number {
   const end = Math.min(heard.length, to + 4);
   for (let i = from + 1; i <= end; i++) {
     if (i === heard.length) return i;
-    if (heard[i]!.frame - heard[i - 1]!.frame >= STOP_GAP_FRAMES) return i;
+    if (heard[i]!.frame - heard[i - 1]!.frame >= settleFrames) return i;
   }
   return -1;
 }
@@ -126,7 +130,10 @@ export class VerdictTracer {
           ? 0
           : tWordStart(this.tracker, this.tracker.localWordOfPos[cell - 1]!);
       const firstOfRun = segStart === runStart;
-      const contextFrom = firstOfRun ? segStart : Math.max(prevSegStart, segStart - CONTEXT_CHARS);
+      const contextFrom =
+        firstOfRun && run === 0
+          ? segStart
+          : Math.max(prevSegStart, segStart - CONTEXT_CHARS);
       segs.push({
         heardFrom: segStart,
         heardTo: to,
@@ -202,7 +209,8 @@ export class VerdictTracer {
       const heardCount = span ? span.to - span.from : 0;
       if (!pending && heardCount < this.cfg.minHeardFraction * expLen) {
         if (minWord < w && w < maxWord) {
-              out.push(this.makeVerdict(globalWord, "skipped", 1, 0, 0));
+          const ratio = expLen > 0 ? heardCount / expLen : 0;
+          out.push(this.makeVerdict(globalWord, "skipped", 1, ratio, 0));
         }
         continue;
       }
@@ -220,7 +228,7 @@ export class VerdictTracer {
         t.corpus.ayahWordCount(t.corpus.wordSurah[globalWord]!, t.corpus.wordAyah[globalWord]!) - 1;
       const pausal = pausalPhonemes(exp, t.corpus.plain[globalWord]!, atAyahEnd);
       if (distance > this.cfg.okDistance && pausal) {
-        const stop = stopBoundary(t.heard, from, to);
+        const stop = stopBoundary(t.heard, from, to, this.cfg.settleFrames);
         if (stop >= 0) {
           if (stop !== to) {
             to = stop;

@@ -119,7 +119,7 @@ export class KaldiFbank {
   private sampleOffset = 0;
   private framesProduced = 0;
   private trueLength = 0;
-  private readonly window = new Float64Array(FRAME_LENGTH);
+  private readonly samples = new Float64Array(FRAME_LENGTH);
   private readonly fftRe = new Float64Array(FFT_SIZE);
   private readonly fftIm = new Float64Array(FFT_SIZE);
 
@@ -181,7 +181,7 @@ export class KaldiFbank {
 
   private computeFrame(f: number, n: number): Float32Array {
     const start = frameStart(f);
-    const win = this.window;
+    const win = this.samples;
     for (let i = 0; i < FRAME_LENGTH; i++) {
       let s = start + i;
       if (s < 0 || s >= n) s = reflectIndex(s, n);

@@ -211,11 +211,7 @@ export class ZipformerHost {
     const engine = new RecitationEngine(this.corpus, this.index, CONFIG);
     engine.setStayOnSurah(false);
     engine.startSearch();
-    const origLock = engine.lock.bind(engine);
-    engine.lock = (wordIndex, replay, how, from) => {
-      if (how === "relocated") this.dumpTallies();
-      return origLock(wordIndex, replay, how, from);
-    };
+    engine.onBeforeRelocate = () => this.dumpTallies();
     return engine;
   }
 

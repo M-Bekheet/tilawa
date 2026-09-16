@@ -23,10 +23,12 @@ export function weightedLevenshtein(
     cur[0] = i;
     const ha = a[i - 1]!;
     for (let j = 1; j <= m; j++) {
-      const diag = prev[j - 1]! + table.cost(ha, b[j - 1]!);
+      // Float32 store: alignment.json (hamza 0.10000000149011612, 1:1-vs-1:2).
+      cur[j] = prev[j - 1]! + table.cost(ha, b[j - 1]!);
       const up = prev[j]! + INSERT_DELETE_COST;
       const left = cur[j - 1]! + INSERT_DELETE_COST;
-      cur[j] = diag < up ? (diag < left ? diag : left) : up < left ? up : left;
+      if (up < cur[j]!) cur[j] = up;
+      if (left < cur[j]!) cur[j] = left;
     }
     const tmp = prev;
     prev = cur;
@@ -61,7 +63,8 @@ export function alignGlobal(
     return assign;
   }
   const cols = m + 1;
-  const C = new Float64Array((n + 1) * cols);
+  // Float32 store: alignment.json global pairs; compare after write.
+  const C = new Float32Array((n + 1) * cols);
   const T = new Uint8Array((n + 1) * cols);
   for (let j = 0; j <= m; j++) C[j] = j;
   for (let i = 1; i <= n; i++) C[i * cols] = i;
@@ -70,20 +73,18 @@ export function alignGlobal(
     const row = i * cols;
     const prev = (i - 1) * cols;
     for (let j = 1; j <= m; j++) {
-      const diag = C[prev + j - 1]! + table.cost(ha, ref[from + j - 1]!);
+      C[row + j] = C[prev + j - 1]! + table.cost(ha, ref[from + j - 1]!);
+      let tr = 0;
       const up = C[prev + j]! + INSERT_DELETE_COST;
       const left = C[row + j - 1]! + INSERT_DELETE_COST;
-      let best = diag;
-      let tr = 0;
-      if (up < best) {
-        best = up;
+      if (up < C[row + j]!) {
+        C[row + j] = up;
         tr = 1;
       }
-      if (left < best) {
-        best = left;
+      if (left < C[row + j]!) {
+        C[row + j] = left;
         tr = 2;
       }
-      C[row + j] = best;
       T[row + j] = tr;
     }
   }
@@ -128,6 +129,7 @@ export function alignSemiGlobal(
   if (n === 0) {
     return { cost: 0, distance: 1, refStart: from, refEnd: from, queryStart: 0 };
   }
+  // Float32 + fround: search.json fatiha@200 (0.4439999771118164).
   let prevCost = new Float32Array(m + 1);
   let curCost = new Float32Array(m + 1);
   let prevStart = new Int32Array(m + 1);

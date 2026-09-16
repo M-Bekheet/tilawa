@@ -32,7 +32,6 @@ export class QuranCorpus {
   readonly wordInAyah: Int32Array;
   readonly mushaf: string[];
   readonly plain: string[];
-  readonly wordOfPos: Int32Array;
   readonly ayahFirst: Int32Array[];
   readonly ayahWords: Int32Array[];
   readonly markers: string[][];
@@ -116,12 +115,6 @@ export class QuranCorpus {
     this.markers = markers;
     this.surahs = surahs;
     this.wordCount = w;
-    this.wordOfPos = new Int32Array(this.text.length);
-    for (let i = 0; i < w; i++) {
-      const a = this.wordStart[i]!;
-      const b = this.wordStart[i + 1]!;
-      for (let p = a; p < b; p++) this.wordOfPos[p] = i;
-    }
   }
 
   wordAt(offset: number): number {

@@ -292,7 +292,10 @@ export class QuranIndex {
     if (!best) return undefined;
     if (hint) {
       const cap = best.distance + this.cfg.searchDecisiveMargin;
-      return hits.find((h) => h !== best && h.distance > cap);
+      const near = hits.filter((h) => h.distance <= cap);
+      if (near.some((h) => h.surah === hint.surah)) {
+        return hits.find((h) => h !== best && h.distance > cap);
+      }
     }
     return hits[1];
   }

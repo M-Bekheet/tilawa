@@ -8,10 +8,28 @@ import { KaldiFbank } from "../../src/lib/recitation/fbank";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VECTORS = resolve(HERE, "../../../../docs/specs/vectors");
+const WORKTREE = resolve(HERE, "../../../..");
+const MAIN_CHECKOUT = resolve(WORKTREE, "../..");
 const CHUNK = 7680;
-const SR = 16000;
-const PY = "/Users/rock/ai/projects/offline-tarteel/.venv/bin/python";
-const CLIP = "/Users/rock/ai/projects/offline-tarteel/benchmark/test_corpus/001002.mp3";
+
+function firstExisting(...paths: Array<string | undefined>): string | null {
+  for (const p of paths) {
+    if (p && existsSync(p)) return p;
+  }
+  return null;
+}
+
+const PY = firstExisting(
+  process.env.TILAWA_PY,
+  resolve(WORKTREE, ".venv/bin/python"),
+  resolve(MAIN_CHECKOUT, ".venv/bin/python"),
+);
+const CLIP = firstExisting(
+  process.env.TILAWA_CLIP,
+  resolve(WORKTREE, "benchmark/test_corpus/001002.mp3"),
+  resolve(MAIN_CHECKOUT, "benchmark/test_corpus/001002.mp3"),
+);
+const PY_ROOT = existsSync(resolve(WORKTREE, "shared/audio.py")) ? WORKTREE : MAIN_CHECKOUT;
 
 function loadVector<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;
@@ -35,7 +53,7 @@ t=np.arange(n, dtype=np.float64)/SR
 wave=(0.25*np.sin(2*np.pi*220.0*t)+0.15*np.sin(2*np.pi*440.0*t)+0.10*np.sin(2*np.pi*880.0*t)+0.05*rng.standard_normal(n))
 np.clip(wave,-0.5,0.5).astype(np.float32).tofile(${JSON.stringify(out)})
 `;
-  execFileSync(PY, ["-c", script]);
+  execFileSync(PY!, ["-c", script]);
   const buf = readFileSync(out);
   return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
 }
@@ -45,12 +63,12 @@ function loadMp3(path: string): Float32Array {
   const out = join(dir, "clip.f32");
   const script = `
 import sys
-sys.path.insert(0, "/Users/rock/ai/projects/offline-tarteel")
+sys.path.insert(0, ${JSON.stringify(PY_ROOT)})
 from shared.audio import load_audio
 w = load_audio(${JSON.stringify(path)}, sr=16000)
 w.astype("float32").tofile(${JSON.stringify(out)})
 `;
-  execFileSync(PY, ["-c", script]);
+  execFileSync(PY!, ["-c", script]);
   const buf = readFileSync(out);
   return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
 }
@@ -81,7 +99,7 @@ describe("kaldi fbank", () => {
     }
   });
 
-  it("matches fbank_synthetic.json first 200 frames within 1e-3", () => {
+  it.skipIf(!PY)("matches fbank_synthetic.json first 200 frames within 1e-3", () => {
     const vec = loadVector<{
       sampleCount: number;
       streamingFrames: number;
@@ -105,7 +123,7 @@ describe("kaldi fbank", () => {
     }
   });
 
-  it.skipIf(!existsSync(CLIP))("matches fbank_001002.json first 5 frames within 1e-3", () => {
+  it.skipIf(!PY || !CLIP)("matches fbank_001002.json first 5 frames within 1e-3", () => {
     const vec = loadVector<{
       sampleCount: number;
       streamingFrames: number;
@@ -113,7 +131,7 @@ describe("kaldi fbank", () => {
       totalFrames: number;
       frames: number[][];
     }>("fbank_001002.json");
-    const pcm = loadMp3(CLIP);
+    const pcm = loadMp3(CLIP!);
     expect(pcm.length).toBe(vec.sampleCount);
     const { streaming, flushed } = runChunked(pcm);
     expect(streaming.length).toBe(vec.streamingFrames);
