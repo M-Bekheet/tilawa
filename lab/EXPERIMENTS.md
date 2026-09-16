@@ -249,8 +249,23 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 | interp-ftv31-a0.25 fp32 | 248 MB | **53/53** | — | 96.8 / 96.7 / 96.1 **(246/256)** | 571/583 (97.9%) | 184/184, 193/200, 194/199 | 1.81 s / 0.97 s |
 | **interp-gentle-a0.5 fp32** | 248 MB | **53/53** | — | 96.9 / 96.9 / 96.9 **(248/256)** | **572/583** (98.1%) | 184/184, 194/200, 194/199 | 0.87 s / 0.91 s |
 | **interp-gentle-a0.5 int8** | 66 MB | **53/53** | **43/43** | same 248/256 | same 572/583 | same split | 0.67 s / 0.44 s |
+| ft-multi ep1 fp32 | 248 MB | 46/53 | 35/43 | 87.8 / 88.7 / 87.1 **(223/256)** | 558/583 (95.7%) | 184/184, 194/200, 180/199 | 0.84 s / 0.54 s |
+| ft-multi ep2 fp32 | 248 MB | 42/53 | — | 93.2 / 93.8 / 93.0 **(238/256)** | 551/583 (94.5%) | 183/184, 194/200, 174/199 | 0.84 s / 0.55 s |
+| interp-multi-a0.5 fp32 | 248 MB | **53/53** | 42/43 | 96.9 / 96.9 / 96.9 **(248/256)** | **572/583** (98.1%) | 184/184, 194/200, 194/199 | 0.83 s / 0.54 s |
 
 v3 vs v3.1 swap one crowd clip: v3 misses `retasy_012` (114:2→114:3); v3.1 misses `retasy_v2_012` (1:3→55:1). v3-corpus and qlab miss *sets* are identical across all four ONNX files. Repeats never differed in correct-count (latency only). Grid: v3.1 fp32+int8 all corpora ×3; v3 fp32 on v3/qlab ×3; v3 fp32 v1/v2 and v3 int8 all ×1. ft-v31 fp32+int8 all corpora ×3 (scores identical across repeats).
+
+**v3 multi vs single** (21 clips with `expected_verses` length > 1; 235 single):
+
+| model | multi (21) | single (235) |
+|---|---|---|
+| v3.1 fp32 | **21/21** | 226/235 |
+| ft-v31 ep5 | 9/21 | 222/235 |
+| ft-gentle ep1 | 3/21 | 222/235 |
+| ft-multi ep1 | 17/21 | 206/235 |
+| ft-multi ep2 | 19/21 | 219/235 |
+| interp-multi-a0.5 | **21/21** | **227/235** |
+| **interp-gentle-a0.5** | **21/21** | **227/235** |
 
 **PER (ONNX streaming greedy, v3.1 fp32, qlab):** overall **5.56%** (exact 49.1%); everyayah_heldout 2.39%, qul_alnufais 7.78%, tlog_holdout 7.06%. Not comparable 1:1 to the card (different decode, gold is `ordered_quran_phonemes.json` by surah:ayah, torchaudio kaldi fbank). Wrapper: `experiments/prompter-zipformer/reference_tools/per_onnx_wrapper.py`.
 
@@ -320,6 +335,12 @@ Hypothesis: lr 0.005 over-fit in epoch 1; a 1-ep lr 0.001 FT, or a WiSE-FT blend
 
 `ft-gentle` (`ap-1tiu0kP4AiIsn2sxQzLooc`, H100:4, 1 ep, lr 0.001, warmup 1000, avg 1): train 0.1108 / valid 0.0832 / 1662 s — **not** gentler on the tracker (v1 44/53, v3 225/256, same prefix-truncation as ft-v31 ep1). **interp-gentle-a0.5** (init ⊕ ft-gentle ep1, `ap-qj8yZzLGTgg9CZnexqPIka`) is **53 / 248 / 572** (EA 184, nufais 194, tlog 194): v3 gained `tlog_m000_100_001`, qlab gained `qul_alnufais__37_43`. interp-ftv31-a0.5 hits 572/248 but v1 52 (`multi_036_001_005` 36:1–5→36:2–5); a0.25 keeps v1 53 but v3 246 (`ea_alafasy_multi_044_001_005`). **PROMOTED** vs bar qlab≥572 AND v1=53 AND v3≥247. Shipping artefact is dynamic-int8 MatMul QInt8: **259,593,848 B fp32 / 69,245,985 B int8**; int8 matches fp32 on v1/v3/qlab and is **43/43** on v2 (recovers `retasy_v2_012`). Raw: `2026-09-15_210522.json`–`_220939.json`; int8 `_224627` (v1) `_224703` (v2) `_225000` (v3) `_225419` (qlab); PER `interp_gentle_a0.5_qlab_per.json`, `ft_gentle_qlab_per.json`.
 
+### E1 multi-ayah windows (NOT PROMOTED; interp-gentle-a0.5 stays)
+
+Hypothesis: isolated-ayah FT forgot short connector ayahs; synthetic 2–4 ayah windows (`everyayah_multi`) recover multi-verse SeqAcc. Built 40,000 windows (179.4 h raw, 0 OOV, n_ayahs 2/3/4 = 22198/11903/5899, mean 7.02 phonemes/s) from EveryAyah via lhotse `append` + 0–800 ms silence (noise mix skipped — inode cap). MixedCut left window text on ayah-1 (`f9070dc` put it on the first non-padding track; `888f31a` flattened fbank to MonoCut so icefall collates whole-cut text against `cut.num_frames` instead of the first-ayah interval). Mix `everyayah,everyayah_multi,tlog,iqra` (no qua), lr 0.002, 2 ep, H100:4. Loss: ep1 train 0.160 / valid 0.153 (986 s); ep2 0.134 / 0.073 (898 s).
+
+Multi windows **do** repair raw FT multi-ayah (ft-v31 9/21 → ft-multi ep2 **19/21**) but the studio-heavy reduced mix wrecks the phone slice (tlog 194 → 174; qlab 551). ep1 is milder on tlog (180) and v1 (46) but weaker on v3 (223, multi 17/21). **interp-multi-a0.5** (0.5·v3.1 ⊕ 0.5·ft-multi ep1, sha `0cf247b3`) is 53/42/248/572 (multi 21/21, single 227/235, qlab 184/194/194) — ties interp-gentle-a0.5 on v1/v3/qlab, loses v2 42 vs 43. **interp-gentle-a0.5 remains the promoted candidate.** Next: multi windows + full mix + gentle LR, then blend. Raw: `2026-09-16_064849.json` (ep2 v1, `29644ea2`), `_065228` (v3), `_065748` (qlab); `_071046` (ep1 v1, `c8d7cd51`), `_071131` (v2), `_071510` (v3), `_072026` (qlab); interp `_070025` (v1), `_070110` (v2), `_070447` (v3), `_071003` (qlab). Report `.superpowers/sdd/plan-sota-tilawa/exp-E1-report.md`.
+
 ### E3 tracker re-tune (diagnostic, NOT PROMOTED)
 
 Matcher-only probe on ft-v31 ep5 avg-3 (`sha256` `7c7f0f4d…`). v2 grid of 12 configs: only `PROMPTER_ALLOW_GAPS=1` appeared to move v2 (40/43), via `_contiguous_head` inventing a corpus-short hole. Fix round 1 requires both neighbours already emitted and `ok+unsure≥1`, and Python skips a hole only if that ayah is already in `verses`. After that, ft-v31+gaps = default: **45/53, 39/43, 231/256, 566/583**. The three “recovered” clips (`multi_036_001_005`, `ea_multi_056_001_004`, `ea_alafasy_multi_095_001_005`) revert. Reference + gaps stays **53/247/571**. Not a promotion candidate — the loss is acoustic, not a prefix-fill matcher bug. Raw: grid `2026-09-15_205959.json`–`_211248.json`; honest re-verify `_220245` (v1), `_222224` (v2), `_220911` (v3), ref `_221000`/`_221313`/`_222037`.
@@ -377,7 +398,7 @@ Use case: r7 remains the highest-accuracy distillation teacher; r15 is now a pla
 13. **v3 SeqAcc is mostly a tracker state problem, not a recognizability problem.** Exact-match diagnostics (`web/frontend/test/analyze-v3-stability.ts`) show the v3 gap is dominated by extra emissions: cached streaming exact-fail runs include 124 `extra_after_expected` and 29 `wrong_surah_jump` cases across 768 runs. Comparing those cached streaming outputs against the r7 batch oracle (`web/frontend/test/compare-streaming-oracle.ts --stability-json=... --oracle-results=benchmark/results/r7-v3-batch.json`) shows the first long/medium exact-fail samples are `streaming_tracker_loss`: r7 predicts the exact expected verse while streaming emits expected+extras. The old phoneme ONNX full-file path was too weak to serve as this oracle; it often missed the expected verse on those same long clips. Two tempting runtime invariants were falsified and reverted: consuming the buffer after evidence-backed stale exits, and blocking selected candidates dominated by the current fusion leader. The next tracker attempt needs explicit segment ownership / active-hypothesis comparison, not score-threshold or rank gates.
 14. **Alketab ships Quran-Lab v3.1 int8.** `quran_phoneme_zipformer.onnx` is byte-identical to `Quran-Lab/zipformer_p-arabic-v3` `zipformer_p_arabic_v3.1.int8.onnx` (NPL-1.2). Tracker scores are deterministic; v3.1 vs v3 only swap one v1/v2 crowd clip. Fine-tune v3.1 rather than training Zipformer CTC from scratch.
 15. **A 5-epoch full-mix fine-tune of v3.1 at lr 0.005 dropped tracker SeqAcc even as CTC valid loss fell 0.088→0.032 and ONNX PER 5.56%→4.37%.** ft-v31: v1 53→45, v3 247→231, qlab 571→566 (tlog −6, nufais +1). Failures are mostly multi-ayah truncations, not wrong-surah. Lower LR / fewer epochs / freeze encoder next — do not ship this checkpoint.
-16. **Fine-tuning v3.1 on isolated-ayah data lowers PER but breaks multi-ayah tracking; needs B1 multi-ayah windows and/or tracker re-tune.** Epoch sweep (fp32): v1 53→46→44→45 and v3 247→225→214→231 at init/ep1/ep2/ep5. CTC skips short connecting ayahs (acoustic); `MIN_WORD_FRACTION=0.5` plus `_contiguous_head` then report only the prefix (matcher).
+16. **Fine-tuning v3.1 on isolated-ayah data lowers PER but breaks multi-ayah tracking.** Epoch sweep (fp32): v1 53→46→44→45 and v3 247→225→214→231 at init/ep1/ep2/ep5. CTC skips short connecting ayahs (acoustic); `MIN_WORD_FRACTION=0.5` plus `_contiguous_head` then report only the prefix (matcher). **E1 B1 windows repair that failure** (ft-v31 9/21 multi → ft-multi ep2 19/21) but a reduced studio-heavy mix wrecks tlog (194→174). Blended with v3.1, interp-multi-a0.5 ties interp-gentle-a0.5 on v1/v3/qlab (53/248/572) and loses v2 (42 vs 43); interp-gentle-a0.5 stays the promoted candidate. Next: multi windows + full mix + gentle LR, then blend. Matcher-only (E3) recovered 0 misses.
 
 ## Methodology
 
