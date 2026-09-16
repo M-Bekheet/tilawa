@@ -235,3 +235,7 @@ cd web/frontend && npm run dev
 ## Research & benchmarks
 
 The model behind this SDK is the winner of a 20-approach bake-off (Whisper variants, pruned CTC, FastConformer sweeps, contrastive/embedding attempts). All of that — the Python benchmark harness, experiment code, training scripts, and per-approach writeups — lives under [`lab/`](lab/). Start with [`lab/EXPERIMENTS.md`](lab/EXPERIMENTS.md) and [`lab/AGENTS.md`](lab/AGENTS.md).
+
+## Acknowledgements & licensing
+
+Zipformer acoustic models, vocabulary, phoneme lexicon, and eval scripts derive from [Quran-Lab/zipformer_p-arabic-v3](https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3) (Muno459 / Quran-Lab). The streaming prompter engine and `quran.json` phoneme corpus come from alketab's [ملقّن القرآن](https://prompter.alketab.app/). Zipformer-derived models (`quran_phoneme_zipformer.onnx`, `ft-*`, `interp-gentle-a0.5`, tokens, lexicon, labels) are **NPL-1.2** (non-commercial, share-alike) and are not covered by this repo's MIT licence. Details: [NOTICE.md](NOTICE.md).

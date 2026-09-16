@@ -1,0 +1,29 @@
+# Notices
+
+This repository is MIT-licensed (`LICENSE`). Some vendored models, lexicons, and scripts are **not**.
+
+## Acknowledgements
+
+- **Quran-Lab** ([`Quran-Lab/zipformer_p-arabic-v3`](https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3), author Muno459 / Quran-Lab): streaming Zipformer2-CTC acoustic model, 251-token vocabulary, phoneme lexicon (`quran_text2phoneme.json`), and eval/export scripts. NPL-1.2 §6 does not require attribution; we credit them anyway. Full text: [`licenses/NPL-1.2.txt`](licenses/NPL-1.2.txt).
+- **alketab** ([ملقّن القرآن](https://prompter.alketab.app/), `@alketab/quran-engine`): JS under `experiments/prompter-zipformer/engine/` (recovered from published source maps) and the phoneme corpus in `data/prompter/quran.json` (from alketab; itself derived from Quran-Lab's `quran_text2phoneme.json`). Licence unstated; research reference only — see `experiments/prompter-zipformer/README.md`.
+- **k2 / icefall** (Apache-2.0) and **lhotse** (Apache-2.0): Zipformer training and export stack.
+- **onnxruntime** (MIT): ONNX inference.
+- Training audio for our fine-tunes: EveryAyah (`tarteel-ai/everyayah` / `greentechapps/everyayah_curated_1s_20s`, MIT); QUA (`hetchyy/quranic-universal-ayahs`, CC-BY-4.0); Iqra (`IqraEval/Iqra_train`, unstated); RetaSy (`RetaSy/quranic_audio_dataset`, unstated); TLOG (`tarteel-ai/tlog`, unstated). QuranTTS (`Quran-Lab/QuranTTS`, NPL-1.2) is excluded. See `docs/plans/2026-09-14-sota-tilawa.md` §3.1 and `scripts/prepare_zipformer_data_modal.py`.
+
+## Licensing of model artefacts
+
+These artefacts are **NPL-1.2 Derivatives** of Quran-Lab's Work. NPL-1.2 §7 is share-alike: a Derivative includes models trained, fine-tuned, or *evaluated* with the Work, and datasets, lexicons, or label sets produced from it. They are **not** covered by this repository's MIT licence:
+
+- `data/prompter/quran_phoneme_zipformer.onnx` (byte-identical to Quran-Lab `zipformer_p_arabic_v3.1.int8.onnx`)
+- Fine-tuned checkpoints (`ft-*`)
+- Blended model `interp-gentle-a0.5` (0.5 v3.1 + 0.5 ft-gentle)
+- 251-token vocabulary `experiments/prompter-zipformer/engine/model/tokens.txt`
+- Phoneme lexicon in `data/prompter/quran.json`
+- Training labels produced from that lexicon
+- Copied eval scripts in `experiments/prompter-zipformer/reference_tools/` (already marked NPL-1.2)
+
+NPL-1.2 §§3/5/9: you may not charge for the Work or any feature it powers; hosted use is free or cost recovery only. Every Derivative must be distributed under NPL-1.2 (or a later Quran-Lab version). See [`licenses/NPL-1.2.txt`](licenses/NPL-1.2.txt).
+
+Repository code and non-derived assets remain MIT.
+
+The alketab engine JS is vendored for research reference only. We grant no licence to it.
