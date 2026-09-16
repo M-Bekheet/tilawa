@@ -12,7 +12,8 @@
     "test:streaming": "tsx test/validate-streaming.ts",
     "test:streaming:matrix": "tsx test/validate-streaming-matrix.ts",
     "test:streaming:diagnostics": "tsx test/diagnose-streaming.ts",
-    "test:user-reports": "tsx test/user-report-regressions.ts"
+    "test:user-reports": "tsx test/user-report-regressions.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@fontsource/amiri": "^5.2.8",
@@ -28,6 +29,7 @@
     "tsx": "^4.19.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^3.2.7"
   }
 }
