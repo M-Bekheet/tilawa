@@ -123,3 +123,6 @@ data/prompter/
 
 # Zipformer browser demo (NPL-derived lexicon; ONNX already covered by *.onnx)
 web/frontend/public/prompter_quran.json
+
+# SDD scratch workspaces
+.superpowers/
