@@ -73,6 +73,7 @@ export type WorkerInbound =
   | { type: "init" }
   | { type: "audio"; samples: Float32Array }
   | { type: "reset" }
+  | { type: "stop" }
   | { type: "set_debug"; enabled: boolean }
   | { type: "set_config"; config: StreamingConfig };
 

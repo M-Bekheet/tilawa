@@ -9,6 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
+public/prompter_quran.json
+public/models/*.onnx
 dist-server
 dist-ssr
 *.local

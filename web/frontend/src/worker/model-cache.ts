@@ -38,9 +38,10 @@ async function saveToCache(key: string, data: ArrayBuffer): Promise<void> {
 export async function loadModel(
   url: string,
   onProgress?: (loaded: number, total: number) => void,
+  cacheKey: string = MODEL_KEY,
 ): Promise<ArrayBuffer> {
   // Try IndexedDB cache first
-  const cached = await getFromCache(MODEL_KEY);
+  const cached = await getFromCache(cacheKey);
   if (cached) return cached;
 
   // Download with progress
@@ -65,6 +66,6 @@ export async function loadModel(
     offset += chunk.length;
   }
 
-  await saveToCache(MODEL_KEY, buffer.buffer);
+  await saveToCache(cacheKey, buffer.buffer);
   return buffer.buffer;
 }

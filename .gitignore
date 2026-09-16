@@ -120,3 +120,6 @@ offline-tarteel-sdk/
 
 # prompter-zipformer downloaded assets (auto-fetched by experiments/prompter-zipformer/run.py)
 data/prompter/
+
+# Zipformer browser demo (NPL-derived lexicon; ONNX already covered by *.onnx)
+web/frontend/public/prompter_quran.json

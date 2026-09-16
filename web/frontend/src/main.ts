@@ -75,6 +75,30 @@ const MAX_DEBUG_EVENTS = 80;
 const DIAGNOSTIC_COOLDOWN_MS = 30_000;
 const DEBUG_VIEW_ENABLED = Boolean(import.meta.env.VITE_DEBUG_MODE);
 
+type EngineName = "zipformer" | "fastconformer";
+
+function resolveEngine(): EngineName {
+  const fromUrl = new URLSearchParams(location.search).get("engine");
+  if (fromUrl === "zipformer" || fromUrl === "fastconformer") {
+    try {
+      localStorage.setItem("tilawaEngine", fromUrl);
+    } catch {
+      /* ignore quota / private mode */
+    }
+    return fromUrl;
+  }
+  try {
+    const stored = localStorage.getItem("tilawaEngine");
+    if (stored === "zipformer" || stored === "fastconformer") return stored;
+  } catch {
+    /* ignore */
+  }
+  return "fastconformer";
+}
+
+const ENGINE = resolveEngine();
+const ENGINE_LABEL = ENGINE === "zipformer" ? "Zipformer" : "FastConformer";
+
 const state = {
   groups: [] as VerseGroup[],
   worker: null as Worker | null,
@@ -497,6 +521,7 @@ function buildDebugBundle() {
     createdAt: new Date().toISOString(),
     pageUrl: location.href,
     userAgent: navigator.userAgent,
+    engine: ENGINE,
     modelReady: state.modelReady,
     isActive: state.isActive,
     streamingConfig: state.streamingConfig,
@@ -661,7 +686,7 @@ function summarizeDebugEvent(event: DebugMessage): { label: string; chips: HTMLE
 }
 
 function renderDebugPanel(): void {
-  $debugSummary.textContent = `${state.debugEvents.length} events`;
+  $debugSummary.textContent = `${ENGINE_LABEL} · ${state.debugEvents.length} events`;
   if (!$debugPanel.open) return;
 
   $debugContent.textContent = "";
@@ -806,7 +831,7 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
     $modelStatus.textContent = "Error";
     console.error("Worker reported error:", msg.message);
   } else if (msg.type === "ready") {
-    $modelStatus.textContent = "Model ready";
+    $modelStatus.textContent = ENGINE === "zipformer" ? "Zipformer ready" : "Model ready";
     $modelStatus.classList.add("ready");
     state.modelReady = true;
     $loadingStatus.hidden = true;
@@ -955,11 +980,13 @@ function initializeModel(): void {
   $introScreen.hidden = true;
   $loadingStatus.hidden = false;
   $debugPanel.hidden = !DEBUG_VIEW_ENABLED;
-  $modelStatus.textContent = "Loading model...";
+  $modelStatus.textContent = ENGINE === "zipformer" ? "Loading Zipformer..." : "Loading model...";
   $loadingDetail.textContent = "Starting download";
 
   const worker = new Worker(
-    new URL("./worker/inference.ts", import.meta.url),
+    ENGINE === "zipformer"
+      ? new URL("./worker/zipformer-backend.ts", import.meta.url)
+      : new URL("./worker/inference.ts", import.meta.url),
     { type: "module" },
   );
   state.worker = worker;
@@ -1026,6 +1053,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $btnStop.addEventListener("click", () => {
     stopAudio();
+    if (ENGINE === "zipformer") {
+      state.worker?.postMessage({ type: "stop" });
+    }
     $recordingState.hidden = true;
     $listeningStatus.hidden = true;
     $postRecording.hidden = false;
