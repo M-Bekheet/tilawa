@@ -375,6 +375,7 @@ def icefall_train_flags(
     base_lr: float = DEFAULT_BASE_LR,
     max_duration: int = 1200,
     sources: str = DEFAULT_TRAIN_SOURCES,
+    source_weights: str = "",
     limit_cuts: int = 0,
     smoke: bool = False,
     init_from: str = DEFAULT_INIT_FROM,
@@ -415,6 +416,8 @@ def icefall_train_flags(
         "/vol/manifests",
         "--sources",
         sources,
+        "--source-weights",
+        source_weights,
         "--limit-cuts",
         str(limit_cuts),
         *arch_train_flags(),
@@ -425,6 +428,59 @@ def parse_source_list(sources: str | Sequence[str]) -> list[str]:
     if isinstance(sources, str):
         return [s.strip() for s in sources.split(",") if s.strip()]
     return [str(s).strip() for s in sources if str(s).strip()]
+
+
+def parse_source_weights(spec: str) -> dict[str, float]:
+    """Parse ``a=1.5,b=2`` into ``{a: 1.5, b: 2.0}``. Empty → ``{}``.
+
+    Factors multiply that source's hours-weight in ``CutSet.mux`` (default 1.0).
+    """
+    text = str(spec or "").strip()
+    if not text:
+        return {}
+    out: dict[str, float] = {}
+    for part in text.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        name, sep, raw = token.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError(
+                "source-weights must be comma-separated source=factor "
+                f"(e.g. everyayah_multi=2.5,a=1.5), got {spec!r}"
+            )
+        try:
+            factor = float(raw.strip())
+        except ValueError as exc:
+            raise ValueError(
+                f"source-weights factor for {name!r} is not a float: {raw!r}"
+            ) from exc
+        if factor < 0:
+            raise ValueError(
+                f"source-weights factor for {name!r} must be >= 0, got {factor}"
+            )
+        if name in out:
+            raise ValueError(f"duplicate source-weights key: {name!r}")
+        out[name] = factor
+    return out
+
+
+def scale_mux_weights(
+    hours: Sequence[float],
+    sources: Sequence[str],
+    overrides: dict[str, float] | None = None,
+) -> list[float]:
+    """``hours[i] * overrides.get(sources[i], 1.0)`` for ``CutSet.mux``."""
+    if len(hours) != len(sources):
+        raise ValueError(
+            f"hours/sources length mismatch: {len(hours)} vs {len(sources)}"
+        )
+    factors = overrides or {}
+    return [
+        float(h) * float(factors.get(str(src), 1.0))
+        for h, src in zip(hours, sources)
+    ]
 
 
 def fbank_cuts_name(source: str) -> str:

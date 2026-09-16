@@ -32,10 +32,12 @@ from zipformer_ctc_utils import (  # noqa: E402
     io_json_from_session,
     json_plain,
     missing_fbank_sources,
+    parse_source_weights,
     permute_ctc_head,
     ref_to_icefall_ids,
     remap_quranlab_key,
     resolve_train_sources,
+    scale_mux_weights,
     write_icefall_tokens,
     interpolate_state_dicts,
     parse_export_interp,
@@ -163,6 +165,46 @@ def test_icefall_train_flags_init_from_chunk_lr():
     assert ddp[ddp.index("--world-size") + 1] == "4"
     assert "torch.cuda.device_count" in train_py
     assert 'env={"ZIPFORMER_GPU": _GPU_SPEC}' in train_py
+
+
+def test_parse_source_weights_and_mux_scale():
+    assert parse_source_weights("") == {}
+    assert parse_source_weights("   ") == {}
+    assert parse_source_weights("everyayah_multi=2.5") == {"everyayah_multi": 2.5}
+    assert parse_source_weights("a=1.5,b=2") == {"a": 1.5, "b": 2.0}
+    assert parse_source_weights(" a = 1.5 , b=2 ") == {"a": 1.5, "b": 2.0}
+    hours = [358.0, 179.4, 747.2]
+    srcs = ["everyayah", "everyayah_multi", "qua"]
+    scaled = scale_mux_weights(
+        hours, srcs, parse_source_weights("everyayah_multi=2.5")
+    )
+    assert scaled == pytest.approx([358.0, 448.5, 747.2])
+    # ~25% of the mux mass (hours × override), vs ~11% unweighted.
+    assert scaled[1] / sum(scaled) == pytest.approx(448.5 / (358.0 + 448.5 + 747.2))
+    assert scale_mux_weights(hours, srcs, {}) == hours
+    unknown = scale_mux_weights(hours, srcs, {"not_in_mix": 9.0})
+    assert unknown == hours
+    with pytest.raises(ValueError, match="source=factor"):
+        parse_source_weights("noequals")
+    with pytest.raises(ValueError, match="not a float"):
+        parse_source_weights("a=xyz")
+    with pytest.raises(ValueError, match=">= 0"):
+        parse_source_weights("a=-1")
+    with pytest.raises(ValueError, match="duplicate"):
+        parse_source_weights("a=1,a=2")
+    with pytest.raises(ValueError, match="length mismatch"):
+        scale_mux_weights([1.0], ["a", "b"], {})
+    flags = icefall_train_flags(source_weights="everyayah_multi=2.5")
+    assert flags[flags.index("--source-weights") + 1] == "everyayah_multi=2.5"
+    default_flags = icefall_train_flags()
+    assert default_flags[default_flags.index("--source-weights") + 1] == ""
+    train_py = (ROOT / "scripts" / "train_zipformer_ctc_modal.py").read_text()
+    data_py = (ROOT / "scripts" / "zipformer_asr_datamodule.py").read_text()
+    assert train_py.count("source_weights: str = \"\"") == 2
+    assert "source_weights=source_weights" in train_py
+    assert "--source-weights" in data_py
+    assert "scale_mux_weights" in data_py
+    assert "parse_source_weights" in data_py
 
 
 def test_compute_T_hop_reference_chunk_24():

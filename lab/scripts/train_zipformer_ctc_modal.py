@@ -1001,6 +1001,7 @@ def train(
     num_epochs: int = DEFAULT_NUM_EPOCHS,
     max_duration: int = 1200,
     sources: str = DEFAULT_TRAIN_SOURCES,
+    source_weights: str = "",
     smoke: bool = False,
     synthetic: bool = False,
     limit_cuts: int = 0,
@@ -1077,6 +1078,7 @@ def train(
             base_lr=base_lr,
             max_duration=max_duration,
             sources=sources,
+            source_weights=source_weights,
             limit_cuts=limit_cuts,
             smoke=smoke,
         ),
@@ -1089,7 +1091,10 @@ def train(
     env["ZIPFORMER_WARMUP_BATCHES"] = str(warmup_batches)
     print("train cmd:", " ".join(cmd))
     print(f"ZIPFORMER_INIT_FROM={env.get('ZIPFORMER_INIT_FROM', '')!r}")
-    print(f"ZIPFORMER_WARMUP_BATCHES={env['ZIPFORMER_WARMUP_BATCHES']} base_lr={base_lr}")
+    print(
+        f"ZIPFORMER_WARMUP_BATCHES={env['ZIPFORMER_WARMUP_BATCHES']} "
+        f"base_lr={base_lr} source_weights={source_weights!r}"
+    )
     subprocess.run(cmd, cwd=str(recipe), env=env, check=True)
     rows = _parse_metrics(exp_dir)
     elapsed = time.time() - t0
@@ -1102,6 +1107,7 @@ def train(
         "elapsed_s": elapsed,
         "synthetic": synthetic,
         "sources": sources,
+        "source_weights": source_weights,
         "init_from": init_from,
         "init_meta": init_meta,
         "base_lr": base_lr,
@@ -1200,6 +1206,7 @@ def main(
     num_epochs: int = DEFAULT_NUM_EPOCHS,
     max_duration: int = 1200,
     sources: str = DEFAULT_TRAIN_SOURCES,
+    source_weights: str = "",
     smoke: bool = False,
     synthetic: bool = False,
     export_only: bool = False,
@@ -1259,6 +1266,7 @@ def main(
         num_epochs=1 if smoke else num_epochs,
         max_duration=200 if smoke else max_duration,
         sources="everyayah" if smoke and not synthetic else sources,
+        source_weights="" if smoke else source_weights,
         smoke=smoke,
         synthetic=synthetic,
         limit_cuts=lc,

@@ -123,6 +123,13 @@ class LibriSpeechAsrDataModule:
             help="Comma-separated source keys to mux.",
         )
         group.add_argument(
+            "--source-weights",
+            type=str,
+            default="",
+            help="Comma-separated source=factor mux overrides (e.g. everyayah_multi=2.5). "
+            "Multiplies that source's hours-weight; default 1.0.",
+        )
+        group.add_argument(
             "--limit-cuts",
             type=int,
             default=0,
@@ -233,8 +240,11 @@ class LibriSpeechAsrDataModule:
     def _load_and_split(self) -> None:
         if self._train is not None:
             return
+        from zipformer_ctc_utils import parse_source_weights, scale_mux_weights
+
         sets: list[CutSet] = []
         hours: list[float] = []
+        loaded: list[str] = []
         for src in self._source_list():
             cs = self._load_source(src)
             if cs is None:
@@ -247,16 +257,29 @@ class LibriSpeechAsrDataModule:
                 continue
             sets.append(cs)
             hours.append(dur / 3600.0)
+            loaded.append(src)
             logging.info("source %s: %.2f h", src, hours[-1])
         if not sets:
             raise FileNotFoundError(
                 f"no fbank cut manifests in {self.args.manifest_dir} "
                 f"for sources {self._source_list()}"
             )
+        overrides = parse_source_weights(
+            getattr(self.args, "source_weights", "") or ""
+        )
+        weights = scale_mux_weights(hours, loaded, overrides)
+        for src, h, w in zip(loaded, hours, weights):
+            logging.info(
+                "mux %s: %.2f h × %.4g = %.2f",
+                src,
+                h,
+                overrides.get(src, 1.0),
+                w,
+            )
         if len(sets) == 1:
             cuts = sets[0]
         else:
-            cuts = CutSet.mux(*sets, weights=hours)
+            cuts = CutSet.mux(*sets, weights=weights)
         limit = int(getattr(self.args, "limit_cuts", 0) or 0)
         if limit > 0:
             cuts = _cap_or_repeat(cuts, limit)
