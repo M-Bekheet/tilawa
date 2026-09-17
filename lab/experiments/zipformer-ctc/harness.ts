@@ -45,8 +45,8 @@ function configFromEnv(): EngineConfig {
 
 const CONFIG = configFromEnv();
 
-const MODEL = process.env.ZIPFORMER_MODEL ?? path.join(ROOT, "data", "zipformer", "quran_phoneme_zipformer.onnx");
-const CORPUS = process.env.ZIPFORMER_CORPUS ?? path.join(ROOT, "data", "zipformer", "quran.json");
+const MODEL = process.env.ZIPFORMER_MODEL ?? path.join(ROOT, "data", "zipformer", "zipformer_interp_gentle_a05.int8.onnx");
+const CORPUS = process.env.ZIPFORMER_CORPUS ?? path.join(ROOT, "data", "zipformer", "zipformer_quran.json");
 const ORT_DIR = process.env.ZIPFORMER_ORT_DIR ?? path.join(FRONTEND, "node_modules");
 const IO_PATH =
   process.env.ZIPFORMER_IO ??

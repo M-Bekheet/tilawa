@@ -47,7 +47,7 @@ def test_ensure_assets_skips_default_download(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("ZIPFORMER_MODEL", str(model))
     monkeypatch.setattr(run, "CORPUS_PATH", corpus)
     monkeypatch.setattr(run, "ORT_DIR", tmp_path / "node_modules")
-    monkeypatch.setattr(run, "MODEL_PATH", tmp_path / "missing" / "quran_phoneme_zipformer.onnx")
+    monkeypatch.setattr(run, "MODEL_PATH", tmp_path / "missing" / "zipformer_interp_gentle_a05.int8.onnx")
 
     def _boom(*_a, **_k):
         raise AssertionError("must not download when ZIPFORMER_MODEL exists")

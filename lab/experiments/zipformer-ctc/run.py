@@ -2,9 +2,9 @@
 
 Pipeline (web/frontend/src/lib/recitation + ZipformerHost):
   16 kHz PCM -> Kaldi fbank (80 mel) -> streaming Zipformer2-CTC ONNX (251
-  tajweed-phoneme tokens; default is Quran-Lab zipformer_p_arabic_v3.1.int8 or
-  the shipped interp-gentle blend) -> greedy CTC -> whole-Quran 5-gram search
-  + per-surah online DP tracker -> per-word verdicts.
+  tajweed-phoneme tokens; default is shipped interp-gentle-a0.5 int8)
+  -> greedy CTC -> whole-Quran 5-gram search + per-surah online DP tracker
+  -> per-word verdicts.
 
 This file only: decodes audio with shared.audio, ships raw float32 to a
 long-lived `tsx harness.ts` over stdin/stdout, and turns the harness's
@@ -12,8 +12,10 @@ per-ayah verdict tallies into {surah, ayah, ayah_end}.
 
 Registered as `zipformer-ctc`.
 
-Model + corpus are fetched on first use into data/zipformer/ (env override:
-ZIPFORMER_DATA_DIR) unless ZIPFORMER_MODEL already points at an existing file.
+Model + corpus are fetched on first use into data/zipformer/ from GitHub
+release yazinsai/tilawa v0.3.0 (env override: ZIPFORMER_DATA_DIR) unless
+ZIPFORMER_MODEL already points at an existing file. I/O manifest is
+experiments/zipformer-ctc/zipformer-io.json.
 """
 
 from __future__ import annotations
@@ -35,15 +37,17 @@ from shared.audio import load_audio  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("ZIPFORMER_DATA_DIR", PROJECT_ROOT / "data" / "zipformer"))
-MODEL_PATH = DATA_DIR / "quran_phoneme_zipformer.onnx"
-CORPUS_PATH = DATA_DIR / "quran.json"
+MODEL_NAME = "zipformer_interp_gentle_a05.int8.onnx"
+CORPUS_NAME = "zipformer_quran.json"
+MODEL_PATH = DATA_DIR / MODEL_NAME
+CORPUS_PATH = DATA_DIR / CORPUS_NAME
 ORT_DIR = Path(
     os.environ.get("ZIPFORMER_ORT_DIR", PROJECT_ROOT / "web" / "frontend" / "node_modules")
 )
 
-SITE = "https://prompter.alketab.app"
-MODEL_URL = f"{SITE}/models/quran_phoneme_zipformer.onnx?v=31755836"
-CORPUS_URL = f"{SITE}/data/quran.json?v=24360c05"
+RELEASE = "https://github.com/yazinsai/tilawa/releases/download/v0.3.0"
+MODEL_URL = f"{RELEASE}/{MODEL_NAME}"
+CORPUS_URL = f"{RELEASE}/{CORPUS_NAME}"
 
 _proc: subprocess.Popen | None = None
 _req_id = 0
@@ -332,7 +336,7 @@ def model_size() -> int:
     try:
         return p.stat().st_size
     except OSError:
-        return 72_705_392
+        return 69_245_985
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ generated from the original engine before its removal at `e172b79`.
 | Stage | Implementation |
 |---|---|
 | Features | Kaldi-style fbank in TS: 25 ms / 10 ms, 80 mel, pre-emphasis 0.97, povey window, 512 FFT (`web/frontend/src/lib/recitation/fbank.ts`) |
-| Acoustic model | **Streaming Zipformer2-CTC** (k2/icefall export), int8 ONNX, window T=61 / hop 48. Default fetch is Quran-Lab `zipformer_p_arabic_v3.1.int8.onnx` (NPL-1.2). The shipped demo uses `interp-gentle-a0.5`. See EXPERIMENTS.md. |
+| Acoustic model | **Streaming Zipformer2-CTC** (k2/icefall export), int8 ONNX, window T=61 / hop 48. Default fetch is shipped `interp-gentle-a0.5` int8 from GitHub release `yazinsai/tilawa` v0.3.0 (NPL-1.2). See EXPERIMENTS.md. |
 | Vocab | 251 tokens: Arabic letters *with* harakat, shadda-as-doubling, madd-length-as-repetition + `<blank>` (`tokens.txt`) |
 | Decode | Greedy CTC with per-token margin = p(top1) − p(top2) |
 | Corpus | `quran.json` v2: every word as `[mushaf glyphs, phoneme string, plain text]` |
@@ -47,7 +47,9 @@ Env knobs: `ZIPFORMER_MODE=recognize|stay`, `ZIPFORMER_CHUNK`,
 - Node ≥ 22, `tsx` and `onnxruntime-node` (uses `web/frontend/node_modules`;
   override with `ZIPFORMER_ORT_DIR`).
 - Model + corpus are downloaded on first use into `data/zipformer/`
-  (gitignored) unless `ZIPFORMER_MODEL` already points at an existing file.
+  (`zipformer_interp_gentle_a05.int8.onnx`, `zipformer_quran.json` from
+  release v0.3.0) unless `ZIPFORMER_MODEL` already points at an existing file.
+  I/O manifest is committed at `zipformer-io.json`.
 
 ```bash
 .venv/bin/python -m benchmark.runner --experiment zipformer-ctc
