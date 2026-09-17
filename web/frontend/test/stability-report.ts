@@ -31,7 +31,7 @@ import { RecitationTracker } from "../src/lib/tracker.ts";
 import type { TranscribeResult, BeamVerseMatch } from "../src/lib/tracker.ts";
 import type { VerseCandidate, WorkerOutbound } from "../src/lib/types.ts";
 import { displayQuranFromRaw, ZipformerHost } from "../src/worker/zipformer-session.ts";
-import type { ZipformerIo } from "../src/vendor/alketab-engine/browser/zipformerRunner.js";
+import type { ZipformerIo } from "../src/lib/recitation/index.ts";
 import { createSession, runInference } from "./session-node.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
