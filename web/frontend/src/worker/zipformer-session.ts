@@ -39,7 +39,7 @@ const TAIL_SECONDS = 2.0;
 export const ZIPFORMER_CACHE_KEY = "zipformer-interp-gentle-a05-int8";
 export const ZIPFORMER_MODEL_URL = "/models/zipformer_interp_gentle_a05.int8.onnx";
 export const ZIPFORMER_IO_URL = "/models/zipformer_interp_gentle_a05.io.json";
-export const PROMPTER_QURAN_URL = "/prompter_quran.json";
+export const ZIPFORMER_QURAN_URL = "/zipformer_quran.json";
 export const DISPLAY_QURAN_URL = "/quran.json";
 
 interface EncodedAyah {

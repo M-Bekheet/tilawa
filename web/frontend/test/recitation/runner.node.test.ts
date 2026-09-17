@@ -18,7 +18,7 @@ const PY = "/Users/rock/ai/projects/offline-tarteel/.venv/bin/python";
 const CLIP = "/Users/rock/ai/projects/offline-tarteel/benchmark/test_corpus/001002.mp3";
 const MODEL = resolve(FRONTEND, "public/models/zipformer_interp_gentle_a05.int8.onnx");
 const IO_PATH = resolve(FRONTEND, "public/models/zipformer_interp_gentle_a05.io.json");
-const ORT_DIR = process.env.PROMPTER_ORT_DIR ?? resolve(FRONTEND, "node_modules");
+const ORT_DIR = process.env.ZIPFORMER_ORT_DIR ?? resolve(FRONTEND, "node_modules");
 const CHUNK = 7680;
 const TAIL_SECONDS = 2.0;
 

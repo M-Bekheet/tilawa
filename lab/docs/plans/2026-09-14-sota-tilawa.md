@@ -53,7 +53,7 @@ From the site's published source maps and I/O manifest:
 | Features | Kaldi fbank: 25 ms / 10 ms, 80 mel, pre-emphasis 0.97, povey window, 512-FFT, no CMVN, dither off | `kaldiFbank.js` |
 | Model | icefall **streaming Zipformer2 CTC**, 6 stacks, layers `2,2,3,4,3,2`, dims `192,256,384,512,384,256`, downsampling `1,2,4,8,4,2`, conv kernels **`31,31,15,15,15,31`**, heads `4,4,4,8,4,4`, left-context 256 frames, window **T=61 / hop 48** (= 480 ms chunk), 16 cache tensors + `embed_states` + `processed_lens`. Reference ONNX is **int8**, 64.7M params. Cache last-dim = `kernel//2`. The plan's original "72.7 MB fp32" and "kernels `15,15,15,7,7,7`" were wrong (those kernels are icefall's librispeech *pruned* recipe). | ONNX `metadata_props` + `zipformer-io.json` (icefall `export-onnx-streaming-ctc.py` naming) |
 | Vocab | **251 tokens** = base letters, letter+haraka, doubled letter (shadda) + haraka, madd-length as repetition (`اا`…`اااااا`, `ۦۦۦۦ`, `ۥۥۥۥ`), sukun/qalqalah `ڇ`, ghunna `ۜ`, wasl `ٲ`, `<blank>` | `tokens.js` |
-| Targets | phoneme string per word for all 77k words (`quran.json` v2) — i.e. the G2P output is published, we do not need to write the rules | `data/prompter/quran.json` |
+| Targets | phoneme string per word for all 77k words (`quran.json` v2) — i.e. the G2P output is published, we do not need to write the rules | `data/zipformer/quran.json` |
 | Decoder | greedy CTC, per-token margin p1-p2 | `ctcDecoder.js` |
 | Matcher | 5-gram phoneme index + graded-cost semi-global alignment + per-surah DP tracker + verdicts | `engine/core/*` (vendored) |
 
@@ -176,7 +176,7 @@ windows:
 - Quantise: `onnxruntime.quantization.quantize_dynamic` int8 on MatMul (Zipformer
   is attention/FFN dominated; conv left fp32). Expect ~20 MB. Validate int8 vs
   fp32 on v3: <= 1 sample delta.
-- Evaluate with **the same tracker**: `PROMPTER_MODEL=<ours>.onnx .venv/bin/python -m benchmark.runner --experiment prompter-zipformer --corpus test_corpus_v3` (3 runs, median) plus the held-out `quranic-asr-benchmark` via a manifest under `benchmark/test_corpus_qlab/`.
+- Evaluate with **the same tracker**: `ZIPFORMER_MODEL=<ours>.onnx .venv/bin/python -m benchmark.runner --experiment zipformer-ctc --corpus test_corpus_v3` (3 runs, median) plus the held-out `quranic-asr-benchmark` via a manifest under `benchmark/test_corpus_qlab/`.
 - Per-sample diff vs reference (`benchmark/results/*.json` `per_sample`) is the
   review artefact for each run — record in `EXPERIMENTS.md` and the ledger.
 - Latency: `harness.mjs` `decodeMs` and a WASM run in the web worker on a

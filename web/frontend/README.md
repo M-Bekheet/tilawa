@@ -11,7 +11,7 @@ Assets are gitignored (ONNX + NPL-derived lexicon). `zipformer_interp_gentle_a05
 ```bash
 bash web/frontend/scripts/fetch-zipformer-assets.sh
 # copies from a local export / the main checkout public/ tree, else downloads
-# zipformer_interp_gentle_a05.int8.onnx and prompter_quran.json from
+# zipformer_interp_gentle_a05.int8.onnx and zipformer_quran.json from
 # GitHub release yazinsai/tilawa v0.3.0
 ```
 

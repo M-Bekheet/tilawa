@@ -99,7 +99,7 @@ def _client_file(rel: str) -> Path | None:
     """Resolve a Modal `add_local_file` source on the client.
 
     `data/...` is per-file via `resolve_data_file` (worktree `data/quran.json`
-    must not hide main-checkout `data/prompter/quran.json`). Everything else
+    must not hide main-checkout `data/zipformer/quran.json`). Everything else
     is repo-relative to this worktree.
     """
     posix = Path(rel).as_posix()
@@ -173,7 +173,7 @@ def _build_image() -> modal.Image:
         return img
     mounts = [
         ("shared/paths.py", "/app/shared/paths.py"),
-        ("shared/prompter_labels.py", "/app/shared/prompter_labels.py"),
+        ("shared/phoneme_labels.py", "/app/shared/phoneme_labels.py"),
         ("shared/fbank.py", "/app/shared/fbank.py"),
         ("scripts/zipformer_ctc_utils.py", "/app/zipformer_ctc_utils.py"),
         ("scripts/zipformer_asr_datamodule.py", "/app/zipformer_asr_datamodule.py"),
@@ -185,7 +185,7 @@ def _build_image() -> modal.Image:
             "experiments/zipformer-ctc/zipformer-io.json",
             "/app/zipformer-io.json",
         ),
-        ("data/prompter/quran.json", "/app/data/prompter/quran.json"),
+        ("data/zipformer/quran.json", "/app/data/zipformer/quran.json"),
     ]
     found = [(rel, remote, _client_file(rel)) for rel, remote in mounts]
     if any(src is not None for _, _, src in found):
@@ -213,7 +213,7 @@ _TRAIN_SP_OLD = '''    sp = spm.SentencePieceProcessor()
 _TRAIN_SP_NEW = '''    import sys as _sys
     _sys.path.insert(0, "/app")
     from zipformer_ctc_utils import IcefallPhonemeEncoder
-    from shared.prompter_labels import load_tokens as _load_tokens
+    from shared.phoneme_labels import load_tokens as _load_tokens
     sp = IcefallPhonemeEncoder(_load_tokens("/app/tokens.txt"))
     params.blank_id = 0
     params.sos_id = params.eos_id = 0
@@ -454,7 +454,7 @@ def _build_synthetic_cuts(n: int = 20) -> Path:
 
     sys.path.insert(0, "/app")
     from shared.fbank import LHOTSE_FBANK_CONFIG
-    from shared.prompter_labels import PhonemeCorpus
+    from shared.phoneme_labels import PhonemeCorpus
 
     audio_dir = Path("/vol/synthetic/audio")
     feat_dir = Path("/vol/fbank/synthetic")
@@ -463,7 +463,7 @@ def _build_synthetic_cuts(n: int = 20) -> Path:
     feat_dir.mkdir(parents=True, exist_ok=True)
     man_dir.mkdir(parents=True, exist_ok=True)
 
-    corpus = PhonemeCorpus("/app/data/prompter/quran.json")
+    corpus = PhonemeCorpus("/app/data/zipformer/quran.json")
     rng = np.random.default_rng(0)
     cuts = []
     ayahs = [(1, a) for a in range(1, 8)]
@@ -713,7 +713,7 @@ def _write_interpolated_checkpoint(
 
 def _write_tokens() -> Path:
     sys.path.insert(0, "/app")
-    from shared.prompter_labels import load_tokens
+    from shared.phoneme_labels import load_tokens
     from zipformer_ctc_utils import write_icefall_tokens
 
     path = Path("/vol/tokens_icefall.txt")

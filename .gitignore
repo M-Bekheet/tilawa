@@ -119,10 +119,10 @@ offline-tarteel-lab/
 offline-tarteel-sdk/
 
 # zipformer-ctc downloaded assets (auto-fetched by experiments/zipformer-ctc/run.py)
-data/prompter/
+data/zipformer/
 
 # Zipformer browser demo (NPL-derived lexicon; ONNX already covered by *.onnx)
-web/frontend/public/prompter_quran.json
+web/frontend/public/zipformer_quran.json
 
 # SDD scratch workspaces
 .superpowers/

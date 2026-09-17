@@ -3,7 +3,7 @@ import type { WorkerInbound, WorkerOutbound } from "../lib/types";
 import { loadModel } from "./model-cache";
 import {
   DISPLAY_QURAN_URL,
-  PROMPTER_QURAN_URL,
+  ZIPFORMER_QURAN_URL,
   ZIPFORMER_CACHE_KEY,
   ZIPFORMER_IO_URL,
   ZIPFORMER_MODEL_URL,
@@ -35,7 +35,7 @@ async function init(): Promise<void> {
     const quranDb = displayQuranFromRaw(quranRaw);
 
     post({ type: "loading_status", message: "Loading phoneme corpus..." });
-    const corpusJson = await fetchJson<unknown>(PROMPTER_QURAN_URL);
+    const corpusJson = await fetchJson<unknown>(ZIPFORMER_QURAN_URL);
 
     post({ type: "loading_status", message: "Downloading Zipformer model..." });
     const modelBuffer = await loadModel(

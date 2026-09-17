@@ -5,8 +5,8 @@ stdlib + onnx + numpy. Optional dump-io uses onnxruntime + zipformer_ctc_utils
 
 Usage:
   .venv/bin/python scripts/onnx_compare.py a.onnx b.onnx
-  .venv/bin/python scripts/onnx_compare.py --vendored data/prompter/quran_phoneme_zipformer.onnx \\
-      --candidates data/prompter/reference/v3.onnx data/prompter/reference/v3.1.onnx
+  .venv/bin/python scripts/onnx_compare.py --vendored data/zipformer/quran_phoneme_zipformer.onnx \\
+      --candidates data/zipformer/reference/v3.onnx data/zipformer/reference/v3.1.onnx
   .venv/bin/python scripts/onnx_compare.py dump-io model.onnx --out io.json
 """
 

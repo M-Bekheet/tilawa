@@ -27,8 +27,8 @@ _BLANK = "<blank>"
 
 
 def resolve_quran_json() -> Path:
-    """Locate prompter `quran.json`: TILAWA_PROMPTER_DATA, then per-file roots."""
-    env = os.environ.get("TILAWA_PROMPTER_DATA")
+    """Locate zipformer `quran.json`: TILAWA_ZIPFORMER_DATA, then per-file roots."""
+    env = os.environ.get("TILAWA_ZIPFORMER_DATA")
     if env:
         p = Path(env)
         if p.is_dir():
@@ -36,11 +36,11 @@ def resolve_quran_json() -> Path:
         if p.is_file():
             return p
     try:
-        return resolve_data_file("prompter/quran.json")
+        return resolve_data_file("zipformer/quran.json")
     except FileNotFoundError as e:
         raise FileNotFoundError(
-            "quran.json not found; set TILAWA_PROMPTER_DATA or place it at "
-            "data/prompter/quran.json"
+            "quran.json not found; set TILAWA_ZIPFORMER_DATA or place it at "
+            "data/zipformer/quran.json"
         ) from e
 
 
@@ -231,7 +231,7 @@ def _default_tokens_txt() -> Path:
     try:
         return resolve_quran_json().parent / "tokens.txt"
     except FileNotFoundError:
-        return REPO_ROOT / "data" / "prompter" / "tokens.txt"
+        return REPO_ROOT / "data" / "zipformer" / "tokens.txt"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -240,7 +240,7 @@ def main(argv: list[str] | None = None) -> None:
         "path",
         nargs="?",
         default=None,
-        help="tokens.txt output path (default: data/prompter/tokens.txt)",
+        help="tokens.txt output path (default: data/zipformer/tokens.txt)",
     )
     parser.add_argument(
         "--tokens",

@@ -31,8 +31,8 @@ RUN curl -fL -o dist/fastconformer_full_mixed.onnx \
 RUN mkdir -p dist/models \
  && curl -fL -o dist/models/zipformer_interp_gentle_a05.int8.onnx \
     https://github.com/yazinsai/tilawa/releases/download/v0.3.0/zipformer_interp_gentle_a05.int8.onnx \
- && curl -fL -o dist/prompter_quran.json \
-    https://github.com/yazinsai/tilawa/releases/download/v0.3.0/prompter_quran.json
+ && curl -fL -o dist/zipformer_quran.json \
+    https://github.com/yazinsai/tilawa/releases/download/v0.3.0/zipformer_quran.json
 
 # Create storage directory
 RUN mkdir -p /app/storage/reports

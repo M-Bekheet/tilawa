@@ -16,4 +16,4 @@ here as-is.
 ONNX PER on our qlab corpus is `per_onnx_wrapper.py` (does not import the
 above). Tables (`tokens.txt`, `quran_text2phoneme.json`,
 `ordered_quran_phonemes.json`) live in gitignored
-`data/prompter/reference/`.
+`data/zipformer/reference/`.

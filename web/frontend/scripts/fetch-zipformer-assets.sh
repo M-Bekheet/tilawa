@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copy interp-gentle-a0.5 int8 ONNX + I/O manifest + prompter phoneme corpus
+# Copy interp-gentle-a0.5 int8 ONNX + I/O manifest + zipformer phoneme corpus
 # into the Vite public/ tree. The ONNX and lexicon are gitignored (NPL-derived).
 # io.json is committed in-repo; this script only copies it when missing.
 set -euo pipefail
@@ -9,14 +9,14 @@ FRONTEND="$(cd "$HERE/.." && pwd)"
 DEST_MODELS="$FRONTEND/public/models"
 ONNX_NAME="zipformer_interp_gentle_a05.int8.onnx"
 IO_NAME="zipformer_interp_gentle_a05.io.json"
-CORPUS_NAME="prompter_quran.json"
+CORPUS_NAME="zipformer_quran.json"
 RELEASE_BASE="https://github.com/yazinsai/tilawa/releases/download/v0.3.0"
 
 SRC_DIR="${ZIPFORMER_EXPORT:-/tmp/zipformer-interp-gentle-a0.5/interp-gentle-a0.5}"
 MAIN_PUBLIC="/Users/rock/ai/projects/offline-tarteel/web/frontend/public"
-MAIN_CORPUS="/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json"
+MAIN_CORPUS="/Users/rock/ai/projects/offline-tarteel/data/zipformer/quran.json"
 REPO_ROOT="$(git -C "$FRONTEND" rev-parse --show-toplevel 2>/dev/null || echo "")"
-WORKTREE_CORPUS="${REPO_ROOT:+$REPO_ROOT/../../data/prompter/quran.json}"
+WORKTREE_CORPUS="${REPO_ROOT:+$REPO_ROOT/../../data/zipformer/quran.json}"
 
 mkdir -p "$DEST_MODELS"
 
@@ -40,7 +40,7 @@ resolve_io() {
 }
 
 resolve_corpus() {
-  for candidate in "$MAIN_CORPUS" ${WORKTREE_CORPUS:+"$WORKTREE_CORPUS"} "${PROMPTER_CORPUS:-}" "$MAIN_PUBLIC/$CORPUS_NAME"; do
+  for candidate in "$MAIN_CORPUS" ${WORKTREE_CORPUS:+"$WORKTREE_CORPUS"} "${ZIPFORMER_CORPUS:-}" "$MAIN_PUBLIC/$CORPUS_NAME"; do
     if [[ -n "$candidate" && -f "$candidate" ]]; then
       echo "$candidate"
       return

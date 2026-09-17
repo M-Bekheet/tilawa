@@ -28,14 +28,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
 const FRONTEND = path.resolve(ROOT, "web", "frontend");
 
-function camelToPrompterEnv(key: string): string {
-  return "PROMPTER_" + key.replace(/[A-Z]/g, (c) => "_" + c).toUpperCase();
+function camelToZipformerEnv(key: string): string {
+  return "ZIPFORMER_" + key.replace(/[A-Z]/g, (c) => "_" + c).toUpperCase();
 }
 
 function configFromEnv(): EngineConfig {
   const cfg: EngineConfig = { ...DEFAULT_CONFIG };
   for (const key of Object.keys(DEFAULT_CONFIG) as (keyof EngineConfig)[]) {
-    const raw = process.env[camelToPrompterEnv(key)];
+    const raw = process.env[camelToZipformerEnv(key)];
     if (raw == null || raw === "") continue;
     const n = Number(raw);
     (cfg as unknown as Record<string, number | string>)[key] = Number.isFinite(n) ? n : raw;
@@ -45,22 +45,22 @@ function configFromEnv(): EngineConfig {
 
 const CONFIG = configFromEnv();
 
-const MODEL = process.env.PROMPTER_MODEL ?? path.join(ROOT, "data", "prompter", "quran_phoneme_zipformer.onnx");
-const CORPUS = process.env.PROMPTER_CORPUS ?? path.join(ROOT, "data", "prompter", "quran.json");
-const ORT_DIR = process.env.PROMPTER_ORT_DIR ?? path.join(FRONTEND, "node_modules");
+const MODEL = process.env.ZIPFORMER_MODEL ?? path.join(ROOT, "data", "zipformer", "quran_phoneme_zipformer.onnx");
+const CORPUS = process.env.ZIPFORMER_CORPUS ?? path.join(ROOT, "data", "zipformer", "quran.json");
+const ORT_DIR = process.env.ZIPFORMER_ORT_DIR ?? path.join(FRONTEND, "node_modules");
 const IO_PATH =
-  process.env.PROMPTER_IO ??
+  process.env.ZIPFORMER_IO ??
   path.join(HERE, "zipformer-io.json");
 const DISPLAY_QURAN =
-  process.env.PROMPTER_DISPLAY_QURAN ?? path.join(FRONTEND, "public", "quran.json");
-const CHUNK = Number(process.env.PROMPTER_CHUNK ?? 7680);
-const TAIL_SECONDS = Number(process.env.PROMPTER_TAIL_SECONDS ?? 2.0);
-const MIN_FRAC = Number(process.env.PROMPTER_MIN_WORD_FRACTION ?? MIN_WORD_FRACTION);
-const ALLOW_GAPS = process.env.PROMPTER_ALLOW_GAPS === "1";
-const GAP_MAX_WORDS = Number(process.env.PROMPTER_GAP_MAX_WORDS ?? 3);
-const MODE = process.env.PROMPTER_MODE ?? "recognize";
-const FALLBACK = process.env.PROMPTER_FALLBACK !== "0";
-const FALLBACK_MAX_DISTANCE = Number(process.env.PROMPTER_FALLBACK_MAX_DISTANCE ?? 0.5);
+  process.env.ZIPFORMER_DISPLAY_QURAN ?? path.join(FRONTEND, "public", "quran.json");
+const CHUNK = Number(process.env.ZIPFORMER_CHUNK ?? 7680);
+const TAIL_SECONDS = Number(process.env.ZIPFORMER_TAIL_SECONDS ?? 2.0);
+const MIN_FRAC = Number(process.env.ZIPFORMER_MIN_WORD_FRACTION ?? MIN_WORD_FRACTION);
+const ALLOW_GAPS = process.env.ZIPFORMER_ALLOW_GAPS === "1";
+const GAP_MAX_WORDS = Number(process.env.ZIPFORMER_GAP_MAX_WORDS ?? 3);
+const MODE = process.env.ZIPFORMER_MODE ?? "recognize";
+const FALLBACK = process.env.ZIPFORMER_FALLBACK !== "0";
+const FALLBACK_MAX_DISTANCE = Number(process.env.ZIPFORMER_FALLBACK_MAX_DISTANCE ?? 0.5);
 
 const require = createRequire(path.join(ORT_DIR, "/"));
 const ort = require("onnxruntime-node");

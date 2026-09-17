@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = Path("/Users/rock/ai/projects/offline-tarteel")
 PY = MAIN / ".venv" / "bin" / "python"
-REF = MAIN / "data" / "prompter" / "reference"
+REF = MAIN / "data" / "zipformer" / "reference"
 LEDGER = ROOT / "benchmark" / "results" / "qlab_v3_eval_ledger.json"
 SAVED_RE = re.compile(r"Results saved to (.+\.json)")
 
@@ -75,10 +75,10 @@ def already_done(ledger: dict, model: str, corpus: str, n: int) -> bool:
 def run_one(model_key: str, corpus: str) -> dict:
     model = MODELS[model_key]
     env = os.environ.copy()
-    env["PROMPTER_DATA_DIR"] = str(MAIN / "data" / "prompter")
-    env["PROMPTER_MODEL"] = str(model)
-    env["PROMPTER_CORPUS"] = str(MAIN / "data" / "prompter" / "quran.json")
-    env["PROMPTER_ORT_DIR"] = str(MAIN / "web" / "frontend" / "node_modules")
+    env["ZIPFORMER_DATA_DIR"] = str(MAIN / "data" / "zipformer")
+    env["ZIPFORMER_MODEL"] = str(model)
+    env["ZIPFORMER_CORPUS"] = str(MAIN / "data" / "zipformer" / "quran.json")
+    env["ZIPFORMER_ORT_DIR"] = str(MAIN / "web" / "frontend" / "node_modules")
     env["PYTHONUNBUFFERED"] = "1"
     cmd = [
         str(PY),

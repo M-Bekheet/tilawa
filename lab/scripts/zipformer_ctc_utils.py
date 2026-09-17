@@ -676,12 +676,12 @@ def io_inputs_match(ours: dict, ref: dict) -> bool:
 class IcefallPhonemeEncoder:
     """Duck-types SentencePieceProcessor.encode for icefall ``train.py``.
 
-    Wraps :class:`shared.prompter_labels.PhonemeTokenizer` (reference ids) and
+    Wraps :class:`shared.phoneme_labels.PhonemeTokenizer` (reference ids) and
     rotates to icefall ids so CTC blank is 0.
     """
 
     def __init__(self, ref_tokens: Sequence[str]):
-        from shared.prompter_labels import PhonemeTokenizer
+        from shared.phoneme_labels import PhonemeTokenizer
 
         self.ref_tokens = list(ref_tokens)
         self.icefall_tokens = icefall_token_list(ref_tokens)

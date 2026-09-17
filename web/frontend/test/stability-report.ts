@@ -588,14 +588,14 @@ function finishSampleRun(
 }
 
 async function loadZipformerHost(): Promise<ZipformerHost> {
-  const modelPath = process.env.PROMPTER_MODEL
+  const modelPath = process.env.ZIPFORMER_MODEL
     ?? resolve(ROOT, "public/models/zipformer_interp_gentle_a05.int8.onnx");
-  const ioPath = process.env.PROMPTER_IO
+  const ioPath = process.env.ZIPFORMER_IO
     ?? resolve(ROOT, "public/models/zipformer_interp_gentle_a05.io.json");
-  const corpusPath = process.env.PROMPTER_CORPUS
-    ?? resolve(ROOT, "public/prompter_quran.json");
+  const corpusPath = process.env.ZIPFORMER_CORPUS
+    ?? resolve(ROOT, "public/zipformer_quran.json");
   const quranPath = resolve(ROOT, "public/quran.json");
-  const ortDir = process.env.PROMPTER_ORT_DIR ?? resolve(ROOT, "node_modules");
+  const ortDir = process.env.ZIPFORMER_ORT_DIR ?? resolve(ROOT, "node_modules");
 
   for (const [path, hint] of [
     [modelPath, "Run: bash web/frontend/scripts/fetch-zipformer-assets.sh"],

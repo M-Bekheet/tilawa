@@ -64,7 +64,7 @@ EXPERIMENT_REGISTRY = {
     "zipformer-ctc": EXPERIMENTS_DIR / "zipformer-ctc" / "run.py",
 }
 
-# Historical name; same run.py. Only used when --experiment is this alias
+# Historical result names; same run.py. Only used when --experiment is this alias
 # so a full-suite run does not execute the experiment twice.
 EXPERIMENT_ALIASES = {
     "prompter-zipformer": "zipformer-ctc",

@@ -113,7 +113,7 @@ def test_load_tokens_txt_roundtrip():
     tokens = prep.load_token_inventory(TOKENS_TXT)
     assert len(tokens) == 251
     assert tokens[-1] == "<blank>"
-    from shared.prompter_labels import PhonemeTokenizer
+    from shared.phoneme_labels import PhonemeTokenizer
 
     tok = PhonemeTokenizer(tokens)
     ids = tok.encode(tokens[0])

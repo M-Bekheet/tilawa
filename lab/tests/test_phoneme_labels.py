@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from shared.prompter_labels import (  # noqa: E402
+from shared.phoneme_labels import (  # noqa: E402
     OOVError,
     PhonemeCorpus,
     PhonemeTokenizer,
@@ -27,7 +27,7 @@ from shared.paths import resolve_data_file  # noqa: E402
 
 
 def _find_quran_json() -> Path | None:
-    env = os.environ.get("TILAWA_PROMPTER_DATA")
+    env = os.environ.get("TILAWA_ZIPFORMER_DATA")
     if env:
         p = Path(env)
         if p.is_dir():
@@ -35,7 +35,7 @@ def _find_quran_json() -> Path | None:
         if p.is_file():
             return p
     try:
-        return resolve_data_file("prompter/quran.json")
+        return resolve_data_file("zipformer/quran.json")
     except FileNotFoundError:
         return None
 
@@ -127,7 +127,7 @@ def test_target_for_clip_with_basmala(corpus: PhonemeCorpus, tokenizer: PhonemeT
 
 @skip_no_quran
 def test_zero_oov_whole_corpus(corpus: PhonemeCorpus, tokenizer: PhonemeTokenizer):
-    from shared.prompter_labels import oov_report
+    from shared.phoneme_labels import oov_report
 
     report = oov_report(corpus, tokenizer)
     # Plan asserts zero OOV across all ~77k words. If this fails, do not

@@ -2,8 +2,7 @@
 
 Benchmark wrapper over the native MIT recitation engine
 (`web/frontend/src/lib/recitation/`) plus Quran-Lab Zipformer2-CTC ONNX.
-Registered as `zipformer-ctc`; `prompter-zipformer` is a runner alias so
-historical result JSONs stay comparable.
+Registered as `zipformer-ctc`.
 
 This directory used to vendor the recovered alketab JS engine. That tree was
 removed; the host loop is now `ZipformerHost` / `zipformer-emission.ts` (same
@@ -34,21 +33,21 @@ streaming encoder, flushes the CTC run, and takes settled verdicts. An ayah
 is emitted when ≥ 50 % of its words are `ok`/`unsure` and `wrong` does not
 outnumber them.
 
-**Fallback (on by default, `PROMPTER_FALLBACK=0` to disable):** when no ayah
+**Fallback (on by default, `ZIPFORMER_FALLBACK=0` to disable):** when no ayah
 was emitted, the transcript is matched whole against all 6,236 ayah phoneme
 strings (`wholeAyahFallback`).
 
-Env knobs: `PROMPTER_MODE=recognize|stay`, `PROMPTER_CHUNK`,
-`PROMPTER_TAIL_SECONDS`, `PROMPTER_MIN_WORD_FRACTION`, `PROMPTER_ALLOW_GAPS`,
-`PROMPTER_FALLBACK_MAX_DISTANCE`, `PROMPTER_DATA_DIR`, `PROMPTER_ORT_DIR`,
-`PROMPTER_MODEL`, `PROMPTER_IO`, `PROMPTER_CORPUS`.
+Env knobs: `ZIPFORMER_MODE=recognize|stay`, `ZIPFORMER_CHUNK`,
+`ZIPFORMER_TAIL_SECONDS`, `ZIPFORMER_MIN_WORD_FRACTION`, `ZIPFORMER_ALLOW_GAPS`,
+`ZIPFORMER_FALLBACK_MAX_DISTANCE`, `ZIPFORMER_DATA_DIR`, `ZIPFORMER_ORT_DIR`,
+`ZIPFORMER_MODEL`, `ZIPFORMER_IO`, `ZIPFORMER_CORPUS`.
 
 ## Requirements
 
 - Node ≥ 22, `tsx` and `onnxruntime-node` (uses `web/frontend/node_modules`;
-  override with `PROMPTER_ORT_DIR`).
-- Model + corpus are downloaded on first use into `data/prompter/`
-  (gitignored) unless `PROMPTER_MODEL` already points at an existing file.
+  override with `ZIPFORMER_ORT_DIR`).
+- Model + corpus are downloaded on first use into `data/zipformer/`
+  (gitignored) unless `ZIPFORMER_MODEL` already points at an existing file.
 
 ```bash
 .venv/bin/python -m benchmark.runner --experiment zipformer-ctc

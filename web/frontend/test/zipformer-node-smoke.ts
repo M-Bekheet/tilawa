@@ -20,19 +20,19 @@ const WORKTREE = resolve(FRONTEND, "../..");
 const SAMPLE_RATE = 16000;
 
 const MODEL =
-  process.env.PROMPTER_MODEL ??
+  process.env.ZIPFORMER_MODEL ??
   resolve(FRONTEND, "public/models/zipformer_interp_gentle_a05.int8.onnx");
 const IO_PATH =
-  process.env.PROMPTER_IO ??
+  process.env.ZIPFORMER_IO ??
   resolve(FRONTEND, "public/models/zipformer_interp_gentle_a05.io.json");
 const CORPUS =
-  process.env.PROMPTER_CORPUS ??
-  resolve(FRONTEND, "public/prompter_quran.json");
+  process.env.ZIPFORMER_CORPUS ??
+  resolve(FRONTEND, "public/zipformer_quran.json");
 const QURAN = resolve(FRONTEND, "public/quran.json");
 const AUDIO =
   process.argv[2] ??
   resolve(WORKTREE, "benchmark/test_corpus/001002.mp3");
-const ORT_DIR = process.env.PROMPTER_ORT_DIR ?? resolve(FRONTEND, "node_modules");
+const ORT_DIR = process.env.ZIPFORMER_ORT_DIR ?? resolve(FRONTEND, "node_modules");
 
 function loadAudio(filePath: string): Float32Array {
   const buf = execSync(

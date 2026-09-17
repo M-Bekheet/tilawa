@@ -17,7 +17,7 @@ NODE = shutil.which("node")
 ROOT = Path(__file__).resolve().parent.parent
 DUMP = ROOT / "experiments" / "zipformer-ctc" / "fbank_dump.ts"
 _ORT = Path(os.environ.get(
-    "PROMPTER_ORT_DIR",
+    "ZIPFORMER_ORT_DIR",
     ROOT / "web" / "frontend" / "node_modules",
 ))
 TSX = _ORT / ".bin" / "tsx"

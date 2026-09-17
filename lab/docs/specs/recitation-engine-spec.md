@@ -4,7 +4,7 @@ Implementation-independent description of what the offline Quran recitation engi
 
 **Acoustic model under test:** `interp-gentle-a0.5` int8 Zipformer2-CTC  
 (`web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx`).  
-**Corpus:** `quran.json` v2 (`data/prompter/quran.json`).  
+**Corpus:** `quran.json` v2 (`data/zipformer/quran.json`).  
 **Acceptance bar (already measured on the reference stack):**
 
 | Corpus | Correct |
@@ -562,7 +562,7 @@ Otherwise search the remainder. Then, for each hit: if it is **1:2 word ≤ 3** 
 | growing istiʿādha 16 chars | no | growing gate |
 | Fatiha multi [:100] | **yes** | 1:1 distance 0, rival 27:30 at 0.355 (gap ≥ 0.1), aligned ≥ 20 |
 
-This is why the host needs a whole-ayah fallback for short clips. The engine is a **prompter**: it refuses to lock on an ambiguous 1:2.
+This is why the host needs a whole-ayah fallback for short clips. The engine is a **reference engine**: it refuses to lock on an ambiguous 1:2.
 
 ---
 
@@ -879,7 +879,7 @@ Emit gated ayahs in `firstSeen` order, once.
 
 Confidence of an ayah = `(ok+unsure)/words`. Sequence confidence = mean of gated ayah confidences.
 
-### `PROMPTER_ALLOW_GAPS` (harness; default **off**)
+### `ZIPFORMER_ALLOW_GAPS` (harness; default **off**)
 
 If env `= "1"`, also emit a below-threshold ayah of `words ≤ 3` when:
 
@@ -887,7 +887,7 @@ If env `= "1"`, also emit a below-threshold ayah of `words ≤ 3` when:
 - `ok+unsure ≥ 1` and `wrong ≤ ok+unsure`
 - **both** `surah:ayah-1` **and** `surah:ayah+1` are already in the emitted set (bridge, not a prefix fill)
 
-### Whole-ayah fallback (on by default; `PROMPTER_FALLBACK=0` disables)
+### Whole-ayah fallback (on by default; `ZIPFORMER_FALLBACK=0` disables)
 
 Runs only if **no** ayah passed the gate.
 

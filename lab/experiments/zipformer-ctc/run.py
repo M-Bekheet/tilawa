@@ -10,12 +10,10 @@ This file only: decodes audio with shared.audio, ships raw float32 to a
 long-lived `tsx harness.ts` over stdin/stdout, and turns the harness's
 per-ayah verdict tallies into {surah, ayah, ayah_end}.
 
-Registered as `zipformer-ctc`; `prompter-zipformer` is a runner alias so
-historical result JSONs stay comparable. benchmark_name() stays
-`prompter-zipformer` for that reason.
+Registered as `zipformer-ctc`.
 
-Model + corpus are fetched on first use into data/prompter/ (env override:
-PROMPTER_DATA_DIR) unless PROMPTER_MODEL already points at an existing file.
+Model + corpus are fetched on first use into data/zipformer/ (env override:
+ZIPFORMER_DATA_DIR) unless ZIPFORMER_MODEL already points at an existing file.
 """
 
 from __future__ import annotations
@@ -36,11 +34,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from shared.audio import load_audio  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("PROMPTER_DATA_DIR", PROJECT_ROOT / "data" / "prompter"))
+DATA_DIR = Path(os.environ.get("ZIPFORMER_DATA_DIR", PROJECT_ROOT / "data" / "zipformer"))
 MODEL_PATH = DATA_DIR / "quran_phoneme_zipformer.onnx"
 CORPUS_PATH = DATA_DIR / "quran.json"
 ORT_DIR = Path(
-    os.environ.get("PROMPTER_ORT_DIR", PROJECT_ROOT / "web" / "frontend" / "node_modules")
+    os.environ.get("ZIPFORMER_ORT_DIR", PROJECT_ROOT / "web" / "frontend" / "node_modules")
 )
 
 SITE = "https://prompter.alketab.app"
@@ -53,15 +51,15 @@ _model_sha_cache: dict[str, str] = {}
 
 
 def resolved_model_path() -> Path:
-    override = os.environ.get("PROMPTER_MODEL")
+    override = os.environ.get("ZIPFORMER_MODEL")
     if override:
         return Path(override)
     return MODEL_PATH
 
 
-def benchmark_name(base: str = "prompter-zipformer") -> str:
-    """Result JSON `name`; suffix only when PROMPTER_MODEL is set."""
-    override = os.environ.get("PROMPTER_MODEL")
+def benchmark_name(base: str = "zipformer-ctc") -> str:
+    """Result JSON `name`; suffix only when ZIPFORMER_MODEL is set."""
+    override = os.environ.get("ZIPFORMER_MODEL")
     if override:
         return f"{base}[{Path(override).name}]"
     return base
@@ -102,12 +100,12 @@ def _fetch(url: str, dest: Path) -> None:
 
 
 def _ensure_assets() -> None:
-    override = os.environ.get("PROMPTER_MODEL")
+    override = os.environ.get("ZIPFORMER_MODEL")
     if override:
         model = Path(override)
         if not model.is_file():
             raise FileNotFoundError(
-                f"PROMPTER_MODEL={override!r} is not an existing file"
+                f"ZIPFORMER_MODEL={override!r} is not an existing file"
             )
     elif not MODEL_PATH.exists():
         _fetch(MODEL_URL, MODEL_PATH)
@@ -116,7 +114,7 @@ def _ensure_assets() -> None:
     if not (ORT_DIR / "onnxruntime-node").exists():
         raise FileNotFoundError(
             f"onnxruntime-node not found under {ORT_DIR}; run `npm install` in web/frontend "
-            "or set PROMPTER_ORT_DIR"
+            "or set ZIPFORMER_ORT_DIR"
         )
 
 
@@ -126,14 +124,14 @@ def _ensure_proc() -> subprocess.Popen:
         return _proc
     _ensure_assets()
     env = dict(os.environ)
-    env.setdefault("PROMPTER_MODEL", str(MODEL_PATH))
-    env.setdefault("PROMPTER_CORPUS", str(CORPUS_PATH))
-    env.setdefault("PROMPTER_ORT_DIR", str(ORT_DIR))
-    env.setdefault("PROMPTER_GAP_MAX_WORDS", str(_gap_max_words()))
-    tsx = Path(env["PROMPTER_ORT_DIR"]) / ".bin" / "tsx"
+    env.setdefault("ZIPFORMER_MODEL", str(MODEL_PATH))
+    env.setdefault("ZIPFORMER_CORPUS", str(CORPUS_PATH))
+    env.setdefault("ZIPFORMER_ORT_DIR", str(ORT_DIR))
+    env.setdefault("ZIPFORMER_GAP_MAX_WORDS", str(_gap_max_words()))
+    tsx = Path(env["ZIPFORMER_ORT_DIR"]) / ".bin" / "tsx"
     if not tsx.is_file():
         raise FileNotFoundError(
-            f"tsx not found at {tsx}; set PROMPTER_ORT_DIR to web/frontend/node_modules"
+            f"tsx not found at {tsx}; set ZIPFORMER_ORT_DIR to web/frontend/node_modules"
         )
     _proc = subprocess.Popen(
         [str(tsx), str(HERE / "harness.ts")],
@@ -195,11 +193,11 @@ _ayah_words_cache: dict[tuple[int, int], int] | None = None
 
 
 def _allow_gaps() -> bool:
-    return os.environ.get("PROMPTER_ALLOW_GAPS") == "1"
+    return os.environ.get("ZIPFORMER_ALLOW_GAPS") == "1"
 
 
 def _gap_max_words() -> int:
-    raw = os.environ.get("PROMPTER_GAP_MAX_WORDS")
+    raw = os.environ.get("ZIPFORMER_GAP_MAX_WORDS")
     if raw not in (None, ""):
         return int(raw)
     if _HARNESS_GAP_MAX_WORDS is not None:
@@ -208,11 +206,11 @@ def _gap_max_words() -> int:
 
 
 def _ayah_word_count(surah: int, ayah: int) -> int:
-    """Word count from the prompter corpus; 99 (do not bridge) if unknown."""
+    """Word count from the zipformer corpus; 99 (do not bridge) if unknown."""
     global _ayah_words_cache
     if _ayah_words_cache is None:
         _ayah_words_cache = {}
-        path = Path(os.environ.get("PROMPTER_CORPUS", CORPUS_PATH))
+        path = Path(os.environ.get("ZIPFORMER_CORPUS", CORPUS_PATH))
         if path.is_file():
             data = json.loads(path.read_text(encoding="utf-8"))
             for s in data.get("surahs", []):
@@ -267,7 +265,7 @@ def _contiguous_head(
 ) -> tuple[int, int, int | None]:
     """First verse plus the longest run of consecutive ayahs in the same surah.
 
-    When allow_gaps (PROMPTER_ALLOW_GAPS=1), skip a single missing ayah of
+    When allow_gaps (ZIPFORMER_ALLOW_GAPS=1), skip a single missing ayah of
     ≤ gap-max words *only if that ayah is already in `verses`* (harness-bridged).
     Does not invent a hole from the corpus, and does not walk backward: [4, 5]
     stays start=4.

@@ -19,8 +19,8 @@ import type { CtcToken, EngineEvent } from "../../src/lib/recitation/types";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VECTORS = resolve(HERE, "../../../../docs/specs/vectors");
 const CORPUS_PATH =
-  process.env.PROMPTER_CORPUS ??
-  resolve(HERE, "../../public/prompter_quran.json");
+  process.env.ZIPFORMER_CORPUS ??
+  resolve(HERE, "../../public/zipformer_quran.json");
 
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;

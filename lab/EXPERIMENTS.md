@@ -252,9 +252,9 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 
 ## Zipformer2-CTC (Quran-Lab v3 reference + fine-tunes)
 
-**2026-09-14 owner decision:** the model we were replicating is public `Quran-Lab/zipformer_p-arabic-v3` (NPL-1.2, licence accepted that day). From-scratch Track A training is cancelled; evaluate the published checkpoints through our tracker, then fine-tune them (separate task). HF names are `zipformer_p_arabic_v3{,.1}{.onnx,.int8.onnx,.pt}` (not the short `v3.onnx` from the brief). Modal snapshot `ap-VfKhHbddvJEY8DbR36LckL` → volume `zipformer-ctc-training` `/vol/reference/`. Local copy (gitignored) `data/prompter/reference/`. `interp-gentle-a0.5` and any fine-tune of v3.1 are NPL-1.2 Derivatives (share-alike, non-commercial; they may not power a paid feature) — see [NOTICE.md](NOTICE.md).
+**2026-09-14 owner decision:** the model we were replicating is public `Quran-Lab/zipformer_p-arabic-v3` (NPL-1.2, licence accepted that day). From-scratch Track A training is cancelled; evaluate the published checkpoints through our tracker, then fine-tune them (separate task). HF names are `zipformer_p_arabic_v3{,.1}{.onnx,.int8.onnx,.pt}` (not the short `v3.onnx` from the brief). Modal snapshot `ap-VfKhHbddvJEY8DbR36LckL` → volume `zipformer-ctc-training` `/vol/reference/`. Local copy (gitignored) `data/zipformer/reference/`. `interp-gentle-a0.5` and any fine-tune of v3.1 are NPL-1.2 Derivatives (share-alike, non-commercial; they may not power a paid feature) — see [NOTICE.md](NOTICE.md).
 
-**Identity.** Alketab's vendored `quran_phoneme_zipformer.onnx` (72,705,392 B, site URL `?v=31755836`) is **byte- and param-identical** to `zipformer_p_arabic_v3.1.int8.onnx` (sha256 `31755836528da336…`). It is onnxruntime dynamic-int8 (`onnx.infer=onnxruntime.quant`, MatMul QInt8) of the v3.1 madd fine-tune, not v3 and not fp32. Closest non-identical: v3.1 fp32 shares all 555 unquantized initializer hashes (int8 adds 870 quant/scale/zp tensors). All four ONNX exports match default `zipformer-io.json` (T=61, hop=48, left_context 256, 99 in/99 out) — `PROMPTER_IO` not needed. `tokens.txt` has the same 251 ids; Quran-Lab puts `<blank> 250` on line 1, ours on the last line.
+**Identity.** Alketab's vendored `quran_phoneme_zipformer.onnx` (72,705,392 B, site URL `?v=31755836`) is **byte- and param-identical** to `zipformer_p_arabic_v3.1.int8.onnx` (sha256 `31755836528da336…`). It is onnxruntime dynamic-int8 (`onnx.infer=onnxruntime.quant`, MatMul QInt8) of the v3.1 madd fine-tune, not v3 and not fp32. Closest non-identical: v3.1 fp32 shares all 555 unquantized initializer hashes (int8 adds 870 quant/scale/zp tensors). All four ONNX exports match default `zipformer-io.json` (T=61, hop=48, left_context 256, 99 in/99 out) — `ZIPFORMER_IO` not needed. `tokens.txt` has the same 251 ids; Quran-Lab puts `<blank> 250` on line 1, ours on the last line.
 
 **Their card / export.** ~5,400 effective hours/epoch × 10 epochs; train chunk mix `1000:0.5,640:0.35,320:0.15` (chunk frames 8/16/24); export `chunk_size=max(mix)=24`, `left_context_frames=256`, opset 13, then `quantize_dynamic(..., QInt8, op_types=["MatMul"])`. Published PER on quranic-asr-benchmark v1.1: 1.43% held-out studio / 3.65% phone / 9.10% unseen reciter. `quran_per_eval.py` wants a JSONL of `{audio_filepath, text, source?}`, gold via `quran_text2phoneme.json`, and their private icefall `build_model` — it does not run here. Copies under `experiments/zipformer-ctc/reference_tools/`.
 
@@ -318,14 +318,14 @@ Reproduction:
 
 ```bash
 cd .worktrees/sota-tilawa
-PROMPTER_DATA_DIR=/Users/rock/ai/projects/offline-tarteel/data/prompter \
-PROMPTER_MODEL=/Users/rock/ai/projects/offline-tarteel/data/prompter/reference/zipformer_p_arabic_v3.1.onnx \
-PROMPTER_CORPUS=/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json \
-PROMPTER_ORT_DIR=/Users/rock/ai/projects/offline-tarteel/web/frontend/node_modules \
+ZIPFORMER_DATA_DIR=/Users/rock/ai/projects/offline-tarteel/data/zipformer \
+ZIPFORMER_MODEL=/Users/rock/ai/projects/offline-tarteel/data/zipformer/reference/zipformer_p_arabic_v3.1.onnx \
+ZIPFORMER_CORPUS=/Users/rock/ai/projects/offline-tarteel/data/zipformer/quran.json \
+ZIPFORMER_ORT_DIR=/Users/rock/ai/projects/offline-tarteel/web/frontend/node_modules \
 /Users/rock/ai/projects/offline-tarteel/.venv/bin/python -m benchmark.runner --experiment zipformer-ctc --corpus test_corpus_v3
 # full grid: .venv/bin/python experiments/zipformer-ctc/eval_reference_grid.py
 # fetch: modal run scripts/fetch_reference_zipformer_modal.py
-# identity: .venv/bin/python scripts/onnx_compare.py --vendored data/prompter/quran_phoneme_zipformer.onnx --candidates data/prompter/reference/zipformer_p_arabic_v3*.onnx
+# identity: .venv/bin/python scripts/onnx_compare.py --vendored data/zipformer/quran_phoneme_zipformer.onnx --candidates data/zipformer/reference/zipformer_p_arabic_v3*.onnx
 ```
 
 Raw JSON: `benchmark/results/2026-09-14_16*.json` / `_17*.json` / `_18*.json`; ledger `benchmark/results/qlab_v3_eval_ledger.json`; PER `benchmark/results/v31_fp32_qlab_per.json`.

@@ -202,7 +202,7 @@ def test_compute_T_hop_reference_chunk_24():
 
 def test_write_icefall_tokens_blk_first_roundtrip(tmp_path: Path):
     sys.path.insert(0, str(ROOT))
-    from shared.prompter_labels import load_tokens
+    from shared.phoneme_labels import load_tokens
 
     tokens = load_tokens(TOKENS_TXT)
     path = tmp_path / "tokens_icefall.txt"

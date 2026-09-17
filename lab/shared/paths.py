@@ -4,7 +4,7 @@ Order for each lookup: `TILAWA_DATA_ROOT` (data dir or repo root) →
 `<repo>/data` → the main local checkout's `data/`. `data_root()` picks the
 first of those that contains `quran.json`. Use `resolve_data_file(rel)` when
 the file you need may be missing from an earlier root (worktrees track
-`data/quran.json` but not `data/prompter/quran.json`).
+`data/quran.json` but not `data/zipformer/quran.json`).
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def resolve_data_file(rel: str | Path) -> Path:
 
 
 def data_root() -> Path:
-    """Directory that contains `quran.json` (and usually `prompter/`)."""
+    """Directory that contains `quran.json` (and usually `zipformer/`)."""
     try:
         return resolve_data_file("quran.json").parent
     except FileNotFoundError:

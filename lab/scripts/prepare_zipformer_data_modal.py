@@ -900,7 +900,7 @@ def local_quran_json() -> Path:
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_PROMPTER_QURAN = resolve_data_file("prompter/quran.json")
+_ZIPFORMER_QURAN = resolve_data_file("zipformer/quran.json")
 _QURAN_JSON = local_quran_json()
 _TOKENS_TXT = PROJECT_ROOT / "experiments" / "zipformer-ctc" / "tokens.txt"
 _SHARED = PROJECT_ROOT / "shared"
@@ -928,11 +928,11 @@ image = (
     .pip_install("lilcom", "kaldi-native-fbank")
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
     .add_local_file(str(_SHARED / "paths.py"), remote_path="/app/shared/paths.py")
-    .add_local_file(str(_SHARED / "prompter_labels.py"), remote_path="/app/shared/prompter_labels.py")
+    .add_local_file(str(_SHARED / "phoneme_labels.py"), remote_path="/app/shared/phoneme_labels.py")
     .add_local_file(str(_SHARED / "normalizer.py"), remote_path="/app/shared/normalizer.py")
     .add_local_file(str(_SHARED / "quran_db.py"), remote_path="/app/shared/quran_db.py")
     .add_local_file(str(_SHARED / "fbank.py"), remote_path="/app/shared/fbank.py")
-    .add_local_file(str(_PROMPTER_QURAN), remote_path="/app/data/prompter/quran.json")
+    .add_local_file(str(_ZIPFORMER_QURAN), remote_path="/app/data/zipformer/quran.json")
     .add_local_file(str(_QURAN_JSON), remote_path="/app/data/quran.json")
     .add_local_file(str(_TOKENS_TXT), remote_path="/app/tokens.txt")
     .add_local_file(
@@ -1013,10 +1013,10 @@ def _print_features(source: str, repo: str, features, splits) -> None:
 
 
 def _load_labelers():
-    from shared.prompter_labels import OOVError, PhonemeCorpus, PhonemeTokenizer
+    from shared.phoneme_labels import OOVError, PhonemeCorpus, PhonemeTokenizer
     from shared.quran_db import QuranDB
 
-    corpus = PhonemeCorpus("/app/data/prompter/quran.json")
+    corpus = PhonemeCorpus("/app/data/zipformer/quran.json")
     tokenizer = PhonemeTokenizer(load_token_inventory("/app/tokens.txt"))
     db = QuranDB(Path("/app/data/quran.json"))
     return corpus, tokenizer, db, OOVError

@@ -18,13 +18,13 @@ _SPEC.loader.exec_module(run)
 
 
 def test_benchmark_name_stable_by_default(monkeypatch):
-    monkeypatch.delenv("PROMPTER_MODEL", raising=False)
-    assert run.benchmark_name() == "prompter-zipformer"
+    monkeypatch.delenv("ZIPFORMER_MODEL", raising=False)
+    assert run.benchmark_name() == "zipformer-ctc"
 
 
-def test_benchmark_name_suffix_when_prompter_model_set(monkeypatch):
-    monkeypatch.setenv("PROMPTER_MODEL", "/tmp/ft-v31/model.onnx")
-    assert run.benchmark_name() == "prompter-zipformer[model.onnx]"
+def test_benchmark_name_suffix_when_zipformer_model_set(monkeypatch):
+    monkeypatch.setenv("ZIPFORMER_MODEL", "/tmp/ft-v31/model.onnx")
+    assert run.benchmark_name() == "zipformer-ctc[model.onnx]"
 
 
 def test_model_sha256_prefix_cached(tmp_path: Path):
@@ -44,24 +44,24 @@ def test_ensure_assets_skips_default_download(monkeypatch, tmp_path: Path):
     corpus.write_text("{}", encoding="utf-8")
     ort = tmp_path / "node_modules" / "onnxruntime-node"
     ort.mkdir(parents=True)
-    monkeypatch.setenv("PROMPTER_MODEL", str(model))
+    monkeypatch.setenv("ZIPFORMER_MODEL", str(model))
     monkeypatch.setattr(run, "CORPUS_PATH", corpus)
     monkeypatch.setattr(run, "ORT_DIR", tmp_path / "node_modules")
     monkeypatch.setattr(run, "MODEL_PATH", tmp_path / "missing" / "quran_phoneme_zipformer.onnx")
 
     def _boom(*_a, **_k):
-        raise AssertionError("must not download when PROMPTER_MODEL exists")
+        raise AssertionError("must not download when ZIPFORMER_MODEL exists")
 
     monkeypatch.setattr(run, "_fetch", _boom)
     run._ensure_assets()
 
 
 def test_allow_gaps_reads_env(monkeypatch):
-    monkeypatch.delenv("PROMPTER_ALLOW_GAPS", raising=False)
+    monkeypatch.delenv("ZIPFORMER_ALLOW_GAPS", raising=False)
     assert run._allow_gaps() is False
-    monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "1")
+    monkeypatch.setenv("ZIPFORMER_ALLOW_GAPS", "1")
     assert run._allow_gaps() is True
-    monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "0")
+    monkeypatch.setenv("ZIPFORMER_ALLOW_GAPS", "0")
     assert run._allow_gaps() is False
 
 
@@ -150,7 +150,7 @@ def test_contiguous_head_allow_gaps_does_not_skip_two_ayahs():
 
 
 def test_contiguous_head_allow_gaps_follows_env(monkeypatch):
-    monkeypatch.setenv("PROMPTER_ALLOW_GAPS", "1")
+    monkeypatch.setenv("ZIPFORMER_ALLOW_GAPS", "1")
     verses = [
         {"surah": 1, "ayah": 2},
         {"surah": 1, "ayah": 4},
@@ -185,22 +185,22 @@ def test_bridge_extras_requires_evidence():
 
 
 def test_gap_max_words_reads_env(monkeypatch):
-    monkeypatch.delenv("PROMPTER_GAP_MAX_WORDS", raising=False)
+    monkeypatch.delenv("ZIPFORMER_GAP_MAX_WORDS", raising=False)
     run._HARNESS_GAP_MAX_WORDS = None
     assert run._gap_max_words() == 3
-    monkeypatch.setenv("PROMPTER_GAP_MAX_WORDS", "2")
+    monkeypatch.setenv("ZIPFORMER_GAP_MAX_WORDS", "2")
     assert run._gap_max_words() == 2
 
 
-def test_ensure_proc_forwards_prompter_knobs(monkeypatch):
+def test_ensure_proc_forwards_zipformer_knobs(monkeypatch):
     knobs = {
-        "PROMPTER_MIN_WORD_FRACTION": "0.3",
-        "PROMPTER_ALLOW_GAPS": "1",
-        "PROMPTER_TAIL_SECONDS": "3.0",
-        "PROMPTER_OK_DISTANCE": "0.2",
-        "PROMPTER_UNSURE_DISTANCE": "0.5",
-        "PROMPTER_SEARCH_DECISIVE_DISTANCE": "0.45",
-        "PROMPTER_GAP_MAX_WORDS": "3",
+        "ZIPFORMER_MIN_WORD_FRACTION": "0.3",
+        "ZIPFORMER_ALLOW_GAPS": "1",
+        "ZIPFORMER_TAIL_SECONDS": "3.0",
+        "ZIPFORMER_OK_DISTANCE": "0.2",
+        "ZIPFORMER_UNSURE_DISTANCE": "0.5",
+        "ZIPFORMER_SEARCH_DECISIVE_DISTANCE": "0.45",
+        "ZIPFORMER_GAP_MAX_WORDS": "3",
     }
     for k, v in knobs.items():
         monkeypatch.setenv(k, v)

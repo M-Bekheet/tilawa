@@ -6,7 +6,7 @@ wrapper is the ONNX equivalent: kaldi fbank → cache-aware streaming Zipformer
 
 Usage:
   .venv/bin/python experiments/zipformer-ctc/reference_tools/per_onnx_wrapper.py \\
-      --model /Users/rock/ai/projects/offline-tarteel/data/prompter/reference/zipformer_p_arabic_v3.1.onnx
+      --model /Users/rock/ai/projects/offline-tarteel/data/zipformer/reference/zipformer_p_arabic_v3.1.onnx
 """
 
 from __future__ import annotations
@@ -28,12 +28,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from shared.audio import load_audio  # noqa: E402
 from shared.fbank import compute_fbank  # noqa: E402
-from shared.prompter_labels import PhonemeTokenizer, load_tokens  # noqa: E402
+from shared.phoneme_labels import PhonemeTokenizer, load_tokens  # noqa: E402
 from zipformer_ctc_utils import io_json_from_session  # noqa: E402
 
 BLANK = 250
 MAIN = Path("/Users/rock/ai/projects/offline-tarteel")
-REF_DIR = MAIN / "data" / "prompter" / "reference"
+REF_DIR = MAIN / "data" / "zipformer" / "reference"
 DEFAULT_IO = ROOT / "experiments" / "zipformer-ctc" / "zipformer-io.json"
 
 
