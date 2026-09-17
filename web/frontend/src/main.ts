@@ -1,10 +1,7 @@
-import "@fontsource/newsreader/400.css";
-import "@fontsource/newsreader/700.css";
-import "@fontsource/ibm-plex-sans/400.css";
-import "@fontsource/ibm-plex-sans/700.css";
 import "@fontsource/amiri/400.css";
 import "@fontsource/amiri/700.css";
 import "./style.css";
+import "./arabic-font.css";
 
 import { initSurahDropdown, openReportDialog } from "./report-dialog";
 
@@ -105,7 +102,7 @@ if ($engineStatus) $engineStatus.textContent = ENGINE_LABEL;
 const $loadingStatus = document.getElementById("loading-status")!;
 const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
-const $introScreen = document.getElementById("intro-screen")!;
+
 const $readyState = document.getElementById("ready-state")!;
 const $recordingState = document.getElementById("recording-state")!;
 const $postRecording = document.getElementById("post-recording")!;
@@ -123,6 +120,84 @@ const $debugCopy = document.getElementById("debug-copy") as HTMLButtonElement;
 const $debugCopyStatus = document.getElementById("debug-copy-status")!;
 const $waveform = document.getElementById("listening-waveform")!;
 const $waveformBars = Array.from($waveform.querySelectorAll<HTMLElement>(".waveform-bar"));
+
+type Language = "en" | "ar";
+let language: Language = "en";
+try { language = localStorage.getItem("tilawa-language") === "ar" ? "ar" : "en"; } catch { /* Storage may be unavailable. */ }
+const tr = (en: string, ar: string): string => language === "ar" ? ar : en;
+const $demoTitle = document.getElementById("demo-title")!;
+const $recordingActions = document.getElementById("recording-actions")!;
+const $retryDownload = document.getElementById("btn-retry-download")!;
+const $cancelDownload = document.getElementById("btn-cancel-download")!;
+let downloadPercent = 0;
+let setupFailed = false;
+let noMatchTimer: ReturnType<typeof setTimeout> | undefined;
+let audioAttempt = 0;
+let audioWorkletUrl: string | undefined;
+
+async function prepareAudioWorklet(): Promise<void> {
+  if (audioWorkletUrl) return;
+  const response = await fetch("/audio-processor.js");
+  if (!response.ok) throw new Error(`Audio setup failed: ${response.status}`);
+  audioWorkletUrl = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
+}
+
+function refreshLabels(): void {
+  $demoTitle.textContent = state.isActive
+    ? (state.hasFirstMatch ? tr("Verse found", "تمّ التعرّف على الآية") : tr("Listening", "نستمع لتلاوتك"))
+    : tr("Try Tilawa", "جرّب تلاوة");
+  $modelStatus.textContent = state.modelReady ? tr("Offline ready", "جاهز دون إنترنت")
+    : setupFailed ? tr("Download interrupted", "انقطع التنزيل")
+    : modelInitStarted ? (downloadPercent >= 100 ? tr("Preparing model…", "جارٍ تجهيز النموذج…") : `${downloadPercent}%`)
+    : tr("100% offline recognition", "تعرّف دون إنترنت بالكامل");
+  $modelStatus.classList.toggle("ready", state.modelReady);
+  if (modelInitStarted && !state.modelReady) {
+    $loadingDetail.textContent = setupFailed
+      ? tr("Check your connection and try again. You only need internet to get the model.", "تحقّق من الاتصال وحاول مجددًا. تحتاج إلى الإنترنت لتنزيل النموذج فقط.")
+      : downloadPercent >= 100 ? tr("Preparing model…", "جارٍ تجهيز النموذج…")
+      : `${tr("Downloading model", "جارٍ تنزيل النموذج")} — ${downloadPercent}%`;
+  }
+  for (const group of state.groups) {
+    const header = group.element.querySelector<HTMLElement>(".surah-header");
+    if (header) header.textContent = language === "ar" ? group.surahName : group.surahNameEn;
+    const meta = group.element.querySelector<HTMLElement>(".surah-meta");
+    if (meta) meta.textContent = tr(`Surah ${group.surah} · Ayah ${group.currentAyah}`, `سورة ${toArabicNum(group.surah)} · الآية ${toArabicNum(group.currentAyah)}`);
+  }
+  document.getElementById("recording-note")!.textContent = state.hasFirstMatch
+    ? tr("Following word by word · Offline", "نتابع تلاوتك كلمةً بكلمة · دون إنترنت")
+    : tr("Microphone on · Audio stays here", "الميكروفون يعمل · صوتك يبقى هنا");
+}
+
+function applyLanguage(): void {
+  document.documentElement.lang = language;
+  document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
+  document.querySelectorAll<HTMLElement>("[data-en][data-ar]").forEach(el => {
+    el.textContent = el.dataset[language]!;
+  });
+  const toggle = document.getElementById("language-toggle")!;
+  toggle.textContent = tr("العربية", "English");
+  toggle.lang = language === "en" ? "ar" : "en";
+  refreshLabels();
+}
+
+function failSetup(): void {
+  setupFailed = true;
+  $retryDownload.hidden = false;
+  $cancelDownload.hidden = true;
+  refreshLabels();
+}
+
+function cancelSetup(): void {
+  state.worker?.terminate();
+  state.worker = null;
+  modelInitStarted = false;
+  setupFailed = false;
+  downloadPercent = 0;
+  $loadingStatus.hidden = true;
+  $benchIdle!.hidden = false;
+  $btnBeginTest.disabled = false;
+  refreshLabels();
+}
 
 const WAVEFORM_BAR_PHASES = [0.34, 0.72, 0.48, 0.95, 0.58, 1, 0.68, 0.86, 0.42, 0.76, 0.52];
 
@@ -248,8 +323,11 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
 
   const header = document.createElement("div");
   header.className = "surah-header";
-  header.textContent = group.surahNameEn;
+  header.textContent = language === "ar" ? group.surahName : group.surahNameEn;
   el.appendChild(header);
+  const meta = document.createElement("p");
+  meta.className = "surah-meta";
+  el.appendChild(meta);
 
   const hasBismillah =
     group.surah !== 1 &&
@@ -313,6 +391,7 @@ function updateVerseHighlight(group: VerseGroup, newAyah: number): void {
   const verses = el.querySelectorAll<HTMLElement>(".verse");
   for (const verseEl of verses) {
     const ayah = parseInt(verseEl.getAttribute("data-ayah") || "0");
+    verseEl.hidden = ayah > newAyah || ayah < newAyah - 2;
     if (ayah === newAyah) {
       verseEl.className = "verse verse--active";
     } else if (ayah <= newAyah && (ayah >= oldAyah || ayah < oldAyah)) {
@@ -327,13 +406,19 @@ function updateVerseHighlight(group: VerseGroup, newAyah: number): void {
   }
 
   group.currentAyah = newAyah;
+  refreshLabels();
   scrollToActiveVerse();
 }
 
 function scrollToActiveVerse(): void {
   const active = document.querySelector(".verse--active");
   if (active) {
-    active.scrollIntoView({ behavior: "smooth", block: "center" });
+    const verse = active as HTMLElement;
+    const bounds = $verses.getBoundingClientRect();
+    const verseBounds = verse.getBoundingClientRect();
+    if (verseBounds.bottom > bounds.bottom || verseBounds.top < bounds.top + 80) {
+      $verses.scrollTo({ top: Math.max(0, verse.offsetTop - 100), behavior: "instant" });
+    }
   }
 }
 
@@ -351,6 +436,8 @@ async function handleVerseMatch(msg: VerseMatchMessage): Promise<void> {
     state.hasFirstMatch = true;
     $listeningStatus.hidden = true;
     $indicator.classList.add("has-verses");
+    clearTimeout(noMatchTimer);
+    refreshLabels();
   }
 
   const lastGroup = state.groups[state.groups.length - 1];
@@ -421,13 +508,13 @@ function handleWordProgress(msg: WordProgressMessage): void {
   const wordEls = verseEl.querySelectorAll<HTMLElement>(".word");
   for (const wordEl of wordEls) {
     const idx = parseInt(wordEl.getAttribute("data-word-idx") || "-1");
-    if (idx <= contiguousMax) {
-      wordEl.classList.add("word--spoken");
-    }
+    wordEl.classList.toggle("word--spoken", idx < contiguousMax);
+    wordEl.classList.toggle("word--current", idx === contiguousMax);
   }
 }
 
 function handleRawTranscript(msg: RawTranscriptMessage): void {
+  if (state.hasFirstMatch && !DEBUG_VIEW_ENABLED) return;
   $rawTranscript.textContent = msg.text;
   $rawTranscript.classList.add("visible");
 }
@@ -445,11 +532,11 @@ async function handleVerseCandidate(msg: VerseCandidateMessage): Promise<void> {
       ? `${best.ayah}-${best.ayah_end}`
       : String(best.ayah);
   const label = best.source === "tracking"
-    ? "Pending next"
-    : msg.stable ? "Likely" : "Listening near";
+    ? tr("Pending next", "الآية التالية المحتملة")
+    : msg.stable ? tr("Likely", "على الأرجح") : tr("Listening near", "نستمع قرب");
 
   $candidateStatus.textContent =
-    `${label}: ${surah.surah_name_en} ${range} (${Math.round(best.confidence * 100)}%)`;
+    `${label}: ${language === "ar" ? surah.surah_name : surah.surah_name_en} ${range} (${Math.round(best.confidence * 100)}%)`;
   $candidateStatus.classList.toggle("candidate-status--stable", msg.stable);
   $candidateStatus.classList.toggle("candidate-status--pending", best.source === "tracking");
   $candidateStatus.hidden = false;
@@ -469,7 +556,7 @@ async function handleFinalSequence(msg: FinalSequenceMessage): Promise<void> {
       : String(first.ayah);
 
   $candidateStatus.textContent =
-    `Final from streaming evidence: ${surah.surah_name_en} ${range} (${Math.round(msg.confidence * 100)}%)`;
+    `${tr("Recited", "التلاوة")}: ${language === "ar" ? surah.surah_name : surah.surah_name_en} ${range} (${Math.round(msg.confidence * 100)}%)`;
   $candidateStatus.classList.add("candidate-status--stable");
   $candidateStatus.hidden = false;
 }
@@ -693,7 +780,7 @@ function pushDiagnosticEvent(type: string, data: Record<string, unknown>): void 
   }
 }
 
-function checkAnomalyAndSend(msg: VerseMatchMessage): void {
+function recordAnomaly(msg: VerseMatchMessage): void {
   const now = Date.now();
 
   // Track recent verse matches for rapid switching detection
@@ -727,66 +814,7 @@ function checkAnomalyAndSend(msg: VerseMatchMessage): void {
   if (now - state.lastDiagnosticSentAt < DIAGNOSTIC_COOLDOWN_MS) return;
   state.lastDiagnosticSentAt = now;
 
-  sendDiagnosticReport(trigger);
-}
-
-async function sendDiagnosticReport(trigger: string): Promise<void> {
-  try {
-    // Build audio WAV from session chunks
-    const totalLen = state.sessionAudioChunks.reduce((s, c) => s + c.length, 0);
-    const merged = new Float32Array(totalLen);
-    let offset = 0;
-    for (const chunk of state.sessionAudioChunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    // Only send last 30s of audio max
-    const maxSamples = 16000 * 30;
-    const audioSlice = merged.length > maxSamples ? merged.slice(-maxSamples) : merged;
-    const wavBlob = float32ToWav(audioSlice, 16000);
-
-    const form = new FormData();
-    form.append("audio", wavBlob, "diagnostic.wav");
-    form.append("events", JSON.stringify(state.diagnosticEvents));
-    form.append("trigger", trigger);
-
-    await fetch("/api/diagnostics", { method: "POST", body: form });
-  } catch (err) {
-    console.error("Failed to send diagnostic report:", err);
-  }
-}
-
-function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-
-  function writeStr(off: number, str: string) {
-    for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
-  }
-
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-
-  let off = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    off += 2;
-  }
-
-  return new Blob([buffer], { type: "audio/wav" });
+  pushDiagnosticEvent("anomaly", { trigger });
 }
 
 // ---------------------------------------------------------------------------
@@ -794,27 +822,27 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
 // ---------------------------------------------------------------------------
 function handleWorkerMessage(msg: WorkerOutbound): void {
   if (msg.type === "loading") {
-    $modelStatus.textContent = `Loading ${ENGINE_LABEL}... ${msg.percent}%`;
-    $modelStatus.classList.remove("ready");
-    $loadingProgress.style.setProperty("--progress", String(msg.percent / 100));
-    $loadingDetail.textContent = `Downloading model — ${msg.percent}%`;
+    downloadPercent = Math.max(0, Math.min(100, msg.percent));
+    $loadingProgress.style.setProperty("--progress", String(downloadPercent / 100));
+    $loadingProgress.parentElement!.setAttribute("aria-valuenow", String(downloadPercent));
+    refreshLabels();
   } else if (msg.type === "loading_status") {
-    $loadingDetail.textContent = msg.message;
+    // The worker emits internal setup stages; show localized product language.
+    if (/Creating|Initializing/i.test(msg.message)) downloadPercent = 100;
+    refreshLabels();
   } else if (msg.type === "error") {
-    $loadingDetail.textContent = `Error: ${msg.message}`;
-    $modelStatus.textContent = "Error";
     console.error("Worker reported error:", msg.message);
+    failSetup();
   } else if (msg.type === "ready") {
-    $modelStatus.textContent = `${ENGINE_LABEL} ready`;
-    $modelStatus.classList.add("ready");
     state.modelReady = true;
     $loadingStatus.hidden = true;
     $readyState.hidden = false;
+    refreshLabels();
   } else if (msg.type === "verse_match") {
     pushDiagnosticEvent("verse_match", {
       surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
     });
-    checkAnomalyAndSend(msg);
+    recordAnomaly(msg);
     handleVerseMatch(msg);
   } else if (msg.type === "verse_candidate") {
     pushDiagnosticEvent("verse_candidate", {
@@ -863,7 +891,7 @@ async function startAudio(): Promise<boolean> {
     const audioCtx = new AudioContext();
     state.audioCtx = audioCtx;
 
-    await audioCtx.audioWorklet.addModule("/audio-processor.js");
+    await audioCtx.audioWorklet.addModule(audioWorkletUrl!);
     const source = audioCtx.createMediaStreamSource(stream);
     const processor = new AudioWorkletNode(audioCtx, "audio-stream-processor");
     state.audioProcessor = processor;
@@ -892,6 +920,7 @@ async function startAudio(): Promise<boolean> {
 
     const levelBuf = new Float32Array(analyser.fftSize);
     state.isActive = true;
+    refreshLabels();
     $indicator.classList.add("active");
     resetListeningWaveform();
 
@@ -918,6 +947,7 @@ async function startAudio(): Promise<boolean> {
     return true;
   } catch (err) {
     console.error("Failed to start audio:", err);
+    stopAudio();
     $permissionPrompt.hidden = false;
     resetListeningWaveform();
     return false;
@@ -938,6 +968,8 @@ function stopAudio(): void {
   }
   state.audioProcessor = null;
   state.isActive = false;
+  clearTimeout(noMatchTimer);
+  refreshLabels();
   $indicator.classList.remove("active", "audio-detected", "silence", "has-verses");
   resetListeningWaveform();
 }
@@ -951,19 +983,21 @@ function initializeModel(): void {
   if (modelInitStarted) return;
   modelInitStarted = true;
 
-  $introScreen.hidden = true;
+  setupFailed = false;
+  downloadPercent = 0;
+  $retryDownload.hidden = true;
+  $cancelDownload.hidden = false;
+  $loadingProgress.style.setProperty("--progress", "0");
   if ($benchIdle) $benchIdle.hidden = true;
   $loadingStatus.hidden = false;
   $debugPanel.hidden = !DEBUG_VIEW_ENABLED;
   $modelStatus.textContent = `Loading ${ENGINE_LABEL}...`;
   $loadingDetail.textContent = "Starting download";
+  refreshLabels();
 
-  const worker = new Worker(
-    ENGINE === "zipformer"
-      ? new URL("./worker/zipformer-backend.ts", import.meta.url)
-      : new URL("./worker/inference.ts", import.meta.url),
-    { type: "module" },
-  );
+  const worker = ENGINE === "zipformer"
+    ? new Worker(new URL("./worker/zipformer-backend.ts", import.meta.url), { type: "module" })
+    : new Worker(new URL("./worker/inference.ts", import.meta.url), { type: "module" });
   state.worker = worker;
 
   worker.onmessage = (e: MessageEvent<WorkerOutbound>) => {
@@ -972,10 +1006,17 @@ function initializeModel(): void {
 
   worker.onerror = (e) => {
     console.error("Worker error:", e);
-    $loadingDetail.textContent = `Worker error: ${e.message || "unknown"}`;
+    failSetup();
   };
 
-  worker.postMessage({ type: "init" });
+  // Load the UI's Quran data before promising that this tab can work offline.
+  void Promise.all([loadQuranData(), prepareAudioWorklet()]).then(() => {
+    if (state.worker === worker) worker.postMessage({ type: "init" });
+  }).catch(error => {
+    if (state.worker !== worker) return;
+    console.error("Quran data setup failed:", error);
+    failSetup();
+  });
   pushStreamingConfig();
   syncDebugEnabled();
 }
@@ -997,12 +1038,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Button handlers
   $btnStart.addEventListener("click", async () => {
+    if (state.isActive || $btnStart.getAttribute("aria-busy") === "true") return;
+    $btnStart.setAttribute("aria-busy", "true");
+    const attempt = ++audioAttempt;
     $readyState.hidden = true;
     $recordingState.hidden = false;
+    $recordingActions.hidden = false;
+    $postRecording.hidden = true;
+    _matchedWordIndices.clear();
+    _trackingKey = "";
     $listeningStatus.hidden = false;
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
+    applyLanguage();
     state.groups = [];
     state.diagnosticEvents = [];
     state.debugEvents = [];
@@ -1019,19 +1068,29 @@ document.addEventListener("DOMContentLoaded", () => {
     state.worker?.postMessage({ type: "reset" });
     pushStreamingConfig();
     const started = await startAudio();
+    $btnStart.removeAttribute("aria-busy");
+    if (attempt !== audioAttempt) { stopAudio(); return; }
+    if (started) noMatchTimer = setTimeout(() => {
+      if (!state.isActive || state.hasFirstMatch) return;
+      document.getElementById("listening-title")!.textContent = tr("We haven’t found the verse yet.", "لم نتعرّف على الآية بعد.");
+      document.getElementById("listening-help")!.textContent = tr("Keep reciting a few more words. Try moving closer to the microphone.", "واصل التلاوة لبضع كلمات أخرى، وحاول الاقتراب من الميكروفون.");
+    }, 15000);
     if (!started) {
       $recordingState.hidden = true;
+      $recordingActions.hidden = true;
       $listeningStatus.hidden = true;
       $readyState.hidden = false;
     }
   });
 
   $btnStop.addEventListener("click", () => {
+    audioAttempt++;
     stopAudio();
     if (ENGINE === "zipformer") {
       state.worker?.postMessage({ type: "stop" });
     }
     $recordingState.hidden = true;
+    $recordingActions.hidden = true;
     $listeningStatus.hidden = true;
     $postRecording.hidden = false;
   });
@@ -1040,6 +1099,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
+    applyLanguage();
     state.groups = [];
     state.debugEvents = [];
     state.finalSequence = [];
@@ -1055,7 +1115,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $readyState.hidden = false;
   });
 
-  $btnReport.addEventListener("click", () => {
+  $btnReport.addEventListener("click", async () => {
+    await loadQuranData();
     openReportDialog({
       audioChunks: state.sessionAudioChunks,
       modelPrediction: state.lastModelPrediction,
@@ -1064,3 +1125,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 });
+
+applyLanguage();
+document.getElementById("language-toggle")!.addEventListener("click", () => {
+  language = language === "en" ? "ar" : "en";
+  try { localStorage.setItem("tilawa-language", language); } catch { /* Optional preference. */ }
+  applyLanguage();
+});
+$cancelDownload.addEventListener("click", cancelSetup);
+$retryDownload.addEventListener("click", () => { cancelSetup(); initializeModel(); });
+document.getElementById("btn-retry-mic")!.addEventListener("click", () => $btnStart.click());
