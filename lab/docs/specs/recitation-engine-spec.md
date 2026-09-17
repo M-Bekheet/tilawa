@@ -14,7 +14,7 @@ Implementation-independent description of what the offline Quran recitation engi
 | v3 | **248/256** |
 | qlab | **572/583** |
 
-Machine-readable oracles: `docs/specs/vectors/`. Regenerator: `experiments/prompter-zipformer/dump_vectors.mjs`.
+Machine-readable oracles: `docs/specs/vectors/`. Dumped from the original engine before its removal at `e172b79` (regenerator `dump_vectors.mjs` is gone).
 
 Clock: **CTC output frames run at 25 Hz** (12 output frames per 48 fbank-frame hop of 480 ms). All engine timers are in those frames.
 
@@ -852,7 +852,7 @@ Hint is passed into searching (and **not** into relocation). Stay: locate once, 
 
 ## 11. Host emission policy
 
-Not inside the engine. Shipped in `zipformer-emission.ts` (browser) and `harness.mjs` (Node benchmark). Vectors: `host_*.json`.
+Not inside the engine. Shipped in `zipformer-emission.ts` (browser) and `experiments/zipformer-ctc/harness.ts` (Node benchmark). Vectors: `host_*.json`.
 
 ### Chunking
 
@@ -929,13 +929,7 @@ Browser `shouldRunFallback` is `emitted.length === 0` (same idea). `fallbackConf
 
 Clips: `benchmark/test_corpus/001002.mp3`, `001001.mp3` (medium v1), `benchmark/test_corpus_v3/ea_alafasy_multi_001_001_007.wav` (multi).
 
-Regenerate:
-
-```
-PROMPTER_ORT_DIR=/Users/rock/ai/projects/offline-tarteel/web/frontend/node_modules \
-PROMPTER_MODEL=/Users/rock/ai/projects/offline-tarteel/web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx \
-PROMPTER_CORPUS=/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json \
-node experiments/prompter-zipformer/dump_vectors.mjs
-```
+The vectors are frozen. They were dumped from the original engine before its
+removal at `e172b79`; `dump_vectors.mjs` is no longer in the tree.
 
 A clean-room implementation is correct when it bit-matches (or, for fbank vs Python, max-abs `< 1e-3`) these JSON files and, with the same host loop, scores **53/53, 43/43, 248/256, 572/583**.

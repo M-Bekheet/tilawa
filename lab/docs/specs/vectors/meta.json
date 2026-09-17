@@ -1,5 +1,5 @@
 {
-  "generatedBy": "experiments/prompter-zipformer/dump_vectors.mjs",
+  "generatedBy": "experiments/prompter-zipformer/dump_vectors.mjs (removed at e172b79)",
   "node": "v22.22.2",
   "model": "/Users/rock/ai/projects/offline-tarteel/web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx",
   "corpus": "/Users/rock/ai/projects/offline-tarteel/data/prompter/quran.json",

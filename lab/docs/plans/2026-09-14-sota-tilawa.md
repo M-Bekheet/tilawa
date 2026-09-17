@@ -1,9 +1,10 @@
 # Plan: a SOTA Tilawa acoustic model (match or beat the alketab prompter engine)
 
-Status: Track A from-scratch cancelled 2026-09-14 16:05; fine-tune Quran-Lab v3.1.
+Status: Done 2026-09-16 — see EXPERIMENTS.md; Track C complete.
 Owner: Tilawa (offline-tarteel).
-Companion: `experiments/prompter-zipformer/` (branch `prompter-zipformer`) — the
-reference system, runnable locally, and the A/B harness for everything below.
+Companion: `experiments/zipformer-ctc/` (historical runner alias
+`prompter-zipformer`) — native MIT engine harness over Zipformer2-CTC, plus
+Quran-Lab reference-model tooling.
 
 **Decision (2026-09-14 16:05):** the public checkpoint is Quran-Lab
 `zipformer_p-arabic-v3` / `zipformer_p_arabic_v3.1` (NPL-1.2). Do not train
