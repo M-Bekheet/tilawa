@@ -329,6 +329,10 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
   meta.className = "surah-meta";
   el.appendChild(meta);
 
+  const scrollArea = document.createElement("div");
+  scrollArea.className = "verse-scroll";
+  el.appendChild(scrollArea);
+
   const hasBismillah =
     group.surah !== 1 &&
     group.surah !== 9 &&
@@ -341,7 +345,7 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
     bsmEl.dir = "rtl";
     bsmEl.lang = "ar";
     bsmEl.textContent = bsmText;
-    el.appendChild(bsmEl);
+    scrollArea.appendChild(bsmEl);
   }
 
   const body = document.createElement("div");
@@ -380,7 +384,7 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
     body.appendChild(verseEl);
   }
 
-  el.appendChild(body);
+  scrollArea.appendChild(body);
   return el;
 }
 
@@ -411,14 +415,17 @@ function updateVerseHighlight(group: VerseGroup, newAyah: number): void {
 }
 
 function scrollToActiveVerse(): void {
-  const active = document.querySelector(".verse--active");
-  if (active) {
-    const verse = active as HTMLElement;
-    const bounds = $verses.getBoundingClientRect();
-    const verseBounds = verse.getBoundingClientRect();
-    if (verseBounds.bottom > bounds.bottom || verseBounds.top < bounds.top + 80) {
-      $verses.scrollTo({ top: Math.max(0, verse.offsetTop - 100), behavior: "instant" });
-    }
+  const active = document.querySelector<HTMLElement>(".verse--active");
+  const scrollArea = active?.closest<HTMLElement>(".verse-scroll");
+  if (!active || !scrollArea) return;
+
+  const bounds = scrollArea.getBoundingClientRect();
+  const verseBounds = active.getBoundingClientRect();
+  if (verseBounds.bottom > bounds.bottom || verseBounds.top < bounds.top) {
+    scrollArea.scrollTo({
+      top: Math.max(0, scrollArea.scrollTop + verseBounds.top - bounds.top - 16),
+      behavior: "instant",
+    });
   }
 }
 
