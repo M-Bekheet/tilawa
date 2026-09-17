@@ -30,7 +30,8 @@ async function saveToCache(key: string, data: ArrayBuffer): Promise<void> {
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
     const req = store.put(data, key);
-    req.onsuccess = () => resolve();
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onabort = () => { db.close(); reject(tx.error ?? new Error("Model storage failed")); };
     req.onerror = () => reject(req.error);
   });
 }
@@ -46,6 +47,7 @@ export async function loadModel(
 
   // Download with progress
   const response = await fetch(url);
+  if (!response.ok || !response.body) throw new Error(`Model download failed: ${response.status}`);
   const total = parseInt(response.headers.get("content-length") || "0");
   const reader = response.body!.getReader();
   const chunks: Uint8Array[] = [];
