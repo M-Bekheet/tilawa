@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,12 @@ from shared.fbank import compute_fbank
 
 NODE = shutil.which("node")
 ROOT = Path(__file__).resolve().parent.parent
-DUMP = ROOT / "experiments" / "prompter-zipformer" / "fbank_dump.mjs"
+DUMP = ROOT / "experiments" / "zipformer-ctc" / "fbank_dump.ts"
+_ORT = Path(os.environ.get(
+    "PROMPTER_ORT_DIR",
+    ROOT / "web" / "frontend" / "node_modules",
+))
+TSX = _ORT / ".bin" / "tsx"
 _CLIP = "001002.mp3"
 _CORPUS_CANDIDATES = (
     ROOT / "benchmark" / "test_corpus",
@@ -39,7 +45,10 @@ MAX_ABS = 1e-3
 SR = 16_000
 CHUNK = 7680
 
-pytestmark = pytest.mark.skipif(NODE is None, reason="node not on PATH")
+pytestmark = pytest.mark.skipif(
+    NODE is None or not TSX.is_file(),
+    reason="node/tsx not available (need web/frontend/node_modules/.bin/tsx)",
+)
 
 
 def _synth_wave(duration_s: float = 3.7, seed: int = 0) -> np.ndarray:
@@ -82,9 +91,9 @@ def _read_frames(path: Path) -> np.ndarray:
 
 
 def _run_js(pcm: Path, out: Path, chunk: int | None = None) -> int:
-    cmd = [NODE, str(DUMP), str(pcm), str(out)]
+    cmd = [str(TSX), str(DUMP), str(pcm), str(out)]
     if chunk is not None:
-        cmd = [NODE, str(DUMP), "--chunk", str(chunk), str(pcm), str(out)]
+        cmd = [str(TSX), str(DUMP), "--chunk", str(chunk), str(pcm), str(out)]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, f"fbank_dump failed rc={r.returncode}: {r.stderr}\n{r.stdout}"
     return int(r.stdout.strip().splitlines()[-1])

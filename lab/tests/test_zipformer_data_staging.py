@@ -17,14 +17,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 prep = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(prep)
 
-TOKENS_TXT = (
-    ROOT
-    / "experiments"
-    / "prompter-zipformer"
-    / "engine"
-    / "model"
-    / "tokens.txt"
-)
+TOKENS_TXT = ROOT / "experiments" / "zipformer-ctc" / "tokens.txt"
 
 
 def test_parse_qul_and_tlog_filenames():

@@ -1,8 +1,8 @@
 """Kaldi / lhotse-equivalent log-mel fbank (training frontend).
 
 `compute_fbank` is a thin wrapper around `torchaudio.compliance.kaldi.fbank`
-with the same geometry as the shipped JS inference frontend
-(`experiments/prompter-zipformer/engine/browser/kaldiFbank.js`): 16 kHz,
+with the same geometry as the shipped TS inference frontend
+(`web/frontend/src/lib/recitation/fbank.ts`): 16 kHz,
 25 ms / 10 ms, 80 mel bins, povey window, 512-FFT, snip_edges=False,
 pre-emphasis 0.97, remove_dc_offset, dither 0, low 20 Hz, high −400
 (= 7600 Hz), log mel energies, no CMVN.
@@ -58,7 +58,7 @@ LHOTSE_FBANK_CONFIG = dict(
 
 
 def compute_fbank(wave: np.ndarray, sr: int = 16000) -> np.ndarray:
-    """Log-mel fbank matching kaldiFbank.js.
+    """Log-mel fbank matching the native KaldiFbank frontend.
 
     Args:
         wave: mono float32 samples in [-1, 1].

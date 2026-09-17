@@ -118,7 +118,7 @@ data/fastconformer-phoneme-v1/model.nemo
 offline-tarteel-lab/
 offline-tarteel-sdk/
 
-# prompter-zipformer downloaded assets (auto-fetched by experiments/prompter-zipformer/run.py)
+# zipformer-ctc downloaded assets (auto-fetched by experiments/zipformer-ctc/run.py)
 data/prompter/
 
 # Zipformer browser demo (NPL-derived lexicon; ONNX already covered by *.onnx)

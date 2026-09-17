@@ -2,7 +2,7 @@
 
 Blank permutation
 -----------------
-The reference Zipformer CTC vocab (`tokens.js` / `tokens.txt`) is 251 symbols with
+The reference Zipformer CTC vocab (`tokens.txt`) is 251 symbols with
 ``<blank>`` last (id 250). icefall CTC assumes blank id 0.
 
 Train-time mapping is the rotation ``icefall_id = (ref_id + 1) % 251`` (so blank
@@ -395,7 +395,7 @@ def icefall_train_flags(
         "--exp-dir",
         str(exp_dir),
         "--bpe-model",
-        "/app/tokens.js",
+        "/app/tokens.txt",
         "--use-fp16",
         "1",
         "--base-lr",

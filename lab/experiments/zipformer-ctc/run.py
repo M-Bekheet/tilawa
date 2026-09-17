@@ -1,16 +1,18 @@
-"""prompter-zipformer -- the alketab "Quran Prompter" engine (prompter.alketab.app)
-run as-is under Node, wrapped in the benchmark's predict() contract.
+"""zipformer-ctc -- native MIT recitation engine + Zipformer2-CTC, benchmark wrapper.
 
-Pipeline (all vendored JS, recovered from the site's source maps -- see README.md):
+Pipeline (web/frontend/src/lib/recitation + ZipformerHost):
   16 kHz PCM -> Kaldi fbank (80 mel) -> streaming Zipformer2-CTC ONNX (251
-  tajweed-phoneme tokens, 72.7 MB int8; onnxruntime dynamic quant, byte-identical
-  to Quran-Lab zipformer_p_arabic_v3.1.int8.onnx — see EXPERIMENTS.md
-  "Zipformer2-CTC (Quran-Lab v3 reference + fine-tunes)") -> greedy CTC ->
-  whole-Quran 5-gram search + per-surah online DP tracker -> per-word verdicts.
+  tajweed-phoneme tokens; default is Quran-Lab zipformer_p_arabic_v3.1.int8 or
+  the shipped interp-gentle blend) -> greedy CTC -> whole-Quran 5-gram search
+  + per-surah online DP tracker -> per-word verdicts.
 
 This file only: decodes audio with shared.audio, ships raw float32 to a
-long-lived `node harness.mjs` over stdin/stdout, and turns the harness's
+long-lived `tsx harness.ts` over stdin/stdout, and turns the harness's
 per-ayah verdict tallies into {surah, ayah, ayah_end}.
+
+Registered as `zipformer-ctc`; `prompter-zipformer` is a runner alias so
+historical result JSONs stay comparable. benchmark_name() stays
+`prompter-zipformer` for that reason.
 
 Model + corpus are fetched on first use into data/prompter/ (env override:
 PROMPTER_DATA_DIR) unless PROMPTER_MODEL already points at an existing file.
@@ -94,7 +96,7 @@ def _provenance(path: Path | None = None) -> dict:
 def _fetch(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    print(f"[prompter-zipformer] downloading {url} -> {dest}")
+    print(f"[zipformer-ctc] downloading {url} -> {dest}")
     urllib.request.urlretrieve(url, tmp)
     tmp.rename(dest)
 
@@ -128,8 +130,13 @@ def _ensure_proc() -> subprocess.Popen:
     env.setdefault("PROMPTER_CORPUS", str(CORPUS_PATH))
     env.setdefault("PROMPTER_ORT_DIR", str(ORT_DIR))
     env.setdefault("PROMPTER_GAP_MAX_WORDS", str(_gap_max_words()))
+    tsx = Path(env["PROMPTER_ORT_DIR"]) / ".bin" / "tsx"
+    if not tsx.is_file():
+        raise FileNotFoundError(
+            f"tsx not found at {tsx}; set PROMPTER_ORT_DIR to web/frontend/node_modules"
+        )
     _proc = subprocess.Popen(
-        ["node", str(HERE / "harness.mjs")],
+        [str(tsx), str(HERE / "harness.ts")],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=sys.stderr,

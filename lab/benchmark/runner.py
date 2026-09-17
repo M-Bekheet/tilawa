@@ -61,7 +61,13 @@ EXPERIMENT_REGISTRY = {
     "c2c-direct-mixed-streaming-v3": EXPERIMENTS_DIR / "c2c-direct-mixed-streaming-v3" / "run.py",
     "c2c-direct-mixed-streaming-v4": EXPERIMENTS_DIR / "c2c-direct-mixed-streaming-v4" / "run.py",
     "c2c-direct-trie": EXPERIMENTS_DIR / "c2c-direct-trie" / "run.py",
-    "prompter-zipformer": EXPERIMENTS_DIR / "prompter-zipformer" / "run.py",
+    "zipformer-ctc": EXPERIMENTS_DIR / "zipformer-ctc" / "run.py",
+}
+
+# Historical name; same run.py. Only used when --experiment is this alias
+# so a full-suite run does not execute the experiment twice.
+EXPERIMENT_ALIASES = {
+    "prompter-zipformer": "zipformer-ctc",
 }
 
 NEW_MODELS_PATH = EXPERIMENTS_DIR / "new-models" / "run.py"
@@ -147,6 +153,8 @@ def score_sequence(expected: list[dict], predicted: list[dict]) -> dict:
 def discover_experiments(filter_name: str | None = None) -> list[dict]:
     """Return list of {name, run_path, model_name (optional)}."""
     experiments = []
+    if filter_name and filter_name in EXPERIMENT_ALIASES:
+        filter_name = EXPERIMENT_ALIASES[filter_name]
 
     for name, run_path in EXPERIMENT_REGISTRY.items():
         if (

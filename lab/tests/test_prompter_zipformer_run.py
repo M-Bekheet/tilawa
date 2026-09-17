@@ -1,4 +1,4 @@
-"""prompter-zipformer run.py helpers (no Node / ONNX)."""
+"""zipformer-ctc run.py helpers (no Node / ONNX)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-_MOD_PATH = ROOT / "experiments" / "prompter-zipformer" / "run.py"
-_SPEC = importlib.util.spec_from_file_location("prompter_zipformer_run", _MOD_PATH)
+_MOD_PATH = ROOT / "experiments" / "zipformer-ctc" / "run.py"
+_SPEC = importlib.util.spec_from_file_location("zipformer_ctc_run", _MOD_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 run = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(run)
@@ -45,9 +45,9 @@ def test_ensure_assets_skips_default_download(monkeypatch, tmp_path: Path):
     ort = tmp_path / "node_modules" / "onnxruntime-node"
     ort.mkdir(parents=True)
     monkeypatch.setenv("PROMPTER_MODEL", str(model))
-    run.CORPUS_PATH = corpus
-    run.ORT_DIR = tmp_path / "node_modules"
-    run.MODEL_PATH = tmp_path / "missing" / "quran_phoneme_zipformer.onnx"
+    monkeypatch.setattr(run, "CORPUS_PATH", corpus)
+    monkeypatch.setattr(run, "ORT_DIR", tmp_path / "node_modules")
+    monkeypatch.setattr(run, "MODEL_PATH", tmp_path / "missing" / "quran_phoneme_zipformer.onnx")
 
     def _boom(*_a, **_k):
         raise AssertionError("must not download when PROMPTER_MODEL exists")

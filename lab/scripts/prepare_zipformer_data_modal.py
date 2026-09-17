@@ -870,13 +870,9 @@ def pick_surah_ayah(row: dict) -> tuple[int, int] | None:
 
 
 def load_token_inventory(path: str | Path) -> list[str]:
-    """Load icefall `tokens.txt` or Task-1 `tokens.js`."""
+    """Load icefall `tokens.txt` (`<sym> <id>` per line)."""
     path = Path(path)
     text = path.read_text(encoding="utf-8")
-    if "export const TOKENS" in text:
-        from shared.prompter_labels import load_tokens
-
-        return load_tokens(path)
     by_id: dict[int, str] = {}
     for line in text.splitlines():
         line = line.strip()
@@ -906,14 +902,7 @@ def local_quran_json() -> Path:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _PROMPTER_QURAN = resolve_data_file("prompter/quran.json")
 _QURAN_JSON = local_quran_json()
-_TOKENS_TXT = (
-    PROJECT_ROOT
-    / "experiments"
-    / "prompter-zipformer"
-    / "engine"
-    / "model"
-    / "tokens.txt"
-)
+_TOKENS_TXT = PROJECT_ROOT / "experiments" / "zipformer-ctc" / "tokens.txt"
 _SHARED = PROJECT_ROOT / "shared"
 
 app = modal.App("zipformer-ctc-data")

@@ -1,16 +1,17 @@
-#!/usr/bin/env node
-// Dump kaldiFbank.js frames for a float32-LE 16 kHz PCM file.
-// Usage: node fbank_dump.mjs [--chunk N] <pcm.f32le> <out.f32le>
+#!/usr/bin/env npx tsx
+// Dump native KaldiFbank frames for a float32-LE 16 kHz PCM file.
+// Usage: npx tsx fbank_dump.ts [--chunk N] <pcm.f32le> <out.f32le>
 // Writes [nFrames, 80] float32-LE to <out> and prints nFrames on stdout.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { KaldiFbank } from "./engine/browser/kaldiFbank.js";
+import { KaldiFbank } from "../../web/frontend/src/lib/recitation/fbank.ts";
+import { FBANK_BINS } from "../../web/frontend/src/lib/recitation/config.ts";
 
-function parseArgs(argv) {
+function parseArgs(argv: string[]): { pcmPath: string; outPath: string; chunk: number } {
   let chunk = 0;
-  const pos = [];
+  const pos: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
+    const a = argv[i]!;
     if (a === "--chunk") {
       chunk = Number(argv[++i]);
       if (!Number.isFinite(chunk) || chunk <= 0) {
@@ -31,10 +32,10 @@ function parseArgs(argv) {
     }
   }
   if (pos.length < 2) {
-    console.error("usage: fbank_dump.mjs [--chunk N] <pcm.f32le> <out.f32le>");
+    console.error("usage: fbank_dump.ts [--chunk N] <pcm.f32le> <out.f32le>");
     process.exit(2);
   }
-  return { pcmPath: pos[0], outPath: pos[1], chunk };
+  return { pcmPath: pos[0]!, outPath: pos[1]!, chunk };
 }
 
 const { pcmPath, outPath, chunk } = parseArgs(process.argv.slice(2));
@@ -43,7 +44,7 @@ const copy = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 const pcm = new Float32Array(copy);
 
 const fbank = new KaldiFbank();
-const frames = [];
+const frames: Float32Array[] = [];
 if (chunk > 0) {
   for (let i = 0; i < pcm.length; i += chunk) {
     frames.push(...fbank.acceptWaveform(pcm.subarray(i, Math.min(i + chunk, pcm.length))));
@@ -53,7 +54,7 @@ if (chunk > 0) {
 }
 frames.push(...fbank.inputFinished());
 
-const packed = new Float32Array(frames.length * KaldiFbank.numBins);
-for (let i = 0; i < frames.length; i++) packed.set(frames[i], i * KaldiFbank.numBins);
+const packed = new Float32Array(frames.length * FBANK_BINS);
+for (let i = 0; i < frames.length; i++) packed.set(frames[i]!, i * FBANK_BINS);
 writeFileSync(outPath, Buffer.from(packed.buffer, packed.byteOffset, packed.byteLength));
 process.stdout.write(`${frames.length}\n`);

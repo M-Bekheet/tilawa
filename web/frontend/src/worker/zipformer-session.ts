@@ -29,12 +29,12 @@ import {
   costTable,
   normalizedDistance,
   stripPreambles,
+  type EngineConfig,
   type ZipformerIo,
 } from "../lib/recitation";
 
 const SAMPLE_RATE = 16000;
 const TAIL_SECONDS = 2.0;
-const CONFIG = { ...DEFAULT_CONFIG };
 
 export const ZIPFORMER_CACHE_KEY = "zipformer-interp-gentle-a05-int8";
 export const ZIPFORMER_MODEL_URL = "/models/zipformer_interp_gentle_a05.int8.onnx";
@@ -81,6 +81,12 @@ export interface ZipformerHostOptions {
   corpusJson: unknown;
   quranDb: QuranDB;
   executionProviders: string[];
+  config?: EngineConfig;
+  tailSeconds?: number;
+  minWordFraction?: number;
+  stayOnSurah?: boolean;
+  enableFallback?: boolean;
+  fallbackMaxDistance?: number;
 }
 
 export class ZipformerHost {
@@ -90,6 +96,12 @@ export class ZipformerHost {
   private readonly ayahIds: EncodedAyah[] = [];
   private readonly quranDb: QuranDB;
   private readonly runner: ZipformerRunner;
+  private readonly cfg: EngineConfig;
+  private readonly tailSeconds: number;
+  private readonly minWordFraction: number;
+  private readonly stayOnSurah: boolean;
+  private readonly enableFallback: boolean;
+  private readonly fallbackMaxDistance: number;
   private fbank = new KaldiFbank();
   private decoder = new GreedyCtcDecoder(TOKENS, BLANK_ID);
   private engine: RecitationEngine;
@@ -97,13 +109,20 @@ export class ZipformerHost {
   private emitted = new Set<string>();
   private transcript: string[] = [];
   private lastCursor: { surah: number; ayah: number; word: number } | null = null;
+  lastFallback: FallbackHit | null = null;
   debugEnabled = false;
 
   private constructor(runner: ZipformerRunner, opts: ZipformerHostOptions) {
     this.runner = runner;
     this.quranDb = opts.quranDb;
+    this.cfg = { ...DEFAULT_CONFIG, ...opts.config };
+    this.tailSeconds = opts.tailSeconds ?? TAIL_SECONDS;
+    this.minWordFraction = opts.minWordFraction ?? 0.5;
+    this.stayOnSurah = opts.stayOnSurah ?? false;
+    this.enableFallback = opts.enableFallback ?? true;
+    this.fallbackMaxDistance = opts.fallbackMaxDistance ?? FALLBACK_MAX_DISTANCE;
     this.corpus = new QuranCorpus(opts.corpusJson);
-    this.index = new QuranIndex(this.corpus, CONFIG);
+    this.index = new QuranIndex(this.corpus, this.cfg);
     for (const s of this.corpus.surahs) {
       for (let a = 1; a <= s.ayahCount; a++) {
         const first = this.corpus.ayahFirstWord(s.n, a);
@@ -126,11 +145,24 @@ export class ZipformerHost {
     return new ZipformerHost(runner, opts);
   }
 
+  get tallies(): AyahTally[] {
+    return [...this.accumulated.values()].sort((a, b) => a.firstSeen - b.firstSeen);
+  }
+
+  get transcriptText(): string {
+    return this.transcript.join("");
+  }
+
+  get engineState(): string {
+    return this.engine.state;
+  }
+
   reset(): WorkerOutbound[] {
     this.accumulated = new Map();
     this.emitted = new Set();
     this.transcript = [];
     this.lastCursor = null;
+    this.lastFallback = null;
     this.resetDecoder();
     this.engine = this.makeEngine();
     return [];
@@ -142,7 +174,7 @@ export class ZipformerHost {
 
   async stop(): Promise<WorkerOutbound[]> {
     const out: WorkerOutbound[] = [];
-    const silence = new Float32Array(Math.round(TAIL_SECONDS * SAMPLE_RATE));
+    const silence = new Float32Array(Math.round(this.tailSeconds * SAMPLE_RATE));
     out.push(...await this.feedSamples(silence));
 
     const frames = this.fbank.inputFinished();
@@ -155,15 +187,16 @@ export class ZipformerHost {
     }
 
     this.dumpTallies();
-    const live = newlyEligibleAyahs(this.accumulated, this.emitted);
+    const live = newlyEligibleAyahs(this.accumulated, this.emitted, this.minWordFraction);
     for (const t of live) {
       this.emitted.add(ayahKey(t));
       out.push(this.toVerseMatch(t));
     }
 
     let fallback: FallbackHit | null = null;
-    if (shouldRunFallback([...this.emitted])) {
+    if (this.enableFallback && shouldRunFallback([...this.emitted])) {
       fallback = this.fallbackSearch(this.transcript.join(""));
+      this.lastFallback = fallback;
       if (fallback) {
         const words = this.corpus.ayahWordCount(fallback.surah, fallback.ayah);
         const tally: AyahTally = {
@@ -193,7 +226,7 @@ export class ZipformerHost {
       }
     }
 
-    const seq = buildFinalSequence([...this.accumulated.values()], fallback);
+    const seq = buildFinalSequence([...this.accumulated.values()], fallback, this.minWordFraction);
     out.push({
       type: "final_sequence",
       verses: seq.verses,
@@ -208,8 +241,8 @@ export class ZipformerHost {
   }
 
   private makeEngine(): RecitationEngine {
-    const engine = new RecitationEngine(this.corpus, this.index, CONFIG);
-    engine.setStayOnSurah(false);
+    const engine = new RecitationEngine(this.corpus, this.index, this.cfg);
+    engine.setStayOnSurah(this.stayOnSurah);
     engine.startSearch();
     engine.onBeforeRelocate = () => this.dumpTallies();
     return engine;
@@ -221,7 +254,7 @@ export class ZipformerHost {
     this.runner.reset();
   }
 
-  private wordCount = (surah: number, ayah: number): number =>
+  wordCount = (surah: number, ayah: number): number =>
     this.corpus.ayahWordCount(surah, ayah);
 
   private dumpTallies(): void {
@@ -331,7 +364,7 @@ export class ZipformerHost {
   private emitNewMatches(source?: Map<string, AyahTally>): WorkerOutbound[] {
     const tallies = source ?? mergeTallies(this.accumulated, this.currentSnapshot());
     const out: WorkerOutbound[] = [];
-    for (const t of newlyEligibleAyahs(tallies, this.emitted)) {
+    for (const t of newlyEligibleAyahs(tallies, this.emitted, this.minWordFraction)) {
       this.emitted.add(ayahKey(t));
       out.push(this.toVerseMatch(t));
     }
@@ -355,7 +388,7 @@ export class ZipformerHost {
     if (!text) return null;
     const stripped = stripPreambles(text, this.table);
     const rest = text.slice(stripped.offset);
-    if (stripped.basmala && rest.length < CONFIG.searchMinChars) {
+    if (stripped.basmala && rest.length < this.cfg.searchMinChars) {
       return { surah: 1, ayah: 1, distance: 0, how: "basmala" };
     }
     const q = this.table.encode(rest.length >= 3 ? rest : text);
@@ -365,7 +398,7 @@ export class ZipformerHost {
       const d = normalizedDistance(q, a.ids, this.table);
       if (!best || d < best.distance) best = { surah: a.surah, ayah: a.ayah, distance: d, how: "whole-ayah" };
     }
-    if (!best || best.distance > FALLBACK_MAX_DISTANCE) return null;
+    if (!best || best.distance > this.fallbackMaxDistance) return null;
     return best;
   }
 }

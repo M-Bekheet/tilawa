@@ -5,7 +5,7 @@ wrapper is the ONNX equivalent: kaldi fbank → cache-aware streaming Zipformer
 → greedy CTC (blank=250) → unit Levenshtein vs `ordered_quran_phonemes.json`.
 
 Usage:
-  .venv/bin/python experiments/prompter-zipformer/reference_tools/per_onnx_wrapper.py \\
+  .venv/bin/python experiments/zipformer-ctc/reference_tools/per_onnx_wrapper.py \\
       --model /Users/rock/ai/projects/offline-tarteel/data/prompter/reference/zipformer_p_arabic_v3.1.onnx
 """
 
@@ -34,14 +34,7 @@ from zipformer_ctc_utils import io_json_from_session  # noqa: E402
 BLANK = 250
 MAIN = Path("/Users/rock/ai/projects/offline-tarteel")
 REF_DIR = MAIN / "data" / "prompter" / "reference"
-DEFAULT_IO = (
-    ROOT
-    / "experiments"
-    / "prompter-zipformer"
-    / "engine"
-    / "model"
-    / "zipformer-io.json"
-)
+DEFAULT_IO = ROOT / "experiments" / "zipformer-ctc" / "zipformer-io.json"
 
 
 def _norm(s: str) -> str:

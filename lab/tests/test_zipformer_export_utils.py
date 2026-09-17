@@ -46,22 +46,8 @@ from zipformer_ctc_utils import (  # noqa: E402
     CTC_ICEFALL_WEIGHT_KEY,
 )
 
-REF_IO = (
-    ROOT
-    / "experiments"
-    / "prompter-zipformer"
-    / "engine"
-    / "model"
-    / "zipformer-io.json"
-)
-TOKENS_JS = (
-    ROOT
-    / "experiments"
-    / "prompter-zipformer"
-    / "engine"
-    / "model"
-    / "tokens.js"
-)
+REF_IO = ROOT / "experiments" / "zipformer-ctc" / "zipformer-io.json"
+TOKENS_TXT = ROOT / "experiments" / "zipformer-ctc" / "tokens.txt"
 
 
 def test_ref_icefall_id_roundtrip_blank_250_to_0():
@@ -218,7 +204,7 @@ def test_write_icefall_tokens_blk_first_roundtrip(tmp_path: Path):
     sys.path.insert(0, str(ROOT))
     from shared.prompter_labels import load_tokens
 
-    tokens = load_tokens(TOKENS_JS)
+    tokens = load_tokens(TOKENS_TXT)
     path = tmp_path / "tokens_icefall.txt"
     write_icefall_tokens(tokens, path)
     lines = path.read_text(encoding="utf-8").splitlines()

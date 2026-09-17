@@ -4,8 +4,8 @@ Priority (brief): v3.1 fp32+int8 all corpora ×3, then v3 fp32 on v3/qlab ×3,
 then the rest ×1. Resumable via a JSON ledger.
 
 Usage:
-  .venv/bin/python experiments/prompter-zipformer/eval_reference_grid.py
-  .venv/bin/python experiments/prompter-zipformer/eval_reference_grid.py --smoke
+  .venv/bin/python experiments/zipformer-ctc/eval_reference_grid.py
+  .venv/bin/python experiments/zipformer-ctc/eval_reference_grid.py --smoke
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def run_one(model_key: str, corpus: str) -> dict:
         "-m",
         "benchmark.runner",
         "--experiment",
-        "prompter-zipformer",
+        "zipformer-ctc",
         "--corpus",
         corpus,
     ]

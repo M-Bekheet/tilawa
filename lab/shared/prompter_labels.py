@@ -1,9 +1,9 @@
 """Phoneme training labels for the reference Zipformer CTC vocab.
 
-Turns the published `tokens.js` (251 symbols, `<blank>` last) and
-`quran.json` per-word phoneme strings into icefall `tokens.txt` and
-CTC target id sequences. Tokenisation is greedy longest-match over the
-non-blank inventory; the vocab is closed under the corpus by construction.
+Turns `tokens.txt` (251 symbols, `<blank>` last) and `quran.json` per-word
+phoneme strings into icefall `tokens.txt` and CTC target id sequences.
+Tokenisation is greedy longest-match over the non-blank inventory; the
+vocab is closed under the corpus by construction.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 from pathlib import Path
 
 try:
@@ -20,16 +19,10 @@ except ImportError:  # script / Modal partial package
     from shared.paths import resolve_data_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_TOKENS_JS = (
-    REPO_ROOT
-    / "experiments"
-    / "prompter-zipformer"
-    / "engine"
-    / "model"
-    / "tokens.js"
+DEFAULT_TOKENS_TXT = (
+    REPO_ROOT / "experiments" / "zipformer-ctc" / "tokens.txt"
 )
 
-_TOKENS_RE = re.compile(r"export const TOKENS = (\[[\s\S]*?\]);")
 _BLANK = "<blank>"
 
 
@@ -51,14 +44,26 @@ def resolve_quran_json() -> Path:
         ) from e
 
 
-def load_tokens(tokens_js_path: str | Path | None = None) -> list[str]:
-    """Parse `export const TOKENS = [...]` from tokens.js (no eval)."""
-    path = Path(tokens_js_path) if tokens_js_path is not None else DEFAULT_TOKENS_JS
+def load_tokens(tokens_path: str | Path | None = None) -> list[str]:
+    """Parse icefall-style `tokens.txt`: one `<sym> <id>` per line, ordered by id."""
+    path = Path(tokens_path) if tokens_path is not None else DEFAULT_TOKENS_TXT
     text = path.read_text(encoding="utf-8")
-    m = _TOKENS_RE.search(text)
-    if m is None:
-        raise ValueError(f"TOKENS array not found in {path}")
-    tokens = json.loads(m.group(1))
+    by_id: dict[int, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sym, sep, idx_s = line.rpartition(" ")
+        if not sep:
+            raise ValueError(f"bad tokens.txt line: {line!r}")
+        by_id[int(idx_s)] = sym
+    if not by_id:
+        raise ValueError(f"no tokens in {path}")
+    n = max(by_id) + 1
+    missing = [i for i in range(n) if i not in by_id]
+    if missing:
+        raise ValueError(f"token id gaps in {path}: {missing[:8]}")
+    tokens = [by_id[i] for i in range(n)]
     if len(tokens) != 251:
         raise ValueError(f"expected 251 tokens, got {len(tokens)}")
     if tokens[-1] != _BLANK:
@@ -238,12 +243,14 @@ def main(argv: list[str] | None = None) -> None:
         help="tokens.txt output path (default: data/prompter/tokens.txt)",
     )
     parser.add_argument(
+        "--tokens",
         "--tokens-js",
+        dest="tokens",
         default=None,
-        help="path to tokens.js (default: experiments/.../model/tokens.js)",
+        help="path to tokens.txt (default: experiments/zipformer-ctc/tokens.txt)",
     )
     args = parser.parse_args(argv)
-    tokens = load_tokens(args.tokens_js)
+    tokens = load_tokens(args.tokens)
     out = Path(args.path) if args.path else _default_tokens_txt()
     write_tokens_txt(tokens, out)
     corpus = PhonemeCorpus()

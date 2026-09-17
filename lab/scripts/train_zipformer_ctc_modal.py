@@ -178,11 +178,11 @@ def _build_image() -> modal.Image:
         ("scripts/zipformer_ctc_utils.py", "/app/zipformer_ctc_utils.py"),
         ("scripts/zipformer_asr_datamodule.py", "/app/zipformer_asr_datamodule.py"),
         (
-            "experiments/prompter-zipformer/engine/model/tokens.js",
-            "/app/tokens.js",
+            "experiments/zipformer-ctc/tokens.txt",
+            "/app/tokens.txt",
         ),
         (
-            "experiments/prompter-zipformer/engine/model/zipformer-io.json",
+            "experiments/zipformer-ctc/zipformer-io.json",
             "/app/zipformer-io.json",
         ),
         ("data/prompter/quran.json", "/app/data/prompter/quran.json"),
@@ -214,7 +214,7 @@ _TRAIN_SP_NEW = '''    import sys as _sys
     _sys.path.insert(0, "/app")
     from zipformer_ctc_utils import IcefallPhonemeEncoder
     from shared.prompter_labels import load_tokens as _load_tokens
-    sp = IcefallPhonemeEncoder(_load_tokens("/app/tokens.js"))
+    sp = IcefallPhonemeEncoder(_load_tokens("/app/tokens.txt"))
     params.blank_id = 0
     params.sos_id = params.eos_id = 0
     params.vocab_size = 251
@@ -717,7 +717,7 @@ def _write_tokens() -> Path:
     from zipformer_ctc_utils import write_icefall_tokens
 
     path = Path("/vol/tokens_icefall.txt")
-    write_icefall_tokens(load_tokens("/app/tokens.js"), path)
+    write_icefall_tokens(load_tokens("/app/tokens.txt"), path)
     return path
 
 

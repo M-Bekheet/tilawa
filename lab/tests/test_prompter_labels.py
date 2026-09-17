@@ -146,29 +146,29 @@ def test_oov_error_names_position(tokenizer: PhonemeTokenizer):
 
 
 @skip_no_quran
-def test_js_corpus_surah1_matches_python(corpus: PhonemeCorpus):
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node missing")
-    corpus_js = ROOT / "experiments" / "prompter-zipformer" / "engine" / "core" / "corpus.js"
-    assert corpus_js.is_file()
+def test_native_corpus_surah1_matches_python(corpus: PhonemeCorpus):
+    """Same fact as docs/specs/vectors/corpus.json (Fatiha span), via native corpus.ts."""
+    tsx = ROOT / "web" / "frontend" / "node_modules" / ".bin" / "tsx"
+    corpus_ts = ROOT / "web" / "frontend" / "src" / "lib" / "recitation" / "corpus.ts"
+    if not tsx.is_file() or not corpus_ts.is_file():
+        pytest.skip("tsx or corpus.ts missing")
     script = (
         "import { readFileSync } from 'node:fs';\n"
-        f"import {{ QuranCorpus }} from {json.dumps(corpus_js.resolve().as_uri())};\n"
+        f"import {{ QuranCorpus }} from {json.dumps(str(corpus_ts))};\n"
         f"const data = JSON.parse(readFileSync({json.dumps(str(QURAN_JSON))}, 'utf8'));\n"
         "const c = new QuranCorpus(data);\n"
-        "const s = c.surah(1);\n"
+        "const s = c.surahs[0];\n"
         "process.stdout.write(c.text.slice(c.wordStart[s.firstWord], c.wordStart[s.endWord]));\n"
     )
     with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "dump_s1.mjs"
+        p = Path(td) / "dump_s1.ts"
         p.write_text(script, encoding="utf-8")
         r = subprocess.run(
-            [node, str(p)],
+            [str(tsx), str(p)],
             capture_output=True,
             timeout=30,
             check=False,
         )
     assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
-    js_text = r.stdout.decode("utf-8")
-    assert js_text == corpus.span_phonemes(1, 1, 7)
+    ts_text = r.stdout.decode("utf-8")
+    assert ts_text == corpus.span_phonemes(1, 1, 7)
