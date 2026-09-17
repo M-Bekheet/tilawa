@@ -3,18 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tilawa - Find the ayah while you recite</title>
-    <meta name="title" content="Tilawa - Find the ayah while you recite" />
-    <meta name="description" content="Find the surah and ayah as you recite. After the first download, Tilawa (formerly Offline Tarteel) works locally with no account and no audio upload." />
+    <title>Tilawa — verse tracking you can ship</title>
+    <meta name="title" content="Tilawa — verse tracking you can ship" />
+    <meta name="description" content="On-device Quran verse tracking and correction. Recite in the browser, then take the engine from GitHub into your app. No account, no audio upload." />
     <meta name="keywords" content="Tilawa, Offline Tarteel, offline-tarteel, Quran recitation recognition, Quran verse detection, offline Quran AI, on-device speech recognition" />
     <meta name="robots" content="index, follow" />
     <meta name="application-name" content="Tilawa" />
-    <meta name="theme-color" content="#f4efe5" />
+    <meta name="theme-color" content="#f3f0e4" />
     <link rel="canonical" href="https://tilawa.dev" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Tilawa" />
-    <meta property="og:title" content="Tilawa - Find the ayah while you recite" />
-    <meta property="og:description" content="Find the surah and ayah as you recite. After the first download, Tilawa (formerly Offline Tarteel) works locally with no account and no audio upload." />
+    <meta property="og:title" content="Tilawa — verse tracking you can ship" />
+    <meta property="og:description" content="On-device Quran verse tracking and correction. Recite in the browser, then take the engine from GitHub into your app." />
     <meta property="og:url" content="https://tilawa.dev" />
     <meta property="og:image" content="https://tilawa.dev/meta-image.png" />
     <meta property="og:image:secure_url" content="https://tilawa.dev/meta-image.png" />
@@ -23,178 +23,178 @@
     <meta property="og:image:height" content="420" />
     <meta property="og:image:alt" content="Tilawa preview showing Quran recitation recognition running fully on-device." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Tilawa - Find the ayah while you recite" />
-    <meta name="twitter:description" content="Find the surah and ayah as you recite. After the first download, Tilawa (formerly Offline Tarteel) works locally with no account and no audio upload." />
+    <meta name="twitter:title" content="Tilawa — verse tracking you can ship" />
+    <meta name="twitter:description" content="On-device Quran verse tracking and correction. Recite in the browser, then take the engine from GitHub into your app." />
     <meta name="twitter:image" content="https://tilawa.dev/meta-image.png" />
     <meta name="twitter:image:alt" content="Tilawa preview showing Quran recitation recognition running fully on-device." />
   </head>
   <body>
     <div id="app">
-      <section id="intro-screen" class="intro-screen" aria-labelledby="intro-title">
-          <p class="intro-kicker">Tilawa</p>
-        <h1 id="intro-title">Find the ayah while you recite, even offline.</h1>
-        <p class="intro-copy">
-          Open the page, allow the mic, and let the verse catch up to your voice. First visit
-          downloads the model. After that, no account, no upload.
-        </p>
+      <header class="nav-edge">
+        <a class="wordmark" href="/">Tilawa</a>
+        <a id="github-link" href="https://github.com/yazinsai/tilawa" target="_blank" rel="noopener">Add to your app →</a>
+      </header>
 
-        <div class="highlight-grid" aria-label="Solution highlights">
-          <article class="highlight-card">
-            <span class="highlight-icon" aria-hidden="true">
-              <iconify-icon icon="solar:shield-check-broken"></iconify-icon>
-            </span>
-            <div>
-              <strong>Keep recitation private</strong>
-              <span>Your audio stays in this browser.</span>
-            </div>
-          </article>
-          <article class="highlight-card">
-            <span class="highlight-icon" aria-hidden="true">
-              <iconify-icon icon="solar:cloud-cross-broken"></iconify-icon>
-            </span>
-            <div>
-              <strong>Practice when Wi-Fi drops</strong>
-              <span>Use it later without a connection.</span>
-            </div>
-          </article>
-          <article class="highlight-card">
-            <span class="highlight-icon" aria-hidden="true">
-              <iconify-icon icon="solar:map-point-wave-broken"></iconify-icon>
-            </span>
-            <div>
-              <strong>Know where you are</strong>
-              <span>Surah and ayah appear as you read.</span>
-            </div>
-          </article>
-          <article class="highlight-card">
-            <span class="highlight-icon" aria-hidden="true">
-              <iconify-icon icon="solar:document-text-broken"></iconify-icon>
-            </span>
-            <div>
-              <strong>Review the match</strong>
-              <span>Stop recording and check what it heard.</span>
-            </div>
-          </article>
-        </div>
+      <div class="page-split">
+        <section id="intro-screen" class="intro-screen" aria-labelledby="intro-title">
+          <h1 id="intro-title">Track the ayah. Ship the tracker.</h1>
+          <p class="lede-copy">
+            Recite here. The engine names the verse and marks misses. 66&nbsp;MB once, then local.
+            Clone it when the match is good enough to drop into your app.
+          </p>
 
-        <div class="intro-actions">
-          <button id="btn-begin-test" class="intro-btn intro-btn--primary" type="button">
-            Try with my voice
-          </button>
-          <a class="intro-btn intro-btn--secondary" href="https://github.com/yazinsai/tilawa" target="_blank" rel="noopener">
-            Check github
-          </a>
-        </div>
-        <p class="intro-note">The first run takes a moment. The next one starts locally.</p>
-      </section>
+          <table class="spec-sheet">
+            <tbody>
+              <tr style="--i: 0">
+                <th scope="row">Track</th>
+                <td>Surah and ayah as the recitation proceeds</td>
+              </tr>
+              <tr style="--i: 1">
+                <th scope="row">Correct</th>
+                <td>Spoken words against Uthmani; misses underlined</td>
+              </tr>
+              <tr style="--i: 2">
+                <th scope="row">Runtime</th>
+                <td>Zipformer2-CTC · 66&nbsp;MB · this browser</td>
+              </tr>
+              <tr style="--i: 3">
+                <th scope="row">Bench</th>
+                <td>53/53 v1 · 43/43 v2 · median of 3 runs</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
 
-      <div id="loading-status" hidden>
-        <p class="loading-status-main">Preparing model...</p>
-        <div class="loading-progress-track">
-          <div class="loading-progress-fill" id="loading-progress"></div>
-        </div>
-        <p class="loading-status-sub" id="loading-detail">Downloading</p>
-      </div>
-      <div id="listening-status" hidden>
-        <p class="listening-status-main">Listening...</p>
-        <p class="listening-status-sub">Begin your recitation</p>
-      </div>
-      <div id="ready-state" hidden>
-        <p class="ready-prompt">Tap to begin recitation</p>
-        <button id="btn-start" class="rec-btn rec-btn--start">Start</button>
-      </div>
-      <div id="recording-state" hidden>
-        <div class="listening-card" aria-live="polite">
-          <p class="listening-eyebrow">Mic is live</p>
-          <div class="waveform" id="listening-waveform" aria-hidden="true">
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
-            <span class="waveform-bar"></span>
+        <section class="bench" aria-label="Live recitation bench">
+          <header class="head-hang">
+            <h2>Live bench</h2>
+          </header>
+          <div class="bench-frame">
+            <div id="bench-idle" class="bench-idle">
+              <p class="bench-idle-copy">
+                Mic stays in this tab. Nothing is uploaded. First run downloads the model.
+              </p>
+              <button id="btn-begin-test" class="intro-btn intro-btn--primary" type="button">
+                Start reciting
+              </button>
+            </div>
+
+            <div id="loading-status" hidden>
+              <p class="loading-status-main">Preparing model</p>
+              <div class="loading-progress-track">
+                <div class="loading-progress-fill" id="loading-progress"></div>
+              </div>
+              <p class="loading-status-sub" id="loading-detail">Downloading</p>
+            </div>
+            <div id="listening-status" hidden>
+              <p class="listening-status-main">Listening</p>
+              <p class="listening-status-sub">Begin your recitation</p>
+            </div>
+            <div id="ready-state" hidden>
+              <p class="ready-prompt">Mic is ready</p>
+              <button id="btn-start" class="rec-btn rec-btn--start" type="button">Start</button>
+            </div>
+            <div id="recording-state" hidden>
+              <div class="listening-card" aria-live="polite">
+                <p class="listening-eyebrow">Mic is live</p>
+                <div class="waveform" id="listening-waveform" aria-hidden="true">
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                  <span class="waveform-bar"></span>
+                </div>
+                <p class="listening-callout">Read now</p>
+              </div>
+              <button id="btn-stop" class="rec-btn rec-btn--stop" type="button">Stop</button>
+            </div>
+            <div id="post-recording" hidden>
+              <div class="post-actions">
+                <button id="btn-report" class="action-btn action-btn--report" type="button">Report a miss</button>
+                <button id="btn-restart" class="action-btn action-btn--restart" type="button">Recite again</button>
+              </div>
+            </div>
+            <div id="verses"></div>
+            <div id="candidate-status" hidden></div>
+            <div id="raw-transcript"></div>
+            <details id="debug-panel" class="debug-panel" hidden>
+              <summary>
+                <span>Debug view</span>
+                <span class="debug-summary-actions">
+                  <span id="debug-copy-status" class="debug-copy-status" aria-live="polite"></span>
+                  <button id="debug-copy" class="debug-copy-btn" type="button">Copy JSON</button>
+                  <span id="debug-summary">0 events</span>
+                </span>
+              </summary>
+              <div id="debug-content" class="debug-content"></div>
+            </details>
+            <div id="listening-indicator">
+              <div class="pulse-ring"></div>
+              <div class="pulse-ring"></div>
+              <div class="pulse-ring"></div>
+              <div class="pulse-dot"></div>
+            </div>
+            <div id="permission-prompt" hidden>
+              <p>Microphone access is needed to listen to your recitation.</p>
+            </div>
           </div>
-          <p class="listening-callout">Read now</p>
-        </div>
-        <button id="btn-stop" class="rec-btn rec-btn--stop">Stop</button>
-      </div>
-      <div id="post-recording" hidden>
-        <div class="post-actions">
-          <button id="btn-report" class="action-btn action-btn--report">Report Error</button>
-          <button id="btn-restart" class="action-btn action-btn--restart">Start Again</button>
-        </div>
-      </div>
-      <div id="verses"></div>
-      <div id="candidate-status" hidden></div>
-      <div id="raw-transcript"></div>
-      <details id="debug-panel" class="debug-panel" hidden>
-        <summary>
-          <span>Debug view</span>
-          <span class="debug-summary-actions">
-            <span id="debug-copy-status" class="debug-copy-status" aria-live="polite"></span>
-            <button id="debug-copy" class="debug-copy-btn" type="button">Copy JSON</button>
-            <span id="debug-summary">0 events</span>
-          </span>
-        </summary>
-        <div id="debug-content" class="debug-content"></div>
-      </details>
-      <div id="listening-indicator">
-        <div class="pulse-ring"></div>
-        <div class="pulse-ring"></div>
-        <div class="pulse-ring"></div>
-        <div class="pulse-dot"></div>
-      </div>
-      <div id="permission-prompt" hidden>
-        <p>Microphone access is needed to listen to your recitation.</p>
-      </div>
-      <div id="offline-badge">
-        <span id="model-status">Ready to download</span>
-        <span class="badge-sep">&middot;</span>
-        <span id="engine-status">Zipformer</span>
-        <span class="badge-sep">&middot;</span>
-        on-device recognition
+          <p id="offline-badge">
+            <span id="model-status">Ready to download</span>
+            <span class="badge-sep">&middot;</span>
+            <span id="engine-status">Zipformer</span>
+            <span class="badge-sep">&middot;</span>
+            on-device recognition
+          </p>
+        </section>
       </div>
 
-      <a id="github-link" href="https://github.com/yazinsai/tilawa" target="_blank" rel="noopener">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.475 2 2 6.475 2 12a9.994 9.994 0 0 0 6.838 9.488c.5.087.687-.213.687-.476c0-.237-.013-1.024-.013-1.862c-2.512.463-3.162-.612-3.362-1.175c-.113-.288-.6-1.175-1.025-1.413c-.35-.187-.85-.65-.013-.662c.788-.013 1.35.725 1.538 1.025c.9 1.512 2.338 1.087 2.912.825c.088-.65.35-1.087.638-1.337c-2.225-.25-4.55-1.113-4.55-4.938c0-1.088.387-1.987 1.025-2.688c-.1-.25-.45-1.275.1-2.65c0 0 .837-.262 2.75 1.026a9.28 9.28 0 0 1 2.5-.338c.85 0 1.7.112 2.5.337c1.912-1.3 2.75-1.024 2.75-1.024c.55 1.375.2 2.4.1 2.65c.637.7 1.025 1.587 1.025 2.687c0 3.838-2.337 4.688-4.562 4.938c.362.312.675.912.675 1.85c0 1.337-.013 2.412-.013 2.75c0 .262.188.574.688.474A10.016 10.016 0 0 0 22 12c0-5.525-4.475-10-10-10Z"/></svg>
-        Open source
-      </a>
+      <footer class="colophon">
+        Tilawa, formerly Offline Tarteel. MIT licence, 2026. Zipformer2-CTC, 66&nbsp;MB, in-browser.
+        Sequence-accurate on the v1 53-sample and v2 43-sample streaming benches, median of 3 runs.
+        Source on <a href="https://github.com/yazinsai/tilawa" target="_blank" rel="noopener">GitHub</a>.
+        Uthmani set in Amiri. Audio never leaves this browser.
+      </footer>
 
       <dialog id="report-dialog">
         <div class="dialog-content">
-          <h2 class="dialog-title">Report Error</h2>
+          <h2 class="dialog-title">Report a miss</h2>
 
           <div class="dialog-section">
-            <label class="dialog-label">Your recording</label>
+            <label class="dialog-label" for="report-audio">Your recording</label>
             <audio id="report-audio" controls></audio>
+            <p class="field-help">Stays in this report. It is not used for training unless you send it.</p>
           </div>
 
           <div class="dialog-section">
-            <label class="dialog-label">What were you reciting?</label>
+            <label class="dialog-label" for="report-surah">What were you reciting?</label>
             <div class="verse-selectors">
               <select id="report-surah"></select>
               <select id="report-ayah"></select>
             </div>
+            <p class="field-help">Pick the surah and ayah you intended.</p>
           </div>
 
           <div class="dialog-section">
             <label class="dialog-label">Model predicted</label>
             <p id="report-prediction" class="prediction-text"></p>
+            <p class="field-help"></p>
           </div>
 
           <div class="dialog-section">
-            <label class="dialog-label">Notes (optional)</label>
-            <textarea id="report-notes" rows="3" placeholder="Describe the issue..."></textarea>
+            <label class="dialog-label" for="report-notes">Notes (optional)</label>
+            <textarea id="report-notes" rows="3" placeholder="e.g. jumped from 2:255 to 2:256"></textarea>
+            <p class="field-help">What broke, and what you expected.</p>
           </div>
 
           <div class="dialog-actions">
-            <button id="btn-submit-report" class="action-btn action-btn--report">Submit</button>
-            <button id="btn-cancel-report" class="action-btn action-btn--restart">Cancel</button>
+            <button id="btn-submit-report" class="action-btn action-btn--report" type="button">Send report</button>
+            <button id="btn-cancel-report" class="action-btn action-btn--restart" type="button">Cancel</button>
           </div>
 
           <p id="report-status" class="report-status" hidden></p>

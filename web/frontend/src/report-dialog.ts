@@ -84,7 +84,8 @@ export function openReportDialog(opts: ReportDialogOptions): void {
 $submit.addEventListener("click", async () => {
   if (!currentAudioBlob) return;
   $submit.setAttribute("disabled", "true");
-  $status.textContent = "Submitting...";
+  $submit.setAttribute("data-state", "loading");
+  $status.textContent = "Sending the recording and notes…";
   $status.hidden = false;
 
   const metadata = {
@@ -102,16 +103,19 @@ $submit.addEventListener("click", async () => {
   try {
     const res = await fetch("/api/reports", { method: "POST", body: formData });
     if (res.ok) {
-      $status.textContent = "Report submitted. Thank you!";
+      $submit.setAttribute("data-state", "success");
+      $status.textContent = "Report received. This dialog will close.";
       setTimeout(() => $dialog.close(), 1500);
     } else {
-      const err = await res.json();
-      $status.textContent = `Error: ${err.error || "Unknown error"}`;
+      const err = await res.json().catch(() => ({ error: "the server rejected the report" }));
       $submit.removeAttribute("disabled");
+      $submit.setAttribute("data-state", "error");
+      $status.textContent = `The report did not send (${err.error || "unknown"}). Check the connection and send it again.`;
     }
-  } catch (e) {
-    $status.textContent = "Network error. Please try again.";
+  } catch {
     $submit.removeAttribute("disabled");
+    $submit.setAttribute("data-state", "error");
+    $status.textContent = "The report did not send — the network dropped. Send it again when you are back online.";
   }
 });
 
