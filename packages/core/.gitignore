@@ -5,3 +5,4 @@ node_modules/
 # Synced from repo root at pack time by `npm run sync-docs`
 README.md
 LICENSE
+NOTICE.md
