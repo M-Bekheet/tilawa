@@ -133,6 +133,8 @@ let downloadPercent = 0;
 let setupFailed = false;
 let noMatchTimer: ReturnType<typeof setTimeout> | undefined;
 let audioAttempt = 0;
+let microphonePending = false;
+const $micPending = document.getElementById("mic-pending")!;
 let audioWorkletUrl: string | undefined;
 
 async function prepareAudioWorklet(): Promise<void> {
@@ -143,7 +145,7 @@ async function prepareAudioWorklet(): Promise<void> {
 }
 
 function refreshLabels(): void {
-  $demoTitle.textContent = state.isActive
+  $demoTitle.textContent = microphonePending ? tr("Microphone permission", "إذن الميكروفون") : state.isActive
     ? (state.hasFirstMatch ? tr("Verse found", "تمّ التعرّف على الآية") : tr("Listening", "نستمع لتلاوتك"))
     : tr("Try Tilawa", "جرّب تلاوة");
   $modelStatus.textContent = state.modelReady ? tr("Offline ready", "جاهز دون إنترنت")
@@ -1049,12 +1051,15 @@ document.addEventListener("DOMContentLoaded", () => {
     $btnStart.setAttribute("aria-busy", "true");
     const attempt = ++audioAttempt;
     $readyState.hidden = true;
-    $recordingState.hidden = false;
-    $recordingActions.hidden = false;
+    microphonePending = true;
+    $micPending.hidden = false;
+    $permissionPrompt.hidden = true;
+    $recordingState.hidden = true;
+    $recordingActions.hidden = true;
     $postRecording.hidden = true;
     _matchedWordIndices.clear();
     _trackingKey = "";
-    $listeningStatus.hidden = false;
+    $listeningStatus.hidden = true;
     state.sessionAudioChunks = [];
     state.lastModelPrediction = null;
     state.hasFirstMatch = false;
@@ -1075,8 +1080,16 @@ document.addEventListener("DOMContentLoaded", () => {
     state.worker?.postMessage({ type: "reset" });
     pushStreamingConfig();
     const started = await startAudio();
+    microphonePending = false;
+    $micPending.hidden = true;
+    refreshLabels();
     $btnStart.removeAttribute("aria-busy");
     if (attempt !== audioAttempt) { stopAudio(); return; }
+    if (started) {
+      $recordingState.hidden = false;
+      $recordingActions.hidden = false;
+      $listeningStatus.hidden = false;
+    }
     if (started) noMatchTimer = setTimeout(() => {
       if (!state.isActive || state.hasFirstMatch) return;
       document.getElementById("listening-title")!.textContent = tr("We haven’t found the verse yet.", "لم نتعرّف على الآية بعد.");
