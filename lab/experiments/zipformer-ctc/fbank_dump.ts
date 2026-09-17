@@ -4,8 +4,7 @@
 // Writes [nFrames, 80] float32-LE to <out> and prints nFrames on stdout.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { KaldiFbank } from "../../../web/frontend/src/lib/recitation/fbank.ts";
-import { FBANK_BINS } from "../../../web/frontend/src/lib/recitation/config.ts";
+import { FBANK_BINS, KaldiFbank } from "@tilawa/core";
 
 function parseArgs(argv: string[]): { pcmPath: string; outPath: string; chunk: number } {
   let chunk = 0;

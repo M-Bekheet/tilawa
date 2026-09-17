@@ -1,6 +1,6 @@
 """zipformer-ctc -- native MIT recitation engine + Zipformer2-CTC, benchmark wrapper.
 
-Pipeline (../web/frontend/src/lib/recitation + ZipformerHost):
+Pipeline (packages/core/src/recitation + ZipformerHost):
   16 kHz PCM -> Kaldi fbank (80 mel) -> streaming Zipformer2-CTC ONNX (251
   tajweed-phoneme tokens; default is shipped interp-gentle-a0.5 int8)
   -> greedy CTC -> whole-Quran 5-gram search + per-surah online DP tracker

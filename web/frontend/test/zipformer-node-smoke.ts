@@ -1,6 +1,6 @@
 /**
  * Node smoke for the Zipformer browser host. Feeds 001002.mp3 through the
- * same ZipformerHost the worker uses (onnxruntime-node, cpu EP).
+ * same ZipformerSession the worker uses (onnxruntime-node, cpu EP).
  *
  *   npx tsx test/zipformer-node-smoke.ts
  */
@@ -11,8 +11,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkerOutbound } from "../src/lib/types.ts";
-import { displayQuranFromRaw, ZipformerHost } from "../src/worker/zipformer-session.ts";
-import type { ZipformerIo } from "../src/lib/recitation/zipformerRunner.ts";
+import { displayQuranFromRaw, ZipformerSession } from "../src/worker/zipformer-session.ts";
+import type { ZipformerIo } from "@tilawa/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRONTEND = resolve(HERE, "..");
@@ -31,7 +31,7 @@ const CORPUS =
 const QURAN = resolve(FRONTEND, "public/quran.json");
 const AUDIO =
   process.argv[2] ??
-  resolve(WORKTREE, "benchmark/test_corpus/001002.mp3");
+  resolve(WORKTREE, "lab/benchmark/test_corpus/001002.mp3");
 const ORT_DIR = process.env.ZIPFORMER_ORT_DIR ?? resolve(FRONTEND, "node_modules");
 
 function loadAudio(filePath: string): Float32Array {
@@ -52,7 +52,7 @@ requireExisting(MODEL, "Run: bash web/frontend/scripts/fetch-zipformer-assets.sh
 requireExisting(IO_PATH, "Run: bash web/frontend/scripts/fetch-zipformer-assets.sh");
 requireExisting(CORPUS, "Run: bash web/frontend/scripts/fetch-zipformer-assets.sh");
 requireExisting(QURAN, "public/quran.json should be in the repo");
-requireExisting(AUDIO, "expected benchmark/test_corpus/001002.mp3");
+requireExisting(AUDIO, "expected lab/benchmark/test_corpus/001002.mp3");
 
 const require = createRequire(`${ORT_DIR}/`);
 const ort = require("onnxruntime-node");
@@ -62,12 +62,12 @@ const corpusJson = JSON.parse(readFileSync(CORPUS, "utf8"));
 const quranDb = displayQuranFromRaw(JSON.parse(readFileSync(QURAN, "utf8")));
 const pcm = loadAudio(AUDIO);
 
-const host = await ZipformerHost.create({
+const host = await ZipformerSession.create({
   ort,
-  modelBytes: new Uint8Array(readFileSync(MODEL)),
+  model: new Uint8Array(readFileSync(MODEL)),
   io,
-  corpusJson,
-  quranDb,
+  corpus: corpusJson,
+  quran: quranDb,
   executionProviders: ["cpu"],
 });
 

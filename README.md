@@ -6,13 +6,17 @@
 
 Offline Quran recognition. Give it 16 kHz mono audio, get back `surah:ayah`. Fully on-device — web, mobile, or node, no network at inference time.
 
-`@tilawa/core` is pure TypeScript with **zero native dependencies**. You inject an ONNX session behind a small `SessionRunner` interface, so the same package works everywhere by swapping which `onnxruntime` you wire in.
+`@tilawa/core` is pure TypeScript with **zero native dependencies**. You inject the ONNX runtime, so the same package works everywhere by swapping which `onnxruntime` you wire in.
+
+Two engines ship in the box. The default is **Zipformer** — a streaming Zipformer2-CTC over a 251-token tajweed-phoneme vocabulary, word-level tracking, 100% on both benchmarks. **FastConformer** (text CTC, one-shot or streaming) is still there under its original API.
 
 ```mermaid
 graph LR
-  dev[Your app] -->|injects ort session| runner[SessionRunner]
-  runner --> core["@tilawa/core: CTC decode + QuranDB + tracker"]
-  core --> result["surah / ayah / transcript"]
+  dev[Your app] -->|injects ort| core["@tilawa/core"]
+  core --> zip["Zipformer: fbank + phoneme CTC + word tracker"]
+  core --> fc["FastConformer: text CTC + QuranDB rerank"]
+  zip --> result["verse events / surah:ayah"]
+  fc --> result
 ```
 
 ## Install
@@ -25,7 +29,86 @@ npm i onnxruntime-node           # node
 npm i onnxruntime-react-native   # React Native
 ```
 
-Then download the model + text assets from [GitHub Releases](https://github.com/yazinsai/tilawa/releases/tag/v0.2.0):
+The default engine needs two files — the acoustic model and the phoneme corpus:
+
+```bash
+base=https://github.com/yazinsai/tilawa/releases/download/v0.3.0
+
+curl -L -O "$base/zipformer_interp_gentle_a05.int8.onnx"  # 66 MB — the model
+curl -L -O "$base/zipformer_quran.json"                    # 5.5 MB — phoneme corpus
+```
+
+Plus `quran.json` (all 6,236 verses) from [`web/frontend/public/quran.json`](web/frontend/public/quran.json) for the Arabic text in `verse_match` events. The model's I/O manifest is bundled in the package (`DEFAULT_ZIPFORMER_IO`), so you only override it if you export your own model.
+
+Both Zipformer assets are **NPL-1.2** (non-commercial, share-alike) — see [NOTICE.md](NOTICE.md). If that doesn't work for you, run the MIT-licensed FastConformer engine instead ([below](#alternate-engine-fastconformer)).
+
+## Quickstart
+
+The core never imports `onnxruntime` — you pass the runtime in and it builds the session. Copy-paste adapters for each runtime live in [`packages/core/examples/`](packages/core/examples/).
+
+```ts
+import * as ort from "onnxruntime-web/wasm";
+import { createRecognitionSession } from "@tilawa/core";
+
+const session = await createRecognitionSession({
+  ort,                                       // engine defaults to "zipformer"
+  model: () => fetch("/zipformer_interp_gentle_a05.int8.onnx").then((r) => r.arrayBuffer()),
+  corpus: () => fetch("/zipformer_quran.json").then((r) => r.json()),
+  quran: () => fetch("/quran.json").then((r) => r.json()),
+  onEvent: (msg) => {
+    if (msg.type === "verse_match") console.log(`${msg.surah}:${msg.ayah}`, msg.verse_text);
+  },
+});
+
+// push mono 16 kHz Float32 chunks as they arrive from the mic (~480 ms works well)
+for await (const chunk of micChunks) await session.feed(chunk);
+
+const final = await session.stop(); // flushes the tail, ends with final_sequence
+session.reset();                    // start a new recitation, same loaded model
+```
+
+`createZipformerSession(opts)` is the same thing without the engine switch, and returns the richer `ZipformerSession` directly (`transcript`, `verses`, `engineState`, …).
+
+### Node (onnxruntime-node)
+
+```ts
+import { readFile } from "node:fs/promises";
+import * as ort from "onnxruntime-node";
+import { createZipformerSession } from "@tilawa/core";
+
+const session = await createZipformerSession({
+  ort,
+  model: () => readFile("zipformer_interp_gentle_a05.int8.onnx"),
+  corpus: async () => JSON.parse(await readFile("zipformer_quran.json", "utf8")),
+  quran: async () => JSON.parse(await readFile("quran.json", "utf8")),
+});
+
+await session.feed(pcm16k);
+const final = await session.stop();
+console.log(session.transcript, session.verses);
+```
+
+### React Native (onnxruntime-react-native)
+
+RN can't hand the model to ORT as an `ArrayBuffer` — bundle the `.onnx` as an asset, copy it to the documents dir, create the session from the **path**, and pass that session in with the runtime's `Tensor`:
+
+```ts
+import * as ort from "onnxruntime-react-native";
+import { createZipformerSession } from "@tilawa/core";
+
+const session = await createZipformerSession({
+  session: await ort.InferenceSession.create(modelPath),
+  Tensor: ort.Tensor,
+  corpus: () => loadJsonAsset("zipformer_quran.json"),
+  quran: () => loadJsonAsset("quran.json"),
+});
+```
+
+Full walkthrough — asset copying, mic wiring, Hermes caveats: [`packages/core/examples/react-native.md`](packages/core/examples/react-native.md).
+
+## Alternate engine: FastConformer
+
+The original text-CTC pipeline. Pick it when you need one-shot `transcribe()`, a raw Arabic transcript, or MIT-only assets. Download them from [release v0.2.0](https://github.com/yazinsai/tilawa/releases/tag/v0.2.0):
 
 ```bash
 base=https://github.com/yazinsai/tilawa/releases/download/v0.2.0
@@ -35,13 +118,9 @@ curl -L -O "$base/vocab.json"                      # TilawaAssets.vocab
 curl -L -O "$base/quran_ctc_tokens.json"           # TilawaAssets.quranCtcTokens
 ```
 
-Plus `quran.json` (all 6,236 verses) from [`web/frontend/public/quran.json`](web/frontend/public/quran.json) → `TilawaAssets.quran`.
+Here you write a ~20-line `SessionRunner` that owns the `ort` dependency, then hand it to `createTilawaSession` along with the three JSON assets.
 
-## Quickstart
-
-The core never imports `onnxruntime` — you write a ~20-line `SessionRunner` that owns the `ort` dependency, then hand it to `createTilawaSession` along with the three JSON assets. Copy-paste adapters for each runtime live in [`packages/core/examples/`](packages/core/examples/).
-
-### Web (onnxruntime-web / WASM)
+### FastConformer on web
 
 ```ts
 import * as ort from "onnxruntime-web/wasm";
@@ -72,7 +151,7 @@ const pred = await session.transcribe(audioFloat32); // 16 kHz mono
 // { surah: 1, ayah: 1, ayah_end: 3, score: 0.92, transcript: "..." }
 ```
 
-### Node (onnxruntime-node)
+### FastConformer on node
 
 ```ts
 import { readFile } from "node:fs/promises";
@@ -98,7 +177,7 @@ const session = createTilawaSession(runner, { vocab, quranCtcTokens, quran });
 const pred = await session.transcribe(audioFloat32);
 ```
 
-### React Native (onnxruntime-react-native)
+### FastConformer on React Native
 
 RN can't hand the model to ORT as an `ArrayBuffer` — bundle the `.onnx` as an asset, copy it to the documents dir, and pass the **file path**.
 
@@ -125,25 +204,15 @@ const session = createTilawaSession(runner, { vocab, quranCtcTokens, quran });
 const pred = await session.transcribe(audioFloat32);
 ```
 
-## Streaming (live recitation)
+### FastConformer streaming
 
-For live recitation, feed audio chunks with `feed()`. The built-in tracker emits verse matches, candidates, and word-level progress as the reciter speaks. Subscribe via `onOutput`, or use the messages `feed()` returns.
+FastConformer also streams: feed chunks with `feed()` and its tracker emits the same verse events.
 
 ```ts
 const session = createTilawaSession(runner, assets, {
   config: "balanced", // or a Partial<StreamingConfig>
   onOutput: (msg) => {
-    switch (msg.type) {
-      case "verse_match":
-        console.log(`${msg.surah}:${msg.ayah}`, msg.verse_text, msg.confidence);
-        break;
-      case "word_progress":
-        console.log(`word ${msg.word_index}/${msg.total_words}`);
-        break;
-      case "final_sequence":
-        console.log("done", msg.verses);
-        break;
-    }
+    if (msg.type === "verse_match") console.log(`${msg.surah}:${msg.ayah}`, msg.confidence);
   },
 });
 
@@ -153,7 +222,11 @@ for await (const chunk of micChunks) await session.feed(chunk);
 session.reset(); // start a new recitation
 ```
 
-`onOutput` receives a `WorkerOutbound` union. The ones you care about:
+It has no explicit `stop()` — it finalizes on trailing silence. Wrap it in `createRecognitionSession({ engine: "fastconformer", runner, assets })` if you want the uniform `feed()`/`stop()`/`reset()` surface; `stop()` there feeds the silence for you.
+
+## Verse events
+
+Both engines emit the same `WorkerOutbound` union — via the `onEvent`/`onOutput` callback, and as the return value of `feed()`/`stop()`. The ones you care about:
 
 | `msg.type` | Meaning | Key fields |
 |---|---|---|
@@ -163,6 +236,42 @@ session.reset(); // start a new recitation
 | `final_sequence` | Full ordered sequence when recitation ends | `verses[]`, `confidence` |
 
 ## API reference
+
+### `createRecognitionSession(options)`
+
+The engine switch. `engine` defaults to `"zipformer"` (`DEFAULT_ENGINE`); pass `engine: "fastconformer"` with `{ runner, assets }` for the other path. Returns a `RecognitionSession`:
+
+| Member | Purpose |
+|---|---|
+| `feed(chunk)` | Push mono 16 kHz `Float32Array` → `WorkerOutbound[]` |
+| `stop()` / `flush()` | End of audio: flush the tail, emit remaining verses + `final_sequence` |
+| `reset()` | Drop all state, keep the loaded model |
+| `engine` | `"zipformer"` \| `"fastconformer"` |
+| `zipformer` / `fastconformer` | The underlying session, or `null` for the engine you didn't pick |
+
+### `createZipformerSession(options)` → `ZipformerSession`
+
+The default engine, unwrapped. ONNX comes in one of two shapes:
+
+- `{ ort, model }` — the runtime namespace plus model bytes (`Uint8Array`, `ArrayBuffer`, or a loader returning either). The session is created for you with `executionProviders` (default `["cpu"]`).
+- `{ session, Tensor }` — an `InferenceSession` you created plus that runtime's `Tensor` constructor. This is the React Native shape, where `create()` takes a file path.
+
+| Option | Default | Purpose |
+|---|---|---|
+| `corpus` | *required* | Parsed `zipformer_quran.json`, or a loader for it |
+| `quran` | empty | Arabic text for `verse_match`; raw `quran.json` rows, a `QuranDB`, or a loader |
+| `io` | `DEFAULT_ZIPFORMER_IO` | Model I/O manifest — override only for your own export |
+| `onEvent` | — | Verse events, same order `feed()`/`stop()` return them |
+| `config` | `DEFAULT_CONFIG` | `Partial<EngineConfig>` — fbank/CTC/search/tracker knobs |
+| `minWordFraction` | `0.5` | Fraction of an ayah's words that must land before it's emitted |
+| `enableFallback` | `true` | Whole-ayah search over the transcript when nothing locked |
+| `stayOnSurah` | `false` | Never relocate off the surah we locked onto |
+| `allowGaps` / `gapMaxWords` | `false` / `3` | Let `verses` bridge one short skipped ayah |
+| `tailSeconds` | `2.0` | Silence `stop()` appends to flush the CTC tail |
+
+Beyond `feed()`/`stop()`/`flush()`/`reset()`, the session exposes `transcript` (raw phonemes), `tallies` / `verses` (per-ayah word tallies, gated), `engineState` (`"searching"` \| `"tracking"`), and `config`.
+
+### `createTilawaSession(runner, assets, options?)` → `TilawaSession`
 
 ```ts
 createTilawaSession(runner: SessionRunner, assets: TilawaAssets, options?): TilawaSession
@@ -217,7 +326,21 @@ the tracker's state. Copy first if you need to modify them.
 
 The full `StreamingConfig` interface, the three presets (`CONSERVATIVE_STREAMING_CONFIG`, `BALANCED_STREAMING_CONFIG`, `AGGRESSIVE_ADVANCE_STREAMING_CONFIG`), and every exported type are re-exported from `@tilawa/core`.
 
-## Model
+## Models
+
+### Zipformer (default)
+
+| | Value |
+|---|---|
+| **Model** | `interp-gentle-a0.5` — 0.5 × `Quran-Lab/zipformer_p-arabic-v3` v3.1 + 0.5 × our gentle fine-tune |
+| **File** | `zipformer_interp_gentle_a05.int8.onnx` — 66 MB, int8 dynamic MatMul |
+| **Input** | 16 kHz mono `Float32Array`, streamed; 80-bin Kaldi fbank computed in TypeScript |
+| **Output** | Streaming CTC over 251 tajweed-phoneme tokens → whole-Quran phoneme n-gram search → per-surah online DP tracker → per-word verdicts |
+| **Recall / Precision / SeqAcc** | 100% / 100% / 100% on v1 (53/53) and v2 (43/43), median of 3 streaming repeats |
+| **Latency** | ~5% RTF single-threaded CPU (real-time with room to spare) |
+| **License** | **NPL-1.2** — non-commercial, share-alike ([NOTICE.md](NOTICE.md)) |
+
+### FastConformer
 
 | | Value |
 |---|---|
@@ -233,7 +356,7 @@ The full `StreamingConfig` interface, the three presets (`CONSERVATIVE_STREAMING
 
 [`web/frontend/`](web/frontend/) is a complete browser app that runs the SDK live — record and watch verses lock in in real time. It's also the regression guard for the SDK.
 
-The demo defaults to Zipformer2-CTC (`interp-gentle-a0.5` int8, 66 MB): **100% recall / 100% precision / 100% sequence accuracy** on v1 (53/53) and v2 (43/43), median of 3 streaming repeats. Append `?engine=fastconformer` (or set `localStorage.tilawaEngine`) to fall back to the previous FastConformer worker.
+The demo runs the SDK's default Zipformer engine in a Web Worker — the worker is a thin host over `ZipformerSession` from `@tilawa/core`: **100% recall / 100% precision / 100% sequence accuracy** on v1 (53/53) and v2 (43/43), median of 3 streaming repeats. Append `?engine=fastconformer` (or set `localStorage.tilawaEngine`) to fall back to the FastConformer worker.
 
 ```bash
 cd web/frontend && npm run dev

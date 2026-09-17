@@ -1,15 +1,14 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG } from "../../src/lib/recitation/config";
-import { ALPHABET, charCost, costTable, UNKNOWN_ID } from "../../src/lib/recitation/phonemeCost";
+import { VECTORS } from "./paths";
+import { DEFAULT_CONFIG } from "../../src/recitation/config";
+import { ALPHABET, charCost, costTable, UNKNOWN_ID } from "../../src/recitation/phonemeCost";
 import {
   alignSemiGlobal,
   normalizedDistance,
-} from "../../src/lib/recitation/alignment";
+} from "../../src/recitation/alignment";
 
-const VECTORS = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../lab/docs/specs/vectors");
 
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;

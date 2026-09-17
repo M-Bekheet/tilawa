@@ -1,9 +1,9 @@
-import { BUFFER_CAP, DEFAULT_CONFIG, type EngineConfig } from "./config";
-import type { QuranCorpus } from "./corpus";
-import { expandTokens } from "./ctcDecoder";
-import type { QuranIndex } from "./search";
-import { Tracker } from "./tracker";
-import { VerdictTracer } from "./verdicts";
+import { BUFFER_CAP, DEFAULT_CONFIG, type EngineConfig } from "./config.js";
+import type { QuranCorpus } from "./corpus.js";
+import { expandTokens } from "./ctcDecoder.js";
+import type { QuranIndex } from "./search.js";
+import { Tracker } from "./tracker.js";
+import { VerdictTracer } from "./verdicts.js";
 import type {
   CtcToken,
   EngineEvent,
@@ -11,7 +11,7 @@ import type {
   HeardChar,
   SearchHint,
   WordVerdict,
-} from "./types";
+} from "./types.js";
 
 export class RecitationEngine {
   readonly corpus: QuranCorpus;

@@ -1,17 +1,13 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { QuranCorpus } from "../../src/lib/recitation/corpus";
-import { QuranIndex, stripPreambles, fnv1aBucket } from "../../src/lib/recitation/search";
-import { costTable } from "../../src/lib/recitation/phonemeCost";
-import { DEFAULT_CONFIG } from "../../src/lib/recitation/config";
+import { requireCorpus, VECTORS } from "./paths";
+import { QuranCorpus } from "../../src/recitation/corpus";
+import { QuranIndex, stripPreambles, fnv1aBucket } from "../../src/recitation/search";
+import { costTable } from "../../src/recitation/phonemeCost";
+import { DEFAULT_CONFIG } from "../../src/recitation/config";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
-const CORPUS_PATH =
-  process.env.ZIPFORMER_CORPUS ??
-  resolve(HERE, "../../public/zipformer_quran.json");
+const CORPUS_PATH = requireCorpus();
 
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;

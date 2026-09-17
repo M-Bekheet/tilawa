@@ -1,4 +1,4 @@
-import { FBANK_BINS, FRAME_LENGTH, FRAME_SHIFT, SAMPLE_RATE } from "./config";
+import { FBANK_BINS, FRAME_LENGTH, FRAME_SHIFT, SAMPLE_RATE } from "./config.js";
 
 const FFT_SIZE = 512;
 const PREEMPH = 0.97;

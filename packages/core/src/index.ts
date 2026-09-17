@@ -11,12 +11,20 @@ import {
 import {
   DEFAULT_STREAMING_CONFIG,
   normalizeStreamingConfig,
+  SAMPLE_RATE,
   type StreamingConfig,
   type WorkerOutbound,
 } from "./types.js";
 import type { SessionRunner } from "./session.js";
+import {
+  ZipformerSession,
+  type ZipformerSessionOptions,
+} from "./recitation/session.js";
 
 export type { SessionRunner, SessionOutput } from "./session.js";
+
+// The default recognition path: streaming Zipformer2-CTC over tajweed phonemes.
+export * from "./recitation/index.js";
 
 // Full config + type surface for app developers.
 export * from "./types.js";
@@ -210,5 +218,91 @@ export function createTilawaSession(
     getConfig(): StreamingConfig {
       return activeConfig;
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Engine selection
+// ---------------------------------------------------------------------------
+
+/** Which acoustic pipeline recognizes the recitation. */
+export type EngineName = "zipformer" | "fastconformer";
+
+/** Zipformer is the default: better accuracy, no text-CTC assets to ship. */
+export const DEFAULT_ENGINE: EngineName = "zipformer";
+
+/** What both engines agree on: PCM in, `WorkerOutbound` verse events out. */
+export interface RecognitionSession {
+  readonly engine: EngineName;
+  /** Push one chunk of mono 16 kHz float32 PCM. */
+  feed(audioChunk: Float32Array): Promise<WorkerOutbound[]>;
+  /** End of audio: flush the tail, emit the remaining verses + `final_sequence`. */
+  stop(): Promise<WorkerOutbound[]>;
+  /** Alias of {@link stop}. */
+  flush(): Promise<WorkerOutbound[]>;
+  /** Drop all state — new recitation, same model. */
+  reset(): void;
+  /** The Zipformer session, when `engine === "zipformer"`. */
+  readonly zipformer: ZipformerSession | null;
+  /** The FastConformer session, when `engine === "fastconformer"`. */
+  readonly fastconformer: TilawaSession | null;
+}
+
+export interface FastConformerEngineOptions extends CreateTilawaSessionOptions {
+  engine: "fastconformer";
+  /** The ONNX injection seam — see {@link SessionRunner}. */
+  runner: SessionRunner;
+  /** vocab.json + quran_ctc_tokens.json + quran.json. */
+  assets: TilawaAssets;
+}
+
+export type ZipformerEngineOptions = ZipformerSessionOptions & {
+  engine?: "zipformer";
+};
+
+export type CreateRecognitionSessionOptions =
+  | ZipformerEngineOptions
+  | FastConformerEngineOptions;
+
+/**
+ * Create a recognition session for either engine.
+ *
+ * Defaults to `"zipformer"` — the streaming phoneme engine (see
+ * `src/recitation/`). Pass `engine: "fastconformer"` with a `SessionRunner`
+ * plus text-CTC assets for the original pipeline.
+ */
+export async function createRecognitionSession(
+  options: CreateRecognitionSessionOptions,
+): Promise<RecognitionSession> {
+  if (options.engine === "fastconformer") {
+    const { engine, runner, assets, ...rest } = options;
+    const session = createTilawaSession(runner, assets, rest);
+    const flush = async (): Promise<WorkerOutbound[]> => {
+      // The FastConformer tracker finalizes on trailing silence; give it enough
+      // to trip `finalSilenceSec` so `final_sequence` lands.
+      const seconds = session.getConfig().finalSilenceSec + 0.2;
+      return session.feed(new Float32Array(Math.round(seconds * SAMPLE_RATE)));
+    };
+    return {
+      engine,
+      feed: (chunk) => session.feed(chunk),
+      stop: flush,
+      flush,
+      reset: () => session.reset(),
+      zipformer: null,
+      fastconformer: session,
+    };
+  }
+
+  const { engine: _engine, ...zipformerOptions } = options;
+  const session = await ZipformerSession.create(zipformerOptions);
+  return {
+    engine: "zipformer",
+    feed: (chunk) => session.feed(chunk),
+    stop: () => session.stop(),
+    flush: () => session.flush(),
+    reset: () => void session.reset(),
+    zipformer: session,
+    fastconformer: null,
   };
 }

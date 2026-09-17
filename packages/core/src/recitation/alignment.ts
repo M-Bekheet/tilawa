@@ -1,4 +1,4 @@
-import { INSERT_DELETE_COST, type CostTable } from "./phonemeCost";
+import { INSERT_DELETE_COST, type CostTable } from "./phonemeCost.js";
 
 export interface SemiGlobalResult {
   cost: number;

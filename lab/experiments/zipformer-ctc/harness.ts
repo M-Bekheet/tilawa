@@ -4,7 +4,7 @@
 //   {"id": 1, "pcm": "/path/to/float32le-16k.bin"}
 //   -> {"id": 1, "verses": [{surah, ayah, ok, unsure, words}], "transcript": "...",
 //       "events": [...], "decodeMs": n}
-// Host loop is ZipformerHost + zipformer-emission (same as the browser worker).
+// Host loop is @tilawa/core's ZipformerSession + emission (same as the browser worker).
 
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
@@ -13,16 +13,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  ayahMeetsGate,
-  MIN_WORD_FRACTION,
-  type AyahTally,
-} from "../../../web/frontend/src/lib/zipformer-emission.ts";
-import {
   DEFAULT_CONFIG,
+  displayQuranFromRaw,
+  MIN_WORD_FRACTION,
+  ZipformerSession,
+  type BridgedAyahTally,
   type EngineConfig,
   type ZipformerIo,
-} from "../../../web/frontend/src/lib/recitation/index.ts";
-import { displayQuranFromRaw, ZipformerHost } from "../../../web/frontend/src/worker/zipformer-session.ts";
+} from "@tilawa/core";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..", "..");
@@ -71,13 +69,13 @@ const quranDb = existsSync(DISPLAY_QURAN)
   ? displayQuranFromRaw(JSON.parse(readFileSync(DISPLAY_QURAN, "utf8")))
   : displayQuranFromRaw([]);
 
-async function createHost(): Promise<ZipformerHost> {
-  const created = await ZipformerHost.create({
+async function createHost(): Promise<ZipformerSession> {
+  return ZipformerSession.create({
     ort,
-    modelBytes: new Uint8Array(readFileSync(MODEL)),
+    model: new Uint8Array(readFileSync(MODEL)),
     io,
-    corpusJson,
-    quranDb,
+    corpus: corpusJson,
+    quran: quranDb,
     executionProviders: ["cpu"],
     config: CONFIG,
     tailSeconds: TAIL_SECONDS,
@@ -85,12 +83,13 @@ async function createHost(): Promise<ZipformerHost> {
     stayOnSurah: MODE === "stay",
     enableFallback: FALLBACK,
     fallbackMaxDistance: FALLBACK_MAX_DISTANCE,
+    allowGaps: ALLOW_GAPS,
+    gapMaxWords: GAP_MAX_WORDS,
+    debug: true,
   });
-  created.debugEnabled = true;
-  return created;
 }
 
-function ayahWordCount(host: ZipformerHost, surah: number, ayah: number): number {
+function ayahWordCount(host: ZipformerSession, surah: number, ayah: number): number {
   try {
     return host.wordCount(surah, ayah);
   } catch {
@@ -98,25 +97,7 @@ function ayahWordCount(host: ZipformerHost, surah: number, ayah: number): number
   }
 }
 
-function bridgeGaps(accepted: AyahTally[], tallies: AyahTally[]): AyahTally[] {
-  const have = new Set(accepted.map((t) => `${t.surah}:${t.ayah}`));
-  const extra: Array<AyahTally & { bridged?: boolean }> = [];
-  for (const t of tallies) {
-    const key = `${t.surah}:${t.ayah}`;
-    if (have.has(key)) continue;
-    if (t.words > GAP_MAX_WORDS) continue;
-    if (t.ok + t.unsure < 1) continue;
-    if (t.wrong > t.ok + t.unsure) continue;
-    if (!have.has(`${t.surah}:${t.ayah - 1}`)) continue;
-    if (!have.has(`${t.surah}:${t.ayah + 1}`)) continue;
-    extra.push({ ...t, bridged: true });
-    have.add(key);
-  }
-  if (!extra.length) return accepted;
-  return [...accepted, ...extra].sort((a, b) => a.firstSeen - b.firstSeen);
-}
-
-async function recognize(host: ZipformerHost, pcm: Float32Array) {
+async function recognize(host: ZipformerSession, pcm: Float32Array) {
   const t0 = performance.now();
   host.reset();
   const events: Array<Record<string, unknown>> = [];
@@ -140,10 +121,7 @@ async function recognize(host: ZipformerHost, pcm: Float32Array) {
   collect(await host.stop());
 
   const tallies = host.tallies;
-  let verses = tallies.filter((t) => ayahMeetsGate(t, MIN_FRAC));
-  if (ALLOW_GAPS) {
-    verses = bridgeGaps(verses, tallies);
-  }
+  const verses: BridgedAyahTally[] = host.verses;
 
   let fallback = host.lastFallback;
   if (FALLBACK && verses.length === 0 && fallback) {
@@ -167,7 +145,7 @@ async function recognize(host: ZipformerHost, pcm: Float32Array) {
     fallback,
     all: tallies,
     cursorOrder,
-    transcript: host.transcriptText,
+    transcript: host.transcript,
     events,
     state: host.engineState,
     decodeMs: Math.round(performance.now() - t0),

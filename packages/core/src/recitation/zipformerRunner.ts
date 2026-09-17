@@ -46,6 +46,22 @@ function numel(dims: readonly number[]): number {
   return n;
 }
 
+/**
+ * The model's `processed_lens` cache state is int64, which ORT represents as a
+ * `BigInt64Array`. Hermes only has it with BigInt enabled, so say so plainly
+ * rather than throwing from inside state init.
+ */
+function int64Zeros(n: number): BigInt64Array {
+  if (typeof BigInt64Array === "undefined") {
+    throw new Error(
+      "BigInt64Array is unavailable, so the model's int64 cache states cannot " +
+        "be built. On React Native this means Hermes without BigInt support — " +
+        "upgrade to React Native >= 0.70 or enable BigInt in the Hermes build.",
+    );
+  }
+  return new BigInt64Array(n);
+}
+
 export class ZipformerRunner {
   readonly io: ZipformerIo;
   leftoverFrames = 0;
@@ -146,7 +162,7 @@ export class ZipformerRunner {
       if (inp.name === "x") continue;
       const n = numel(inp.dims);
       if (inp.dtype === "int64") {
-        this.states.set(inp.name, new this.Tensor("int64", new BigInt64Array(n), inp.dims));
+        this.states.set(inp.name, new this.Tensor("int64", int64Zeros(n), inp.dims));
       } else {
         this.states.set(inp.name, new this.Tensor("float32", new Float32Array(n), inp.dims));
       }
