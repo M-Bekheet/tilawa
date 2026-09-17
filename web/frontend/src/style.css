@@ -62,7 +62,8 @@ h3 { font-size: 23px; font-weight: 400; letter-spacing: -.04em; line-height: 31p
 .waveform { display: flex; gap: 5px; align-items: center; justify-content: center; height: 56px; margin-block: 12px; }
 .waveform-bar { width: 3px; height: 54px; border-radius: 2px; background: var(--color-ink); transform: scaleY(var(--bar-level, .2)); }
 .stop-icon { width: 9px; height: 9px; background: currentColor; }
-#verses:not(:empty) { position: relative; max-height: 400px; overflow-y: auto; overscroll-behavior: contain; padding-block: 24px; scrollbar-width: thin; margin-bottom: 24px; }
+#verses:not(:empty) { padding-block: 24px; margin-bottom: 24px; }
+.verse-scroll { max-height: 300px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .surah-header { font-size: 25px; line-height: 30px; }
 .surah-meta { font-size: 13px; color: var(--color-muted); border-bottom: var(--rule); padding-block: 8px 18px; margin-bottom: 20px; }
 .verse-body, .bismillah { font: 400 29px/53px Amiri, serif; text-align: right; }
@@ -251,6 +252,3 @@ h3 { font-size: 23px; font-weight: 400; letter-spacing: -.04em; line-height: 31p
 
 
 @media (max-width: 767px) { [lang="ar"] #developers-title { max-width: 230px; } }
-
-.surah-header { position: sticky; top: 0; z-index: 2; background: var(--color-surface); }
-.surah-meta { position: sticky; top: 30px; z-index: 2; background: var(--color-surface); }
