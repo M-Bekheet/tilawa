@@ -73,6 +73,8 @@ export type WorkerInbound =
   | { type: "init" }
   | { type: "audio"; samples: Float32Array }
   | { type: "reset" }
+  /** End of audio: flush the tail and emit `final_sequence`. */
+  | { type: "stop" }
   | { type: "set_debug"; enabled: boolean }
   | { type: "set_config"; config: StreamingConfig };
 

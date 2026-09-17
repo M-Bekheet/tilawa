@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createTilawaSession, type SessionRunner, type TilawaAssets } from "../src/index";
+import {
+  createRecognitionSession,
+  createTilawaSession,
+  DEFAULT_ENGINE,
+  type SessionRunner,
+  type TilawaAssets,
+} from "../src/index";
 import type { SessionOutput } from "../src/session";
 
 /**
@@ -124,5 +130,36 @@ describe("createTilawaSession decode+match (no ONNX)", () => {
     expect(pred.surah).toBe(0);
     expect(pred.ayah).toBe(0);
     expect(pred.score).toBe(0);
+  });
+});
+
+describe("engine selection", () => {
+  it("defaults to zipformer", () => {
+    expect(DEFAULT_ENGINE).toBe("zipformer");
+  });
+
+  it("wires the fastconformer path and flushes on stop()", async () => {
+    const session = await createRecognitionSession({
+      engine: "fastconformer",
+      runner: runnerFor(quranCtcTokens["112:1:1"]),
+      assets,
+    });
+
+    expect(session.engine).toBe("fastconformer");
+    expect(session.zipformer).toBeNull();
+    expect(session.fastconformer).not.toBeNull();
+
+    // Two seconds of speech-level audio, then stop() supplies the trailing
+    // silence the FastConformer tracker needs to finalize.
+    const speech = new Float32Array(32000).fill(0.2);
+    await session.feed(speech);
+    const flushed = await session.stop();
+
+    const final = flushed.filter((m) => m.type === "final_sequence").at(-1);
+    expect(final?.type).toBe("final_sequence");
+    if (final?.type !== "final_sequence") throw new Error("unreachable");
+    expect(final.verses.map((v) => `${v.surah}:${v.ayah}`)).toEqual(["112:1"]);
+
+    session.reset();
   });
 });
