@@ -1,35 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { KaldiFbank } from "../../src/lib/recitation/fbank";
+import { KaldiFbank } from "../../src/recitation/fbank";
+import { findClip, findPython, findPythonRoot, VECTORS } from "./paths";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
-const WORKTREE = resolve(HERE, "../../../..");
-const MAIN_CHECKOUT = resolve(WORKTREE, "../..");
 const CHUNK = 7680;
 
-function firstExisting(...paths: Array<string | undefined>): string | null {
-  for (const p of paths) {
-    if (p && existsSync(p)) return p;
-  }
-  return null;
-}
-
-const PY = firstExisting(
-  process.env.TILAWA_PY,
-  resolve(WORKTREE, ".venv/bin/python"),
-  resolve(MAIN_CHECKOUT, ".venv/bin/python"),
-);
-const CLIP = firstExisting(
-  process.env.TILAWA_CLIP,
-  resolve(WORKTREE, "benchmark/test_corpus/001002.mp3"),
-  resolve(MAIN_CHECKOUT, "benchmark/test_corpus/001002.mp3"),
-);
-const PY_ROOT = existsSync(resolve(WORKTREE, "shared/audio.py")) ? WORKTREE : MAIN_CHECKOUT;
+const PY = findPython();
+const CLIP = findClip();
+const PY_ROOT = findPythonRoot();
 
 function loadVector<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;

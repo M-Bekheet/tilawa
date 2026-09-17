@@ -1,9 +1,9 @@
-import { DEFAULT_CONFIG } from "./config";
-import { QuranCorpus } from "./corpus";
-import { normalizedDistance } from "./alignment";
-import { costTable, type CostTable } from "./phonemeCost";
-import { stripPreambles } from "./search";
-import type { FallbackHit } from "./types";
+import { DEFAULT_CONFIG } from "./config.js";
+import { QuranCorpus } from "./corpus.js";
+import { normalizedDistance } from "./alignment.js";
+import { costTable, type CostTable } from "./phonemeCost.js";
+import { stripPreambles } from "./search.js";
+import type { FallbackHit } from "./types.js";
 
 export function wholeAyahFallback(
   text: string,

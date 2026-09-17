@@ -1,4 +1,4 @@
-import type { SurahRecord } from "./types";
+import type { SurahRecord } from "./types.js";
 
 interface RawWord {
   0: string;

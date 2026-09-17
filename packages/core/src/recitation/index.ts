@@ -1,0 +1,94 @@
+export { DEFAULT_CONFIG, BUFFER_CAP, FBANK_BINS, CTC_HZ } from "./config.js";
+export type { EngineConfig } from "./config.js";
+export { KaldiFbank } from "./fbank.js";
+export { ZipformerRunner } from "./zipformerRunner.js";
+export type {
+  ZipformerIo,
+  ZipformerIoInput,
+  OrtLike,
+  OrtSessionLike,
+  TensorLike,
+} from "./zipformerRunner.js";
+export { GreedyCtcDecoder, expandTokens } from "./ctcDecoder.js";
+export { TOKENS, BLANK_ID, VOCAB_SIZE } from "./tokens.js";
+export { QuranCorpus } from "./corpus.js";
+export {
+  CostTable,
+  costTable,
+  charCost,
+  charId,
+  ALPHABET,
+  TABLE_SIZE,
+  UNKNOWN_ID,
+} from "./phonemeCost.js";
+export {
+  normalizedDistance,
+  weightedLevenshtein,
+  alignGlobal,
+  alignSemiGlobal,
+} from "./alignment.js";
+export {
+  QuranIndex,
+  stripPreambles,
+  fnv1aBucket,
+  ISTIADHA,
+  BASMALA,
+} from "./search.js";
+export { Tracker } from "./tracker.js";
+export { VerdictTracer, pausalPhonemes } from "./verdicts.js";
+export { RecitationEngine } from "./engine.js";
+export { wholeAyahFallback } from "./fallback.js";
+export type {
+  CtcToken,
+  HeardChar,
+  VerdictState,
+  WordVerdict,
+  EngineEvent,
+  EngineState,
+  SearchHit,
+  SearchResult,
+  SearchHint,
+  FallbackHit,
+  StripResult,
+} from "./types.js";
+
+// Verse emission policy: per-word verdicts -> ayah-level SDK events.
+export {
+  MIN_WORD_FRACTION,
+  FALLBACK_MAX_DISTANCE,
+  GAP_MAX_WORDS,
+  ayahKey,
+  ayahConfidence,
+  ayahMeetsGate,
+  snapshotTallies,
+  accumulateSnapshot,
+  mergeTallies,
+  newlyEligibleAyahs,
+  shouldRunFallback,
+  fallbackConfidence,
+  buildFinalSequence,
+  bridgeGapAyahs,
+  wordProgressFromCursor,
+} from "./emission.js";
+export type {
+  AyahTally,
+  BridgedAyahTally,
+  EmissionVerdict,
+  EmissionFallback,
+  EmissionCursor,
+  WordCountFn,
+} from "./emission.js";
+
+// The streaming session: PCM in, SDK verse events out.
+export {
+  ZipformerSession,
+  createZipformerSession,
+  displayQuranFromRaw,
+  DEFAULT_ZIPFORMER_IO,
+} from "./session.js";
+export type {
+  ZipformerSessionOptions,
+  ModelSource,
+  CorpusSource,
+  QuranSource,
+} from "./session.js";

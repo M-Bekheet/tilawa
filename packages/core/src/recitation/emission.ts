@@ -1,15 +1,28 @@
+/**
+ * Verse emission policy: turns the engine's per-word verdicts into the SDK's
+ * ayah-level events. Pure bookkeeping — no audio, no model, no I/O.
+ */
+import type { FallbackHit, VerdictState } from "./types.js";
+
 export const MIN_WORD_FRACTION = 0.5;
 export const FALLBACK_MAX_DISTANCE = 0.5;
 
-export type VerdictState = "ok" | "unsure" | "wrong" | "skipped" | "pending";
-
-export interface WordVerdict {
+/**
+ * The slice of a tracker `WordVerdict` emission needs. Widened on purpose so
+ * callers can hand over partial verdicts (tests, replayed vectors).
+ */
+export interface EmissionVerdict {
   surah: number;
   ayah: number;
   word: number;
   wordIndex?: number;
   state: VerdictState;
 }
+
+/** {@link FallbackHit} with `how` relaxed — emission only reads the distance. */
+export type EmissionFallback = Pick<FallbackHit, "surah" | "ayah" | "distance"> & {
+  how?: string;
+};
 
 export interface AyahTally {
   surah: number;
@@ -23,14 +36,8 @@ export interface AyahTally {
   firstSeen: number;
 }
 
-export interface FallbackHit {
-  surah: number;
-  ayah: number;
-  distance: number;
-  how?: string;
-}
-
-export interface CursorPos {
+/** Where the tracker's cursor sits, as far as emission cares. */
+export interface EmissionCursor {
   surah: number;
   ayah: number;
   word: number;
@@ -59,7 +66,7 @@ export function ayahMeetsGate(
 
 /** Rebuild per-ayah counts from one tracker snapshot. Does not increment. */
 export function snapshotTallies(
-  verdicts: readonly WordVerdict[],
+  verdicts: readonly EmissionVerdict[],
   wordCount: WordCountFn,
 ): Map<string, AyahTally> {
   const order = new Map<string, AyahTally>();
@@ -130,6 +137,42 @@ export function shouldRunFallback(emitted: readonly unknown[]): boolean {
   return emitted.length === 0;
 }
 
+export const GAP_MAX_WORDS = 3;
+
+/** An {@link AyahTally} flagged as filled in by {@link bridgeGapAyahs}. */
+export interface BridgedAyahTally extends AyahTally {
+  bridged?: boolean;
+}
+
+/**
+ * Inject a below-gate short ayah only when both its neighbours already emit.
+ *
+ * Prefix fill is forbidden: a tally for ayah 3 with accepted [4, 5] stays out.
+ * Off by default (`allowGaps`) — it trades precision for recall on the very
+ * short ayahs the tracker skates over (e.g. 55:64 "mudhāmmatān").
+ */
+export function bridgeGapAyahs(
+  accepted: readonly AyahTally[],
+  tallies: readonly AyahTally[],
+  gapMaxWords = GAP_MAX_WORDS,
+): BridgedAyahTally[] {
+  const have = new Set(accepted.map(ayahKey));
+  const extra: BridgedAyahTally[] = [];
+  for (const t of tallies) {
+    const key = ayahKey(t);
+    if (have.has(key)) continue;
+    if (t.words > gapMaxWords) continue;
+    if (t.ok + t.unsure < 1) continue;
+    if (t.wrong > t.ok + t.unsure) continue;
+    if (!have.has(`${t.surah}:${t.ayah - 1}`)) continue;
+    if (!have.has(`${t.surah}:${t.ayah + 1}`)) continue;
+    extra.push({ ...t, bridged: true });
+    have.add(key);
+  }
+  if (!extra.length) return [...accepted];
+  return [...accepted, ...extra].sort((a, b) => a.firstSeen - b.firstSeen);
+}
+
 export function fallbackConfidence(distance: number): number {
   if (!Number.isFinite(distance)) return 0;
   return Math.min(1, Math.max(0, 1 - distance));
@@ -137,7 +180,7 @@ export function fallbackConfidence(distance: number): number {
 
 export function buildFinalSequence(
   tallies: readonly AyahTally[],
-  fallback: FallbackHit | null,
+  fallback: EmissionFallback | null,
   minWordFraction = MIN_WORD_FRACTION,
 ): { verses: { surah: number; ayah: number; confidence: number }[]; confidence: number } {
   const gated = [...tallies]
@@ -166,8 +209,8 @@ export function buildFinalSequence(
 }
 
 export function wordProgressFromCursor(
-  cursor: CursorPos,
-  verdicts: readonly WordVerdict[],
+  cursor: EmissionCursor,
+  verdicts: readonly EmissionVerdict[],
   totalWords: number,
 ): {
   type: "word_progress";

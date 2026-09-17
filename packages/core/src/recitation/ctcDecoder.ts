@@ -1,4 +1,4 @@
-import type { CtcToken, HeardChar } from "./types";
+import type { CtcToken, HeardChar } from "./types.js";
 
 export class GreedyCtcDecoder {
   readonly symbols: readonly string[];

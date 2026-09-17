@@ -13,7 +13,7 @@
  *   npx tsx test/stability-report.ts --focus=exact      # print exact-set failures
  *   npx tsx test/stability-report.ts --limit=3          # smoke-test first N samples
  *   npx tsx test/stability-report.ts --hypothesis=nextAyah=0.4,backward=-1.2
- *   npx tsx test/stability-report.ts --engine=zipformer # ZipformerHost (browser default)
+ *   npx tsx test/stability-report.ts --engine=zipformer # ZipformerSession (browser default)
  */
 
 import { createRequire } from "node:module";
@@ -30,8 +30,8 @@ import {
   type VerseCandidate,
   type WorkerOutbound,
 } from "@tilawa/core";
-import { displayQuranFromRaw, ZipformerHost } from "../src/worker/zipformer-session.ts";
-import type { ZipformerIo } from "../src/lib/recitation/index.ts";
+import { displayQuranFromRaw, ZipformerSession } from "../src/worker/zipformer-session.ts";
+import type { ZipformerIo } from "@tilawa/core";
 import { createSession, runInference } from "./session-node.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -621,7 +621,7 @@ function finishSampleRun(
   };
 }
 
-async function loadZipformerHost(): Promise<ZipformerHost> {
+async function loadZipformerSession(): Promise<ZipformerSession> {
   const modelPath = process.env.ZIPFORMER_MODEL
     ?? resolve(ROOT, "public/models/zipformer_interp_gentle_a05.int8.onnx");
   const ioPath = process.env.ZIPFORMER_IO
@@ -646,18 +646,18 @@ async function loadZipformerHost(): Promise<ZipformerHost> {
   const corpusJson = JSON.parse(readFileSync(corpusPath, "utf8"));
   const quranDb = displayQuranFromRaw(JSON.parse(readFileSync(quranPath, "utf8")));
 
-  return ZipformerHost.create({
+  return ZipformerSession.create({
     ort,
-    modelBytes: new Uint8Array(readFileSync(modelPath)),
+    model: new Uint8Array(readFileSync(modelPath)),
     io,
-    corpusJson,
-    quranDb,
+    corpus: corpusJson,
+    quran: quranDb,
     executionProviders: ["cpu"],
   });
 }
 
 async function runZipformerSample(
-  host: ZipformerHost,
+  host: ZipformerSession,
   sample: Sample,
   audio: Float32Array,
 ): Promise<SampleRunResult> {
@@ -818,7 +818,7 @@ async function main() {
 
   if (engineName === "zipformer") {
     console.log("Loading Zipformer host (onnxruntime-node, cpu)...");
-    const host = await loadZipformerHost();
+    const host = await loadZipformerSession();
     runOne = (sample, audio) => runZipformerSample(host, sample, audio);
   } else {
     const modelPath = resolve(ROOT, "public/fastconformer_phoneme_q8.onnx");

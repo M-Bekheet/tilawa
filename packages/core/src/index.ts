@@ -15,8 +15,10 @@ import {
   type WorkerOutbound,
 } from "./types.js";
 import type { SessionRunner } from "./session.js";
-
 export type { SessionRunner, SessionOutput } from "./session.js";
+
+// The default recognition path: streaming Zipformer2-CTC over tajweed phonemes.
+export * from "./recitation/index.js";
 
 // Full config + type surface for app developers.
 export * from "./types.js";

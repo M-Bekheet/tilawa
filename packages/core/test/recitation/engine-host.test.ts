@@ -1,26 +1,22 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { pausalPhonemes } from "../../src/lib/recitation/verdicts";
-import { QuranCorpus } from "../../src/lib/recitation/corpus";
-import { QuranIndex } from "../../src/lib/recitation/search";
-import { RecitationEngine } from "../../src/lib/recitation/engine";
-import { wholeAyahFallback } from "../../src/lib/recitation/fallback";
-import { DEFAULT_CONFIG } from "../../src/lib/recitation/config";
-import { costTable } from "../../src/lib/recitation/phonemeCost";
+import { requireCorpus, VECTORS } from "./paths";
+import { pausalPhonemes } from "../../src/recitation/verdicts";
+import { QuranCorpus } from "../../src/recitation/corpus";
+import { QuranIndex } from "../../src/recitation/search";
+import { RecitationEngine } from "../../src/recitation/engine";
+import { wholeAyahFallback } from "../../src/recitation/fallback";
+import { DEFAULT_CONFIG } from "../../src/recitation/config";
+import { costTable } from "../../src/recitation/phonemeCost";
 import {
   ayahMeetsGate,
   snapshotTallies,
-  type WordVerdict as HostVerdict,
-} from "../../src/lib/zipformer-emission";
-import type { CtcToken, EngineEvent } from "../../src/lib/recitation/types";
+  type EmissionVerdict,
+} from "../../src/recitation/emission";
+import type { CtcToken, EngineEvent } from "../../src/recitation/types";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
-const CORPUS_PATH =
-  process.env.ZIPFORMER_CORPUS ??
-  resolve(HERE, "../../public/zipformer_quran.json");
+const CORPUS_PATH = requireCorpus();
 
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;
@@ -132,7 +128,7 @@ describe("host policy", () => {
     const fallback = wholeAyahFallback(vec.transcript, corpus, table);
     const wordCount = (s: number, a: number) => corpus.ayahWordCount(s, a);
     const snap = engine.tracer
-      ? snapshotTallies(engine.tracer.verdicts(true) as HostVerdict[], wordCount)
+      ? snapshotTallies(engine.tracer.verdicts(true) as EmissionVerdict[], wordCount)
       : new Map();
     const tallies = [...snap.values()].filter((t) => ayahMeetsGate(t));
     return { host, fallback, tallies, engine };

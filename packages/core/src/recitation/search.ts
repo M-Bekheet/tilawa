@@ -1,8 +1,8 @@
-import { DEFAULT_CONFIG, type EngineConfig } from "./config";
-import { QuranCorpus } from "./corpus";
-import { alignSemiGlobal, normalizedDistance } from "./alignment";
-import { UNKNOWN_ID, costTable, type CostTable } from "./phonemeCost";
-import type { SearchHint, SearchHit, SearchResult, StripResult } from "./types";
+import { DEFAULT_CONFIG, type EngineConfig } from "./config.js";
+import { QuranCorpus } from "./corpus.js";
+import { alignSemiGlobal, normalizedDistance } from "./alignment.js";
+import { UNKNOWN_ID, costTable, type CostTable } from "./phonemeCost.js";
+import type { SearchHint, SearchHit, SearchResult, StripResult } from "./types.js";
 
 export const ISTIADHA = "ءَعُۥۥذُبِللَااهِمِنَششَييطَاانِررَجِۦۦم";
 export const BASMALA = "بِسمِللَااهِررَحمَاانِررَحِۦۦۦۦم";

@@ -1,7 +1,7 @@
-import { DEFAULT_CONFIG, type EngineConfig } from "./config";
-import type { QuranCorpus } from "./corpus";
-import type { CostTable } from "./phonemeCost";
-import type { HeardChar } from "./types";
+import { DEFAULT_CONFIG, type EngineConfig } from "./config.js";
+import type { QuranCorpus } from "./corpus.js";
+import type { CostTable } from "./phonemeCost.js";
+import type { HeardChar } from "./types.js";
 
 const SNAPSHOT_EVERY = 32;
 const SNAPSHOT_KEEP = 16;

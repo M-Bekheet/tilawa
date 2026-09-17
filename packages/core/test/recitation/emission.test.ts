@@ -12,8 +12,8 @@ import {
   snapshotTallies,
   wordProgressFromCursor,
   type AyahTally,
-  type WordVerdict,
-} from "../src/lib/zipformer-emission";
+  type EmissionVerdict,
+} from "../../src/recitation/emission";
 
 const wordCount = (_surah: number, ayah: number): number => {
   if (ayah === 1) return 4;
@@ -25,9 +25,9 @@ const wordCount = (_surah: number, ayah: number): number => {
 function v(
   ayah: number,
   word: number,
-  state: WordVerdict["state"],
+  state: EmissionVerdict["state"],
   surah = 1,
-): WordVerdict {
+): EmissionVerdict {
   return { surah, ayah, word, wordIndex: word, state };
 }
 
@@ -45,13 +45,13 @@ function tally(
   };
 }
 
-describe("zipformer-emission", () => {
+describe("recitation emission", () => {
   it("keeps the harness 50% gate", () => {
     expect(MIN_WORD_FRACTION).toBe(0.5);
   });
 
   it("snapshots per-ayah counts from a verdict list (not incremental)", () => {
-    const verdicts: WordVerdict[] = [
+    const verdicts: EmissionVerdict[] = [
       v(1, 0, "ok"),
       v(1, 1, "unsure"),
       v(1, 2, "wrong"),

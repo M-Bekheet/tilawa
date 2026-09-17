@@ -1,8 +1,8 @@
-import { DEFAULT_CONFIG, type EngineConfig } from "./config";
-import { alignGlobal, normalizedDistance } from "./alignment";
-import type { CostTable } from "./phonemeCost";
-import type { Tracker } from "./tracker";
-import type { HeardChar, VerdictState, WordVerdict } from "./types";
+import { DEFAULT_CONFIG, type EngineConfig } from "./config.js";
+import { alignGlobal, normalizedDistance } from "./alignment.js";
+import type { CostTable } from "./phonemeCost.js";
+import type { Tracker } from "./tracker.js";
+import type { HeardChar, VerdictState, WordVerdict } from "./types.js";
 
 const SEGMENT_CUT = 300;
 const CONTEXT_CHARS = 6;

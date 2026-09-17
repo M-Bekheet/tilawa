@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { GreedyCtcDecoder } from "../../src/lib/recitation/ctcDecoder";
-import { TOKENS, BLANK_ID, VOCAB_SIZE } from "../../src/lib/recitation/tokens";
-import { ZipformerRunner, type TensorLike, type ZipformerIo } from "../../src/lib/recitation/zipformerRunner";
+import { VECTORS } from "./paths";
+import { GreedyCtcDecoder } from "../../src/recitation/ctcDecoder";
+import { TOKENS, BLANK_ID, VOCAB_SIZE } from "../../src/recitation/tokens";
+import { ZipformerRunner, type TensorLike, type ZipformerIo } from "../../src/recitation/zipformerRunner";
 
-const VECTORS = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../lab/docs/specs/vectors");
 
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;
