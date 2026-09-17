@@ -8,6 +8,11 @@ export interface OrtSessionLike {
   run(feeds: Record<string, TensorLike>): Promise<Record<string, TensorLike>>;
 }
 
+export interface OrtWasmEnv {
+  numThreads?: number;
+  [key: string]: unknown;
+}
+
 export interface OrtLike {
   InferenceSession: {
     create(
@@ -23,6 +28,41 @@ export interface OrtLike {
     data: Float32Array | BigInt64Array | Int32Array,
     dims: readonly number[],
   ) => TensorLike;
+  env?: {
+    wasm?: OrtWasmEnv;
+  };
+  /** onnxruntime-common ≥1.21 — node lists cpu, web lists wasm. */
+  listSupportedBackends?: () => Array<{ name: string }>;
+}
+
+/**
+ * Pick an EP when the caller did not pass `executionProviders`.
+ *
+ * `ort.env.wasm` exists on both onnxruntime-web *and* onnxruntime-node (the
+ * object comes from onnxruntime-common). Prefer `listSupportedBackends()` when
+ * present (node → cpu; web → wasm). Fall back to `env.wasm` → wasm, else cpu.
+ */
+export function defaultExecutionProviders(ort: unknown): string[] {
+  const runtime = ort as OrtLike | null | undefined;
+  const listed = runtime?.listSupportedBackends?.();
+  if (Array.isArray(listed) && listed.length > 0) {
+    const names = new Set(listed.map((b) => b.name));
+    if (names.has("wasm")) return ["wasm"];
+    if (names.has("cpu")) return ["cpu"];
+  }
+  return runtime?.env?.wasm != null ? ["wasm"] : ["cpu"];
+}
+
+/**
+ * pthread init hangs in workers without COOP/COEP. The demo ships single-thread
+ * WASM, so default `numThreads = 1` unless the caller already set it.
+ */
+export function prepareOrtWasm(ort: unknown): void {
+  const wasm = (ort as OrtLike | null | undefined)?.env?.wasm;
+  if (!wasm) return;
+  if (typeof wasm.numThreads !== "number" || !Number.isInteger(wasm.numThreads) || wasm.numThreads <= 0) {
+    wasm.numThreads = 1;
+  }
 }
 
 export interface ZipformerIoInput {
@@ -87,11 +127,12 @@ export class ZipformerRunner {
     ort: unknown,
     model: Uint8Array | ArrayBuffer,
     io: ZipformerIo,
-    executionProviders: string[] = ["cpu"],
+    executionProviders?: string[],
   ): Promise<ZipformerRunner> {
     const runtime = ort as OrtLike;
+    prepareOrtWasm(runtime);
     const session = await runtime.InferenceSession.create(model, {
-      executionProviders,
+      executionProviders: executionProviders ?? defaultExecutionProviders(runtime),
       graphOptimizationLevel: "all",
     });
     const runner = new ZipformerRunner(session, io, runtime.Tensor);

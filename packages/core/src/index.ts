@@ -107,11 +107,35 @@ const CHAMPION_TRUST_THRESHOLD = 0.8;
  * `SessionRunner`. Reproduces the init()/transcribe() glue from the web worker
  * without any onnxruntime dependency.
  */
+const FASTCONFORMER_ASSET_LABELS = [
+  ["vocab", "vocab"],
+  ["quranCtcTokens", "ctcTokens"],
+  ["quran", "quran"],
+] as const;
+
+/** Missing FastConformer asset keys, using the public names (`ctcTokens` not `quranCtcTokens`). */
+export function missingFastConformerAssets(assets: unknown): string[] {
+  const rec = assets && typeof assets === "object" ? (assets as Record<string, unknown>) : {};
+  const missing: string[] = [];
+  for (const [field, label] of FASTCONFORMER_ASSET_LABELS) {
+    if (rec[field] == null) missing.push(label);
+  }
+  return missing;
+}
+
+function assertFastConformerAssets(assets: unknown): asserts assets is TilawaAssets {
+  const missing = missingFastConformerAssets(assets);
+  if (missing.length > 0) {
+    throw new Error(`fastconformer engine requires assets: ${missing.join(", ")} ...`);
+  }
+}
+
 export function createTilawaSession(
   runner: SessionRunner,
   assets: TilawaAssets,
   options: CreateTilawaSessionOptions = {},
 ): TilawaSession {
+  assertFastConformerAssets(assets);
   const decoder = new TextCTCDecoder(assets.vocab, assets.blankId ?? 1024);
 
   const quranData = adaptQuranTextData(
@@ -267,15 +291,19 @@ export type CreateRecognitionSessionOptions =
 /**
  * Create a recognition session for either engine.
  *
- * Defaults to `"zipformer"` — the streaming phoneme engine (see
- * `src/recitation/`). Pass `engine: "fastconformer"` with a `SessionRunner`
- * plus text-CTC assets for the original pipeline.
+ * Defaults to `"zipformer"` — the streaming phoneme engine. Pass
+ * `engine: "fastconformer"` with a `SessionRunner` plus text-CTC assets
+ * for the original pipeline. Missing FastConformer assets throw before use.
  */
 export async function createRecognitionSession(
   options: CreateRecognitionSessionOptions,
 ): Promise<RecognitionSession> {
   if (options.engine === "fastconformer") {
     const { engine, runner, assets, ...rest } = options;
+    assertFastConformerAssets(assets);
+    if (!runner) {
+      throw new Error("fastconformer engine requires a SessionRunner");
+    }
     const session = createTilawaSession(runner, assets, rest);
     const flush = async (): Promise<WorkerOutbound[]> => {
       // The FastConformer tracker finalizes on trailing silence; give it enough

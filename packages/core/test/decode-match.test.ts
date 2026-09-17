@@ -162,4 +162,26 @@ describe("engine selection", () => {
 
     session.reset();
   });
+
+  it("throws a clear error when fastconformer assets are missing", async () => {
+    await expect(createRecognitionSession({ engine: "fastconformer" } as never)).rejects.toThrow(
+      "fastconformer engine requires assets: vocab, ctcTokens, quran ...",
+    );
+
+    await expect(
+      createRecognitionSession({
+        engine: "fastconformer",
+        runner: runnerFor([]),
+        assets: {},
+      } as never),
+    ).rejects.toThrow("fastconformer engine requires assets: vocab, ctcTokens, quran ...");
+
+    expect(() => createTilawaSession(runnerFor([]), {} as never)).toThrow(
+      "fastconformer engine requires assets: vocab, ctcTokens, quran ...",
+    );
+
+    expect(() =>
+      createTilawaSession(runnerFor([]), { vocab } as never),
+    ).toThrow("fastconformer engine requires assets: ctcTokens, quran ...");
+  });
 });

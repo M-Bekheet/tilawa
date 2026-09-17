@@ -1,12 +1,17 @@
 export { DEFAULT_CONFIG, BUFFER_CAP, FBANK_BINS, CTC_HZ } from "./config.js";
 export type { EngineConfig } from "./config.js";
 export { KaldiFbank } from "./fbank.js";
-export { ZipformerRunner } from "./zipformerRunner.js";
+export {
+  ZipformerRunner,
+  defaultExecutionProviders,
+  prepareOrtWasm,
+} from "./zipformerRunner.js";
 export type {
   ZipformerIo,
   ZipformerIoInput,
   OrtLike,
   OrtSessionLike,
+  OrtWasmEnv,
   TensorLike,
 } from "./zipformerRunner.js";
 export { GreedyCtcDecoder, expandTokens } from "./ctcDecoder.js";

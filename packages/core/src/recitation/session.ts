@@ -133,7 +133,11 @@ export interface ZipformerSessionOptions {
   session?: OrtSessionLike;
   /** That runtime's `Tensor` constructor. Required with {@link session}. */
   Tensor?: OrtLike["Tensor"];
-  /** Execution providers for `InferenceSession.create`. Default `["cpu"]`. */
+  /**
+   * Execution providers for `InferenceSession.create`. When omitted and you
+   * pass {@link ort} + {@link model}: `["wasm"]` under onnxruntime-web,
+   * `["cpu"]` under onnxruntime-node.
+   */
   executionProviders?: string[];
   /** I/O manifest. Defaults to the bundled {@link DEFAULT_ZIPFORMER_IO}. */
   io?: ZipformerIo | (() => ZipformerIo | Promise<ZipformerIo>);
@@ -248,7 +252,7 @@ export class ZipformerSession {
         opts.ort,
         bytes,
         io,
-        opts.executionProviders ?? ["cpu"],
+        opts.executionProviders,
       );
     }
     return new ZipformerSession(runner, corpusJson, quranDb, opts);
@@ -554,6 +558,7 @@ export class ZipformerSession {
  *   quran: async () => JSON.parse(await readFile("quran.json", "utf8")),
  *   onEvent: (msg) => console.log(msg.type),
  * });
+ * // executionProviders default to ["wasm"] under onnxruntime-web, ["cpu"] under node
  * await session.feed(pcm16k);
  * const final = await session.stop();
  * ```

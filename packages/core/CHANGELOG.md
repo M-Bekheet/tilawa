@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+Browser hang fix, packaging, and README that an outside consumer can follow.
+
+- **EP default.** `{ ort, model }` now picks `["wasm"]` under onnxruntime-web and `["cpu"]` under onnxruntime-node (`listSupportedBackends` when present, else `ort.env.wasm`). Override with `executionProviders`. On web, `ort.env.wasm.numThreads` defaults to `1` unless the caller set it — pthread init hangs in workers without COOP/COEP.
+- **FastConformer validation.** `createTilawaSession` / `createRecognitionSession({ engine: "fastconformer" })` throw `Error("fastconformer engine requires assets: vocab, ctcTokens, quran ...")` listing the missing keys before touching them.
+- **Packaging.** `files` is `dist/`, `README.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE.md`. Source maps and `src/` are no longer packed.
+- **README.** Browser quick start uses `onnxruntime-web`, documents EP / `numThreads` / `wasmPaths` (Vite copies wasm by default), GitHub release asset URLs, licence split, and a Node snippet that matches the 300 ms / `stop()` / events path.
+
 ## 0.2.0
 
 ### Zipformer is now the default engine
