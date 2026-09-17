@@ -17,7 +17,7 @@ import {
 import type { CtcToken, EngineEvent } from "../../src/lib/recitation/types";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const VECTORS = resolve(HERE, "../../../../docs/specs/vectors");
+const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
 const CORPUS_PATH =
   process.env.ZIPFORMER_CORPUS ??
   resolve(HERE, "../../public/zipformer_quran.json");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QuranDB } from "../src/lib/quran-db";
+import { QuranDB } from "@tilawa/core";
 import type { QuranVerse } from "../src/lib/types";
 
 function verse(surah: number, ayah: number, phonemes: string): QuranVerse {

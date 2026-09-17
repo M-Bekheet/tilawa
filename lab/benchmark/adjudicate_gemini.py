@@ -35,7 +35,7 @@ from shared.normalizer import normalize_arabic  # noqa: E402
 from shared.quran_db import QuranDB  # noqa: E402
 
 MAIN_CHECKOUT = Path("/Users/rock/ai/projects/offline-tarteel")
-DEFAULT_QURAN = MAIN_CHECKOUT / "data" / "quran.json"
+DEFAULT_QURAN = MAIN_CHECKOUT / "lab" / "data" / "quran.json"
 
 CORPUS_DIRS = {
     "v3": PROJECT_ROOT / "benchmark" / "test_corpus_v3",
@@ -43,9 +43,9 @@ CORPUS_DIRS = {
     "v2": PROJECT_ROOT / "benchmark" / "test_corpus_v2",
 }
 CORPUS_FALLBACKS = {
-    "qlab": MAIN_CHECKOUT / "benchmark" / "test_corpus_qlab",
-    "v3": MAIN_CHECKOUT / "benchmark" / "test_corpus_v3",
-    "v2": MAIN_CHECKOUT / "benchmark" / "test_corpus_v2",
+    "qlab": MAIN_CHECKOUT / "lab" / "benchmark" / "test_corpus_qlab",
+    "v3": MAIN_CHECKOUT / "lab" / "benchmark" / "test_corpus_v3",
+    "v2": MAIN_CHECKOUT / "lab" / "benchmark" / "test_corpus_v2",
 }
 
 MIME = {

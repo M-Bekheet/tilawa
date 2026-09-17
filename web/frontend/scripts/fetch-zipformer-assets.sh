@@ -15,6 +15,7 @@ RELEASE_BASE="https://github.com/yazinsai/tilawa/releases/download/v0.3.0"
 SRC_DIR="${ZIPFORMER_EXPORT:-/tmp/zipformer-interp-gentle-a0.5/interp-gentle-a0.5}"
 MAIN_PUBLIC="/Users/rock/ai/projects/offline-tarteel/web/frontend/public"
 MAIN_CORPUS="/Users/rock/ai/projects/offline-tarteel/data/zipformer/quran.json"
+MAIN_LAB_CORPUS="/Users/rock/ai/projects/offline-tarteel/lab/data/zipformer/quran.json"
 REPO_ROOT="$(git -C "$FRONTEND" rev-parse --show-toplevel 2>/dev/null || echo "")"
 WORKTREE_CORPUS="${REPO_ROOT:+$REPO_ROOT/../../data/zipformer/quran.json}"
 
@@ -40,7 +41,7 @@ resolve_io() {
 }
 
 resolve_corpus() {
-  for candidate in "$MAIN_CORPUS" ${WORKTREE_CORPUS:+"$WORKTREE_CORPUS"} "${ZIPFORMER_CORPUS:-}" "$MAIN_PUBLIC/$CORPUS_NAME"; do
+  for candidate in "$MAIN_CORPUS" "$MAIN_LAB_CORPUS" ${WORKTREE_CORPUS:+"$WORKTREE_CORPUS"} "${ZIPFORMER_CORPUS:-}" "$MAIN_PUBLIC/$CORPUS_NAME"; do
     if [[ -n "$candidate" && -f "$candidate" ]]; then
       echo "$candidate"
       return

@@ -32,7 +32,7 @@ import { createSession, runInference } from "./session-node.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
-const BENCHMARK = resolve(ROOT, "../../benchmark/test_corpus");
+const BENCHMARK = resolve(ROOT, "../../lab/benchmark/test_corpus");
 const CHUNK_SECONDS = 0.3;
 const CHUNK_SAMPLES = Math.floor(SAMPLE_RATE * CHUNK_SECONDS);
 const TAIL_SILENCE_SECONDS = 4.0;

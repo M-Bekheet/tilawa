@@ -6,7 +6,7 @@ import { GreedyCtcDecoder } from "../../src/lib/recitation/ctcDecoder";
 import { TOKENS, BLANK_ID, VOCAB_SIZE } from "../../src/lib/recitation/tokens";
 import { ZipformerRunner, type TensorLike, type ZipformerIo } from "../../src/lib/recitation/zipformerRunner";
 
-const VECTORS = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../docs/specs/vectors");
+const VECTORS = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../lab/docs/specs/vectors");
 
 function load<T>(name: string): T {
   return JSON.parse(readFileSync(resolve(VECTORS, name), "utf8")) as T;

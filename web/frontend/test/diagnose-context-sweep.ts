@@ -40,7 +40,7 @@ const maxArg = args.find((a) => a.startsWith("--max-samples="));
 const maxSamples = maxArg ? parseInt(maxArg.split("=")[1]) : 0;
 const corpusArg = args.find((a) => a.startsWith("--corpus="));
 const corpusName = corpusArg ? corpusArg.split("=")[1] : "test_corpus";
-const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
+const BENCHMARK = resolve(ROOT, `../../lab/benchmark/${corpusName}`);
 
 interface Sample {
   id: string;

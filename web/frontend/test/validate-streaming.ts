@@ -38,7 +38,7 @@ const args = process.argv.slice(2);
 const noStreaming = args.includes("--no-streaming");
 const corpusArg = args.find((a) => a.startsWith("--corpus="));
 const corpusName = corpusArg ? corpusArg.split("=")[1] : "test_corpus";
-const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
+const BENCHMARK = resolve(ROOT, `../../lab/benchmark/${corpusName}`);
 const sampleFilter = args.find((a) => !a.startsWith("--"));
 
 // ---------------------------------------------------------------------------

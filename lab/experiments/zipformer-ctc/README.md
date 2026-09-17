@@ -1,7 +1,7 @@
 # zipformer-ctc
 
 Benchmark wrapper over the native MIT recitation engine
-(`web/frontend/src/lib/recitation/`) plus Quran-Lab Zipformer2-CTC ONNX.
+(`../../web/frontend/src/lib/recitation/`) plus Quran-Lab Zipformer2-CTC ONNX.
 Registered as `zipformer-ctc`.
 
 This directory used to vendor the recovered alketab JS engine. That tree was
@@ -13,12 +13,12 @@ generated from the original engine before its removal at `e172b79`.
 
 | Stage | Implementation |
 |---|---|
-| Features | Kaldi-style fbank in TS: 25 ms / 10 ms, 80 mel, pre-emphasis 0.97, povey window, 512 FFT (`web/frontend/src/lib/recitation/fbank.ts`) |
+| Features | Kaldi-style fbank in TS: 25 ms / 10 ms, 80 mel, pre-emphasis 0.97, povey window, 512 FFT (`../../web/frontend/src/lib/recitation/fbank.ts`) |
 | Acoustic model | **Streaming Zipformer2-CTC** (k2/icefall export), int8 ONNX, window T=61 / hop 48. Default fetch is shipped `interp-gentle-a0.5` int8 from GitHub release `yazinsai/tilawa` v0.3.0 (NPL-1.2). See EXPERIMENTS.md. |
 | Vocab | 251 tokens: Arabic letters *with* harakat, shadda-as-doubling, madd-length-as-repetition + `<blank>` (`tokens.txt`) |
 | Decode | Greedy CTC with per-token margin = p(top1) − p(top2) |
 | Corpus | `quran.json` v2: every word as `[mushaf glyphs, phoneme string, plain text]` |
-| Locate / track / verdicts | Native MIT engine (`web/frontend/src/lib/recitation/`) |
+| Locate / track / verdicts | Native MIT engine (`../../web/frontend/src/lib/recitation/`) |
 
 `reference_tools/` and `reference_io/` are Quran-Lab NPL-1.2 eval/export copies
 plus our ONNX PER wrapper. Keep them.
@@ -44,7 +44,7 @@ Env knobs: `ZIPFORMER_MODE=recognize|stay`, `ZIPFORMER_CHUNK`,
 
 ## Requirements
 
-- Node ≥ 22, `tsx` and `onnxruntime-node` (uses `web/frontend/node_modules`;
+- Node ≥ 22, `tsx` and `onnxruntime-node` (uses `../web/frontend/node_modules`;
   override with `ZIPFORMER_ORT_DIR`).
 - Model + corpus are downloaded on first use into `data/zipformer/`
   (`zipformer_interp_gentle_a05.int8.onnx`, `zipformer_quran.json` from
@@ -52,10 +52,11 @@ Env knobs: `ZIPFORMER_MODE=recognize|stay`, `ZIPFORMER_CHUNK`,
   I/O manifest is committed at `zipformer-io.json`.
 
 ```bash
-.venv/bin/python -m benchmark.runner --experiment zipformer-ctc
-.venv/bin/python -m benchmark.runner --experiment zipformer-ctc --corpus test_corpus_v2
-.venv/bin/python experiments/zipformer-ctc/run.py benchmark/test_corpus/001002.mp3
+# from lab/
+../.venv/bin/python -m benchmark.runner --experiment zipformer-ctc
+../.venv/bin/python -m benchmark.runner --experiment zipformer-ctc --corpus test_corpus_v2
+../.venv/bin/python experiments/zipformer-ctc/run.py benchmark/test_corpus/001002.mp3
 ```
 
 Third-party notices and NPL-1.2 terms for Zipformer-derived artefacts: see
-[`NOTICE.md`](../../NOTICE.md).
+[`NOTICE.md`](../../../NOTICE.md).

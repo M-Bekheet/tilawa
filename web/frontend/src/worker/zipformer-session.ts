@@ -1,4 +1,4 @@
-import { QuranDB } from "../lib/quran-db";
+import { QuranDB } from "@tilawa/core";
 import type { QuranVerse, SurroundingVerse, WorkerOutbound } from "../lib/types";
 import { SURROUNDING_CONTEXT } from "../lib/types";
 import {

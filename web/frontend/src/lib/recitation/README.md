@@ -12,4 +12,4 @@ contain that source.
 Host integration: `src/worker/zipformer-session.ts` drives Kaldi fbank →
 streaming Zipformer2-CTC → this engine → the 50% ayah gate in
 `src/lib/zipformer-emission.ts`. The Node benchmark harness
-(`experiments/zipformer-ctc/harness.ts`) reuses those same modules.
+(`lab/experiments/zipformer-ctc/harness.ts`) reuses those same modules.

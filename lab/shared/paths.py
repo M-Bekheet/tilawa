@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 _MAIN_DATA = Path("/Users/rock/ai/projects/offline-tarteel/data")
+_MAIN_LAB_DATA = Path("/Users/rock/ai/projects/offline-tarteel/lab/data")
 
 
 def _repo_root() -> Path:
@@ -33,6 +34,7 @@ def data_roots() -> list[Path]:
         out.append(p / "data")
     out.append(_repo_root() / "data")
     out.append(_MAIN_DATA)
+    out.append(_MAIN_LAB_DATA)
     seen: set[Path] = set()
     uniq: list[Path] = []
     for root in out:

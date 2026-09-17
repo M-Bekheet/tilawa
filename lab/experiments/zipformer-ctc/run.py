@@ -1,6 +1,6 @@
 """zipformer-ctc -- native MIT recitation engine + Zipformer2-CTC, benchmark wrapper.
 
-Pipeline (web/frontend/src/lib/recitation + ZipformerHost):
+Pipeline (../web/frontend/src/lib/recitation + ZipformerHost):
   16 kHz PCM -> Kaldi fbank (80 mel) -> streaming Zipformer2-CTC ONNX (251
   tajweed-phoneme tokens; default is shipped interp-gentle-a0.5 int8)
   -> greedy CTC -> whole-Quran 5-gram search + per-surah online DP tracker
@@ -30,7 +30,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # lab/
+REPO_ROOT = PROJECT_ROOT.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from shared.audio import load_audio  # noqa: E402
@@ -42,7 +43,7 @@ CORPUS_NAME = "zipformer_quran.json"
 MODEL_PATH = DATA_DIR / MODEL_NAME
 CORPUS_PATH = DATA_DIR / CORPUS_NAME
 ORT_DIR = Path(
-    os.environ.get("ZIPFORMER_ORT_DIR", PROJECT_ROOT / "web" / "frontend" / "node_modules")
+    os.environ.get("ZIPFORMER_ORT_DIR", REPO_ROOT / "web" / "frontend" / "node_modules")
 )
 
 RELEASE = "https://github.com/yazinsai/tilawa/releases/download/v0.3.0"
@@ -137,8 +138,14 @@ def _ensure_proc() -> subprocess.Popen:
         raise FileNotFoundError(
             f"tsx not found at {tsx}; set ZIPFORMER_ORT_DIR to web/frontend/node_modules"
         )
+    # `@tilawa/core` resolves through web/frontend's tsconfig `paths`; tsx picks
+    # its tsconfig from cwd, which is lab/ here, so point it at the frontend's.
+    frontend_tsconfig = REPO_ROOT / "web" / "frontend" / "tsconfig.json"
+    tsx_argv = [str(tsx)]
+    if frontend_tsconfig.is_file():
+        tsx_argv += ["--tsconfig", str(frontend_tsconfig)]
     _proc = subprocess.Popen(
-        [str(tsx), str(HERE / "harness.ts")],
+        [*tsx_argv, str(HERE / "harness.ts")],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=sys.stderr,

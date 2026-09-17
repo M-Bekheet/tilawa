@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { semiGlobalDistance, fragmentScore } from "../src/lib/levenshtein";
+import { semiGlobalDistance, fragmentScore } from "../../../packages/core/src/levenshtein.ts";
 
 describe("semiGlobalDistance", () => {
   it("returns 0 for exact substring match", () => {

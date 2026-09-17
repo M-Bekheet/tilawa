@@ -4,7 +4,7 @@ Vanilla TypeScript + Vite 7. Default engine is Zipformer2-CTC (`interp-gentle-a0
 
 ## Zipformer (default, `interp-gentle-a0.5`)
 
-Streaming Zipformer2-CTC. The status pill shows the active engine. Model artefacts are NPL-1.2; the word-level tracker is the native MIT recitation engine (`src/lib/recitation/`), written from `docs/specs/recitation-engine-spec.md` plus 23 vector oracles.
+Streaming Zipformer2-CTC. The status pill shows the active engine. Model artefacts are NPL-1.2; the word-level tracker is the native MIT recitation engine (`src/lib/recitation/`), written from `lab/docs/specs/recitation-engine-spec.md` plus 23 vector oracles.
 
 Assets are gitignored (ONNX + NPL-derived lexicon). `zipformer_interp_gentle_a05.io.json` is committed. Fetch the rest once:
 

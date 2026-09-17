@@ -22,14 +22,14 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { computeMelSpectrogram } from "../src/worker/mel.ts";
-import { CTCDecoder } from "../src/worker/ctc-decode.ts";
-import { beamSearchDecode } from "../src/worker/beam-decode.ts";
-import { buildTrie, type CompactTrie } from "../src/lib/phoneme-trie.ts";
-import { QuranDB } from "../src/lib/quran-db.ts";
-import { RecitationTracker } from "../src/lib/tracker.ts";
-import type { TranscribeResult, BeamVerseMatch } from "../src/lib/tracker.ts";
-import type { VerseCandidate, WorkerOutbound } from "../src/lib/types.ts";
+import {
+  QuranDB,
+  RecitationTracker,
+  type TranscribeResult,
+  type BeamVerseMatch,
+  type VerseCandidate,
+  type WorkerOutbound,
+} from "@tilawa/core";
 import { displayQuranFromRaw, ZipformerHost } from "../src/worker/zipformer-session.ts";
 import type { ZipformerIo } from "../src/lib/recitation/index.ts";
 import { createSession, runInference } from "./session-node.ts";
@@ -67,7 +67,7 @@ if (engineName !== "zipformer" && engineName !== "fastconformer") {
   throw new Error(`Unknown --engine=${engineName} (expected zipformer|fastconformer)`);
 }
 const ZIPFORMER_TAIL_SECONDS = 2.0;
-const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
+const BENCHMARK = resolve(ROOT, `../../lab/benchmark/${corpusName}`);
 
 for (const [name, value] of Object.entries(hypothesisParams)) {
   process.env[`STREAMING_HYPOTHESIS_${toEnvName(name)}`] = String(value);
@@ -87,11 +87,45 @@ function loadAudio(filePath: string): Float32Array {
 // ---------------------------------------------------------------------------
 // Transcribe (same as validate-streaming.ts)
 // ---------------------------------------------------------------------------
-let decoder: CTCDecoder;
-let trie: CompactTrie | null = null;
+// The FastConformer phoneme path's mel/CTC/beam/trie modules are not part of
+// the demo any more -- the shipped decode+match logic moved into @tilawa/core
+// when the SDK was extracted. Load them on demand so `--engine=zipformer`
+// (the browser default) runs without them.
+type PhonemeDecoder = {
+  decode(logprobs: Float32Array, timeSteps: number, vocabSize: number): TranscribeResult;
+  getBlankId(): number;
+};
+type PhonemeModules = {
+  computeMelSpectrogram(audio: Float32Array): Promise<{ features: Float32Array; timeFrames: number }>;
+  CTCDecoder: new (vocab: unknown) => PhonemeDecoder;
+  beamSearchDecode(
+    logprobs: Float32Array, timeSteps: number, vocabSize: number,
+    blankId: number, trie: unknown, beamWidth: number,
+  ): { score: number; matchedVerses: { verseIndex: number; spanLength: number }[] }[];
+  buildTrie(quranData: unknown, vocab: unknown, order: number): { trie: unknown };
+};
+
+let phoneme: PhonemeModules;
+let decoder: PhonemeDecoder;
+let trie: unknown = null;
+
+async function loadPhonemeModules(): Promise<PhonemeModules> {
+  const [mel, ctc, beam, trieMod] = await Promise.all([
+    import("../src/worker/mel.ts"),
+    import("../src/worker/ctc-decode.ts"),
+    import("../src/worker/beam-decode.ts"),
+    import("../src/lib/phoneme-trie.ts"),
+  ]);
+  return {
+    computeMelSpectrogram: mel.computeMelSpectrogram,
+    CTCDecoder: ctc.CTCDecoder,
+    beamSearchDecode: beam.beamSearchDecode,
+    buildTrie: trieMod.buildTrie,
+  } as PhonemeModules;
+}
 
 async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
-  const { features, timeFrames } = await computeMelSpectrogram(audio);
+  const { features, timeFrames } = await phoneme.computeMelSpectrogram(audio);
   const numMels = 80;
   const { logprobs, timeSteps, vocabSize } = await runInference(
     features,
@@ -103,7 +137,7 @@ async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
 
   let beamMatches: BeamVerseMatch[] | undefined;
   if (trie) {
-    const beamResults = beamSearchDecode(
+    const beamResults = phoneme.beamSearchDecode(
       logprobs, timeSteps, vocabSize,
       decoder.getBlankId(), trie, 8,
     );
@@ -791,14 +825,16 @@ async function main() {
     console.log("Loading ONNX model...");
     await createSession(modelPath);
 
+    phoneme = await loadPhonemeModules();
+
     const vocabJson = JSON.parse(readFileSync(resolve(ROOT, "public/phoneme_vocab.json"), "utf-8"));
-    decoder = new CTCDecoder(vocabJson);
+    decoder = new phoneme.CTCDecoder(vocabJson);
 
     const quranData = JSON.parse(readFileSync(resolve(ROOT, "public/quran_phonemes.json"), "utf-8"));
     const db = new QuranDB(quranData, decoder);
     console.log(`Loaded ${db.totalVerses} verses`);
 
-    const built = buildTrie(quranData, vocabJson, 3);
+    const built = phoneme.buildTrie(quranData, vocabJson, 3);
     trie = built.trie;
     runOne = (sample, audio) => runSample(sample, db, audio);
   }

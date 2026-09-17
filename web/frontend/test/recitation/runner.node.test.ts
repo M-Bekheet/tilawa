@@ -13,7 +13,7 @@ import { SAMPLE_RATE } from "../../src/lib/recitation/config";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRONTEND = resolve(HERE, "../..");
-const VECTORS = resolve(HERE, "../../../../docs/specs/vectors");
+const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
 const PY = "/Users/rock/ai/projects/offline-tarteel/.venv/bin/python";
 const CLIP = "/Users/rock/ai/projects/offline-tarteel/benchmark/test_corpus/001002.mp3";
 const MODEL = resolve(FRONTEND, "public/models/zipformer_interp_gentle_a05.int8.onnx");

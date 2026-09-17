@@ -86,7 +86,7 @@ function parseRun(stdout: string, samples: Sample[]): RunSummary {
 
 function runValidator(corpus: string, noStreaming: boolean): RunSummary {
   const manifest: { samples: Sample[] } = JSON.parse(
-    readFileSync(resolve(ROOT, `../../benchmark/${corpus}/manifest.json`), "utf-8"),
+    readFileSync(resolve(ROOT, `../../lab/benchmark/${corpus}/manifest.json`), "utf-8"),
   );
   const commandArgs = [
     "test/validate-streaming.ts",

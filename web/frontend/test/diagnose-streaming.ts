@@ -65,7 +65,7 @@ const outPath =
     ROOT,
     `test/debug/streaming/${new Date().toISOString().replace(/[:.]/g, "-")}-${corpusName}.json`,
   );
-const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
+const BENCHMARK = resolve(ROOT, `../../lab/benchmark/${corpusName}`);
 
 async function main() {
   await createSession(resolve(ROOT, "public/fastconformer_phoneme_q8.onnx"));

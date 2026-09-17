@@ -252,7 +252,7 @@ Fine-tuning the phoneme CTC head with varying amounts of TLOG (phone-recorded re
 
 ## Zipformer2-CTC (streaming phoneme model + fine-tunes)
 
-Base weights are `Quran-Lab/zipformer_p-arabic-v3` v3.1 (HF; NPL-1.2 — share-alike, non-commercial; see [NOTICE.md](NOTICE.md)), int8 via `quantize_dynamic(MatMul QInt8)`, streaming contract T=61/hop=48/left 256, trained by the authors with chunk mix 8/16/24 frames (which is why we fine-tune at `--chunk-size 8,16,24`). Our tracker/harness and all fine-tunes are ours. Checkpoints live at volume path `/vol/reference/`; local copy `data/zipformer/reference/`.
+Base weights are `Quran-Lab/zipformer_p-arabic-v3` v3.1 (HF; NPL-1.2 — share-alike, non-commercial; see [NOTICE.md](../NOTICE.md)), int8 via `quantize_dynamic(MatMul QInt8)`, streaming contract T=61/hop=48/left 256, trained by the authors with chunk mix 8/16/24 frames (which is why we fine-tune at `--chunk-size 8,16,24`). Our tracker/harness and all fine-tunes are ours. Checkpoints live at volume path `/vol/reference/`; local copy `data/zipformer/reference/`.
 
 ### Tracker eval (our harness; median; scores identical across repeats)
 

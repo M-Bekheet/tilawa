@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { RecitationTracker } from "../src/lib/tracker";
-import type { TranscribeResult } from "../src/lib/tracker";
+import { RecitationTracker } from "@tilawa/core";
+import type { TranscribeResult } from "@tilawa/core";
 import type { QuranVerse, WorkerOutbound } from "../src/lib/types";
-import type { QuranCandidate } from "../src/lib/quran-db";
+import type { QuranCandidate } from "@tilawa/core";
 import {
   SAMPLE_RATE,
   TRACKING_TRIGGER_SAMPLES,

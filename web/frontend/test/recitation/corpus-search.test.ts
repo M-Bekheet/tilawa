@@ -8,7 +8,7 @@ import { costTable } from "../../src/lib/recitation/phonemeCost";
 import { DEFAULT_CONFIG } from "../../src/lib/recitation/config";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const VECTORS = resolve(HERE, "../../../../docs/specs/vectors");
+const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
 const CORPUS_PATH =
   process.env.ZIPFORMER_CORPUS ??
   resolve(HERE, "../../public/zipformer_quran.json");

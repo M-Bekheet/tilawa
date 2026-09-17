@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { KaldiFbank } from "../../src/lib/recitation/fbank";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const VECTORS = resolve(HERE, "../../../../docs/specs/vectors");
+const VECTORS = resolve(HERE, "../../../../lab/docs/specs/vectors");
 const WORKTREE = resolve(HERE, "../../../..");
 const MAIN_CHECKOUT = resolve(WORKTREE, "../..");
 const CHUNK = 7680;

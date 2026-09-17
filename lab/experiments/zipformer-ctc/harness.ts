@@ -16,16 +16,16 @@ import {
   ayahMeetsGate,
   MIN_WORD_FRACTION,
   type AyahTally,
-} from "../../web/frontend/src/lib/zipformer-emission.ts";
+} from "../../../web/frontend/src/lib/zipformer-emission.ts";
 import {
   DEFAULT_CONFIG,
   type EngineConfig,
   type ZipformerIo,
-} from "../../web/frontend/src/lib/recitation/index.ts";
-import { displayQuranFromRaw, ZipformerHost } from "../../web/frontend/src/worker/zipformer-session.ts";
+} from "../../../web/frontend/src/lib/recitation/index.ts";
+import { displayQuranFromRaw, ZipformerHost } from "../../../web/frontend/src/worker/zipformer-session.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, "..", "..");
+const ROOT = path.resolve(HERE, "..", "..", "..");
 const FRONTEND = path.resolve(ROOT, "web", "frontend");
 
 function camelToZipformerEnv(key: string): string {

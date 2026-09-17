@@ -10,7 +10,7 @@
  *   npx tsx test/compare-streaming-oracle.ts --corpus=test_corpus_v3 --sample=ea_alafasy_002143
  *   npx tsx test/compare-streaming-oracle.ts --corpus=test_corpus_v3 --limit=10 --json=test/oracle.json
  *   npx tsx test/compare-streaming-oracle.ts --stability-json=test/stab-gate-on-v3.json --only-exact-fail --limit=20
- *   npx tsx test/compare-streaming-oracle.ts --stability-json=test/stab-gate-on-v3.json --oracle-results=../../benchmark/results/r7-v3-batch.json
+ *   npx tsx test/compare-streaming-oracle.ts --stability-json=test/stab-gate-on-v3.json --oracle-results=../../lab/benchmark/results/r7-v3-batch.json
  */
 
 import { execSync } from "node:child_process";
@@ -55,7 +55,7 @@ if (skipFullFile && !oracleResultsPath) {
 const runIndexArg = args.find((arg) => arg.startsWith("--run-index="));
 const runIndex = runIndexArg ? Number(runIndexArg.split("=")[1]) : 0;
 const onlyExactFail = args.includes("--only-exact-fail");
-const BENCHMARK = resolve(ROOT, `../../benchmark/${corpusName}`);
+const BENCHMARK = resolve(ROOT, `../../lab/benchmark/${corpusName}`);
 
 interface Sample {
   id: string;

@@ -18,13 +18,13 @@ ROOT = Path(__file__).resolve().parent.parent
 DUMP = ROOT / "experiments" / "zipformer-ctc" / "fbank_dump.ts"
 _ORT = Path(os.environ.get(
     "ZIPFORMER_ORT_DIR",
-    ROOT / "web" / "frontend" / "node_modules",
+    ROOT.parent / "web" / "frontend" / "node_modules",
 ))
 TSX = _ORT / ".bin" / "tsx"
 _CLIP = "001002.mp3"
 _CORPUS_CANDIDATES = (
     ROOT / "benchmark" / "test_corpus",
-    Path("/Users/rock/ai/projects/offline-tarteel/benchmark/test_corpus"),
+    Path("/Users/rock/ai/projects/offline-tarteel/lab/benchmark/test_corpus"),
 )
 
 
