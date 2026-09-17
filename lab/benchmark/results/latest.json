@@ -1330,13 +1330,13 @@
     "precision": 1.0,
     "sequence_accuracy": 1.0,
     "total": 53,
-    "avg_latency": 2.858245834835612,
+    "avg_latency": 0.838291660372941,
     "model_size": 69245985,
-    "timestamp": "2026-09-17_084417",
+    "timestamp": "2026-09-17_103550",
     "mode": "full",
     "category": null,
     "chunk_seconds": null,
     "corpus": "test_corpus",
-    "source_file": "2026-09-17_084417.json"
+    "source_file": "2026-09-17_103550.json"
   }
 ]
