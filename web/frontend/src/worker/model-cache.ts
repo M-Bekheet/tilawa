@@ -1,6 +1,5 @@
 const DB_NAME = "tarteel-models";
 const STORE_NAME = "models";
-const MODEL_KEY = "fastconformer-full-mixed-text-ctc";
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -39,7 +38,7 @@ async function saveToCache(key: string, data: ArrayBuffer): Promise<void> {
 export async function loadModel(
   url: string,
   onProgress?: (loaded: number, total: number) => void,
-  cacheKey: string = MODEL_KEY,
+  cacheKey: string = url,
 ): Promise<ArrayBuffer> {
   // Try IndexedDB cache first
   const cached = await getFromCache(cacheKey);

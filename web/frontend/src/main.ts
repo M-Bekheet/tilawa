@@ -18,7 +18,6 @@ import type {
   QuranVerse,
   DebugMessage,
 } from "./lib/types";
-import { engineLabel, resolveEngine } from "./lib/engine";
 import { DEFAULT_STREAMING_CONFIG } from "./lib/types";
 
 // ---------------------------------------------------------------------------
@@ -59,16 +58,6 @@ const MAX_DEBUG_EVENTS = 80;
 const DIAGNOSTIC_COOLDOWN_MS = 30_000;
 const DEBUG_VIEW_ENABLED = Boolean(import.meta.env.VITE_DEBUG_MODE);
 
-function browserStorage(): Storage | null {
-  try {
-    return localStorage;
-  } catch {
-    return null;
-  }
-}
-
-const ENGINE = resolveEngine(location.search, browserStorage());
-const ENGINE_LABEL = engineLabel(ENGINE);
 let mode: RecitationMode = 'tracking';
 try { mode = localStorage.getItem('tilawa-mode') === 'correction' ? 'correction' : 'tracking'; } catch { /* Optional preference. */ }
 let correctionState: CorrectionState | null = null;
@@ -110,7 +99,7 @@ const $permissionPrompt = document.getElementById("permission-prompt")!;
 const $listeningStatus = document.getElementById("listening-status")!;
 const $modelStatus = document.getElementById("model-status")!;
 const $engineStatus = document.getElementById("engine-status");
-if ($engineStatus) $engineStatus.textContent = ENGINE_LABEL;
+if ($engineStatus) $engineStatus.textContent = "Zipformer";
 const $loadingStatus = document.getElementById("loading-status")!;
 const $loadingProgress = document.getElementById("loading-progress")!;
 const $loadingDetail = document.getElementById("loading-detail")!;
@@ -163,12 +152,8 @@ function refreshMode(): void {
   document.querySelector('.mode-options')!.setAttribute('aria-label', tr('Recitation mode', 'وضع التلاوة'));
   document.getElementById('mode-help')!.textContent = mode === 'tracking'
     ? tr('Find your ayah and follow each word.', 'اعثر على آيتك وتابع تلاوتك كلمةً بكلمة.')
-    : ENGINE !== 'zipformer' ? tr('Live correction isn’t available with this recognition engine.', 'التصحيح المباشر غير متاح مع محرّك التعرّف الحالي.')
     : tr('Spot missed words and retry as you recite.', 'لاحظ الكلمات الفائتة وصحّحها أثناء التلاوة.');
-  const unavailable = mode === 'correction' && ENGINE !== 'zipformer';
-  document.getElementById('correction-engine-link')!.hidden = !unavailable;
-  ($btnStart as HTMLButtonElement).disabled = unavailable;
-  $btnBeginTest.disabled = unavailable || modelInitStarted;
+  $btnBeginTest.disabled = modelInitStarted;
   const title = document.querySelector<HTMLElement>('#bench-idle h3')!;
   const copy = document.querySelectorAll<HTMLElement>('#bench-idle .demo-copy');
   if (mode === 'correction') {
@@ -409,7 +394,7 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
     for (let i = startIdx; i < allWords.length; i++) {
       const wordEl = document.createElement("span");
       wordEl.className = "word";
-      wordEl.setAttribute("data-word-idx", String(ENGINE === "zipformer" ? i - startIdx : i));
+      wordEl.setAttribute("data-word-idx", String(i - startIdx));
       wordEl.textContent = allWords[i].text;
       textEl.appendChild(wordEl);
       if (i < allWords.length - 1) {
@@ -631,7 +616,7 @@ function buildDebugBundle() {
     createdAt: new Date().toISOString(),
     pageUrl: location.href,
     userAgent: navigator.userAgent,
-    engine: ENGINE,
+    engine: "zipformer",
     modelReady: state.modelReady,
     isActive: state.isActive,
     streamingConfig: state.streamingConfig,
@@ -796,7 +781,7 @@ function summarizeDebugEvent(event: DebugMessage): { label: string; chips: HTMLE
 }
 
 function renderDebugPanel(): void {
-  $debugSummary.textContent = `${ENGINE_LABEL} · ${state.debugEvents.length} events`;
+  $debugSummary.textContent = `Zipformer · ${state.debugEvents.length} events`;
   if (!$debugPanel.open) return;
 
   $debugContent.textContent = "";
@@ -1043,13 +1028,11 @@ function initializeModel(): void {
   if ($benchIdle) $benchIdle.hidden = true;
   $loadingStatus.hidden = false;
   $debugPanel.hidden = !DEBUG_VIEW_ENABLED;
-  $modelStatus.textContent = `Loading ${ENGINE_LABEL}...`;
+  $modelStatus.textContent = `Loading Zipformer...`;
   $loadingDetail.textContent = "Starting download";
   refreshLabels();
 
-  const worker = ENGINE === "zipformer"
-    ? new Worker(new URL("./worker/zipformer-backend.ts", import.meta.url), { type: "module" })
-    : new Worker(new URL("./worker/inference.ts", import.meta.url), { type: "module" });
+  const worker = new Worker(new URL("./worker/zipformer-backend.ts", import.meta.url), { type: "module" });
   state.worker = worker;
 
   let messages = Promise.resolve();
@@ -1156,9 +1139,7 @@ function bindControls(): void {
   $btnStop.addEventListener("click", () => {
     audioAttempt++;
     stopAudio();
-    if (ENGINE === "zipformer") {
-      state.worker?.postMessage({ type: "stop" });
-    }
+    state.worker?.postMessage({ type: "stop" });
     $recordingState.hidden = true;
     $recordingActions.hidden = true;
     $listeningStatus.hidden = true;

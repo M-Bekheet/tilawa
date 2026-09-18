@@ -1,8 +1,8 @@
 # Tilawa web frontend
 
-Vanilla TypeScript + Vite 7. Default engine is Zipformer2-CTC (`interp-gentle-a0.5` int8). FastConformer stays behind `?engine=fastconformer` (or `localStorage.tilawaEngine=fastconformer`).
+Vanilla TypeScript + Vite 7. The demo uses Zipformer2-CTC (`interp-gentle-a0.5` int8) for both Tracking and Correction.
 
-## Zipformer (default, `interp-gentle-a0.5`)
+## Zipformer ( `interp-gentle-a0.5`)
 
 Streaming Zipformer2-CTC. The status pill shows the active engine. Model artefacts are NPL-1.2; the word-level tracker is the native MIT recitation engine, written from `lab/docs/specs/recitation-engine-spec.md` plus 23 vector oracles. It now lives in the SDK (`packages/core/src/recitation/`) and the worker here is a thin host over `ZipformerSession` from `@tilawa/core`.
 
@@ -19,8 +19,7 @@ Then from `web/frontend` (symlink `node_modules` from the main checkout if you a
 
 ```bash
 npm run dev
-# open http://localhost:5173/                      # Zipformer (default)
-# open http://localhost:5173/?engine=fastconformer # previous engine
+# open http://localhost:5173/
 ```
 
 Node smoke (onnxruntime-node, no browser):
@@ -30,12 +29,12 @@ cd web/frontend
 npx tsx test/zipformer-node-smoke.ts
 ```
 
-Streaming stability (same JSON shape as the FastConformer report):
+Streaming stability:
 
 ```bash
-npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --json=test/track-c-v1-stability.json
-npx tsx test/stability-report.ts --engine=zipformer --repeats=3 --corpus=test_corpus_v2 --json=test/track-c-v2-stability.json
-npx tsx test/stability-report.ts --engine=zipformer --repeats=1 --corpus=test_corpus_v3 --json=test/track-c-v3-stability.json
+npx tsx test/stability-report.ts --repeats=3 --json=test/track-c-v1-stability.json
+npx tsx test/stability-report.ts --repeats=3 --corpus=test_corpus_v2 --json=test/track-c-v2-stability.json
+npx tsx test/stability-report.ts --repeats=1 --corpus=test_corpus_v3 --json=test/track-c-v3-stability.json
 ```
 
 int8 ONNX sha256 `eaf099af…` (66 MB). Threads stay off (`numThreads=1`, EP `wasm`). First load is ~66 MB into IndexedDB under `zipformer-interp-gentle-a05-int8`.

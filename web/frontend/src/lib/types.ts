@@ -125,7 +125,7 @@ export interface SurahData {
 }
 
 // ---------------------------------------------------------------------------
-// Constants (matching server.py exactly)
+// Audio and streaming constants
 // ---------------------------------------------------------------------------
 export const SAMPLE_RATE = 16000;
 export const TRIGGER_SECONDS = 2.0;

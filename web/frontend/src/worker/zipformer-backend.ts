@@ -82,7 +82,7 @@ async function handle(msg: WorkerInbound): Promise<void> {
     debugEnabled = msg.enabled;
     if (session) session.debugEnabled = msg.enabled;
   } else if (msg.type === "set_config") {
-    // Zipformer runs the recitation-engine config, not FastConformer streaming knobs.
+    // Audio chunk configuration belongs to the AudioWorklet; session timing is internal.
   } else if (msg.type === "stop") {
     if (!session) return;
     for (const m of await session.stop()) post(m);

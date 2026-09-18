@@ -6,13 +6,12 @@
  * ordered sequence accuracy explicitly.
  *
  * Usage:
- *   npx tsx test/stability-report.ts                    # FastConformer phoneme path, 5 repeats
+ *   npx tsx test/stability-report.ts                    # Zipformer, 5 repeats
  *   npx tsx test/stability-report.ts --repeats=3        # custom repeats
  *   npx tsx test/stability-report.ts --corpus=test_v2   # different corpus
  *   npx tsx test/stability-report.ts --json=out.json    # save JSON report
  *   npx tsx test/stability-report.ts --focus=exact      # print exact-set failures
  *   npx tsx test/stability-report.ts --limit=3          # smoke-test first N samples
- *   npx tsx test/stability-report.ts --hypothesis=nextAyah=0.4,backward=-1.2
  *   npx tsx test/stability-report.ts --engine=zipformer # ZipformerSession (browser default)
  */
 
@@ -23,23 +22,17 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  QuranDB,
-  RecitationTracker,
-  type TranscribeResult,
-  type BeamVerseMatch,
   type VerseCandidate,
   type WorkerOutbound,
 } from "@tilawa/core";
 import { displayQuranFromRaw, ZipformerSession } from "../src/worker/zipformer-session.ts";
 import type { ZipformerIo } from "@tilawa/core";
-import { createSession, runInference } from "./session-node.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const SAMPLE_RATE = 16000;
 const CHUNK_SECONDS = 0.3;
 const CHUNK_SAMPLES = Math.floor(SAMPLE_RATE * CHUNK_SECONDS);
-const TAIL_SILENCE_SECONDS = 4.0;
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -55,23 +48,13 @@ const focusArg = args.find((a) => a.startsWith("--focus="));
 const focus = focusArg?.split("=")[1] === "exact" ? "exact" : "recall";
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const sampleLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : null;
-const hypothesisArg = args.find((a) => a.startsWith("--hypothesis="));
-const hypothesisParams = parseHypothesisParams(
-  hypothesisArg ? hypothesisArg.slice("--hypothesis=".length) : "",
-);
 const engineArg = args.find((a) => a.startsWith("--engine="));
-const engineName = (engineArg ? engineArg.split("=")[1] : "fastconformer") as
-  | "zipformer"
-  | "fastconformer";
-if (engineName !== "zipformer" && engineName !== "fastconformer") {
-  throw new Error(`Unknown --engine=${engineName} (expected zipformer|fastconformer)`);
+const engineName = "zipformer";
+if (engineArg && engineArg !== "--engine=zipformer") {
+  throw new Error("The demo supports only Zipformer");
 }
 const ZIPFORMER_TAIL_SECONDS = 2.0;
 const BENCHMARK = resolve(ROOT, `../../lab/benchmark/${corpusName}`);
-
-for (const [name, value] of Object.entries(hypothesisParams)) {
-  process.env[`STREAMING_HYPOTHESIS_${toEnvName(name)}`] = String(value);
-}
 
 // ---------------------------------------------------------------------------
 // Audio loading
@@ -82,92 +65,6 @@ function loadAudio(filePath: string): Float32Array {
     { maxBuffer: 50 * 1024 * 1024 },
   );
   return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-}
-
-// ---------------------------------------------------------------------------
-// Transcribe (same as validate-streaming.ts)
-// ---------------------------------------------------------------------------
-// The FastConformer phoneme path's mel/CTC/beam/trie modules are not part of
-// the demo any more -- the shipped decode+match logic moved into @tilawa/core
-// when the SDK was extracted. Load them on demand so `--engine=zipformer`
-// (the browser default) runs without them.
-type PhonemeDecoder = {
-  decode(logprobs: Float32Array, timeSteps: number, vocabSize: number): TranscribeResult;
-  getBlankId(): number;
-};
-type PhonemeModules = {
-  computeMelSpectrogram(audio: Float32Array): Promise<{ features: Float32Array; timeFrames: number }>;
-  CTCDecoder: new (vocab: unknown) => PhonemeDecoder;
-  beamSearchDecode(
-    logprobs: Float32Array, timeSteps: number, vocabSize: number,
-    blankId: number, trie: unknown, beamWidth: number,
-  ): { score: number; matchedVerses: { verseIndex: number; spanLength: number }[] }[];
-  buildTrie(quranData: unknown, vocab: unknown, order: number): { trie: unknown };
-};
-
-let phoneme: PhonemeModules;
-let decoder: PhonemeDecoder;
-let trie: unknown = null;
-
-async function loadPhonemeModules(): Promise<PhonemeModules> {
-  const [mel, ctc, beam, trieMod] = await Promise.all([
-    import("../src/worker/mel.ts"),
-    import("../src/worker/ctc-decode.ts"),
-    import("../src/worker/beam-decode.ts"),
-    import("../src/lib/phoneme-trie.ts"),
-  ]);
-  return {
-    computeMelSpectrogram: mel.computeMelSpectrogram,
-    CTCDecoder: ctc.CTCDecoder,
-    beamSearchDecode: beam.beamSearchDecode,
-    buildTrie: trieMod.buildTrie,
-  } as PhonemeModules;
-}
-
-async function transcribe(audio: Float32Array): Promise<TranscribeResult> {
-  const { features, timeFrames } = await phoneme.computeMelSpectrogram(audio);
-  const numMels = 80;
-  const { logprobs, timeSteps, vocabSize } = await runInference(
-    features,
-    numMels,
-    timeFrames,
-  );
-
-  const greedy = decoder.decode(logprobs, timeSteps, vocabSize);
-
-  let beamMatches: BeamVerseMatch[] | undefined;
-  if (trie) {
-    const beamResults = phoneme.beamSearchDecode(
-      logprobs, timeSteps, vocabSize,
-      decoder.getBlankId(), trie, 8,
-    );
-    const seen = new Set<string>();
-    beamMatches = [];
-    for (const result of beamResults) {
-      for (const ref of result.matchedVerses) {
-        const key = `${ref.verseIndex}:${ref.spanLength}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          beamMatches.push({
-            verseIndex: ref.verseIndex,
-            spanLength: ref.spanLength,
-            score: result.score,
-          });
-        }
-      }
-    }
-  }
-
-  return {
-    ...greedy,
-    acoustic: {
-      logprobs,
-      timeSteps,
-      vocabSize,
-      blankId: decoder.getBlankId(),
-    },
-    beamMatches,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +118,7 @@ interface SampleStability {
 
 interface StabilityReport {
   corpus: string;
-  engine: "zipformer" | "fastconformer";
+  engine: "zipformer";
   repeats: number;
   timestamp: string;
   metrics: {
@@ -235,8 +132,7 @@ interface StabilityReport {
   config: {
     chunkSeconds: number;
     tailSilenceSeconds: number;
-    hypothesisParams: Record<string, number>;
-    engine: "zipformer" | "fastconformer";
+    engine: "zipformer";
   };
   samples: SampleStability[];
   aggregate: {
@@ -318,26 +214,6 @@ function median(values: number[]): number {
   return sorted.length % 2 === 0
     ? (sorted[mid - 1] + sorted[mid]) / 2
     : sorted[mid];
-}
-
-function parseHypothesisParams(input: string): Record<string, number> {
-  if (!input) return {};
-  const params: Record<string, number> = {};
-  for (const part of input.split(",")) {
-    const eq = part.indexOf("=");
-    const name = eq >= 0 ? part.slice(0, eq) : "";
-    const rawValue = eq >= 0 ? part.slice(eq + 1) : "";
-    const value = Number(rawValue);
-    if (!name || !Number.isFinite(value)) {
-      throw new Error(`Invalid --hypothesis entry: ${part}`);
-    }
-    params[name.trim()] = value;
-  }
-  return params;
-}
-
-function toEnvName(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/-/g, "_").toUpperCase();
 }
 
 function verseKey(surah: number, ayah: number): string {
@@ -450,102 +326,6 @@ function computeProductMetrics(
 // ---------------------------------------------------------------------------
 // Run one sample through streaming validation
 // ---------------------------------------------------------------------------
-async function runSample(
-  sample: Sample,
-  db: QuranDB,
-  audio: Float32Array,
-): Promise<SampleRunResult> {
-  const tracker = new RecitationTracker(db, transcribe);
-  const rawCommitVerses: string[] = [];
-  let finalSequenceVerses: string[] = [];
-  const candidateHistory: CandidateHistoryEntry[] = [];
-  const visibleEvents: VisibleEvent[] = [];
-
-  const recordMessages = (
-    msgs: WorkerOutbound[],
-    chunkIndex: number,
-    timeSec: number,
-  ) => {
-    for (const msg of msgs) {
-      if (msg.type === "verse_match") {
-        const key = verseKey(msg.surah, msg.ayah);
-        rawCommitVerses.push(key);
-        visibleEvents.push({
-          type: "commit",
-          key,
-          verses: [key],
-          timeSec,
-        });
-      } else if (msg.type === "verse_candidate") {
-        const candidates = msg.candidates.map((candidate) => ({
-          ref: refForCandidate(candidate),
-          verses: expandCandidateKeys(candidate),
-          confidence: candidate.confidence,
-          rank: candidate.rank,
-        }));
-        candidateHistory.push({
-          chunkIndex,
-          timeSec,
-          stable: msg.stable,
-          finalFlush: msg.final_flush,
-          candidates,
-        });
-        const top = candidates[0];
-        if (top?.verses[0]) {
-          visibleEvents.push({
-            type: "candidate",
-            key: top.verses[0],
-            verses: top.verses,
-            timeSec,
-          });
-        }
-      } else if (msg.type === "final_sequence") {
-        finalSequenceVerses = msg.verses.map((v) => verseKey(v.surah, v.ayah));
-      }
-    }
-  };
-
-  // Feed audio in chunks
-  let chunkIndex = 0;
-  for (let offset = 0; offset < audio.length; offset += CHUNK_SAMPLES) {
-    const end = Math.min(offset + CHUNK_SAMPLES, audio.length);
-    const chunk = audio.slice(offset, end);
-    const msgs = await tracker.feed(chunk);
-    chunkIndex++;
-    recordMessages(msgs, chunkIndex, chunkIndex * CHUNK_SECONDS);
-  }
-
-  // Feed tail silence
-  const silenceChunk = new Float32Array(CHUNK_SAMPLES);
-  const silenceChunks = Math.ceil(
-    (TAIL_SILENCE_SECONDS * SAMPLE_RATE) / CHUNK_SAMPLES,
-  );
-  for (let i = 0; i < silenceChunks; i++) {
-    const msgs = await tracker.feed(silenceChunk);
-    chunkIndex++;
-    recordMessages(msgs, chunkIndex, chunkIndex * CHUNK_SECONDS);
-  }
-
-  const expectedVerses = sample.expected_verses.map((v) => verseKey(v.surah, v.ayah));
-  const dedupedRawCommits = dedupeOrdered(rawCommitVerses);
-  const dedupedFinalSequence = dedupeOrdered(finalSequenceVerses);
-  const rawCommitMetrics = computeSequenceMetrics(expectedVerses, dedupedRawCommits);
-  const finalSequenceMetrics = computeSequenceMetrics(expectedVerses, dedupedFinalSequence);
-  const productMetrics = computeProductMetrics(expectedVerses, candidateHistory, visibleEvents);
-
-  return {
-    passed: finalSequenceMetrics.recallPassed,
-    exactPassed: finalSequenceMetrics.exactSetPassed,
-    orderedPassed: finalSequenceMetrics.orderedSeqPassed,
-    rawCommitVerses: dedupedRawCommits,
-    finalSequenceVerses: dedupedFinalSequence,
-    candidateHistory,
-    rawCommitMetrics,
-    finalSequenceMetrics,
-    productMetrics,
-  };
-}
-
 function recordWorkerMessages(
   msgs: WorkerOutbound[],
   chunkIndex: number,
@@ -814,30 +594,9 @@ function formatNullableSeconds(value: number | null): string {
 async function main() {
   console.log(`=== STABILITY REPORT (${repeats} repeats, corpus: ${corpusName}, engine: ${engineName}) ===\n`);
 
-  let runOne: (sample: Sample, audio: Float32Array) => Promise<SampleRunResult>;
-
-  if (engineName === "zipformer") {
-    console.log("Loading Zipformer host (onnxruntime-node, cpu)...");
-    const host = await loadZipformerSession();
-    runOne = (sample, audio) => runZipformerSample(host, sample, audio);
-  } else {
-    const modelPath = resolve(ROOT, "public/fastconformer_phoneme_q8.onnx");
-    console.log("Loading ONNX model...");
-    await createSession(modelPath);
-
-    phoneme = await loadPhonemeModules();
-
-    const vocabJson = JSON.parse(readFileSync(resolve(ROOT, "public/phoneme_vocab.json"), "utf-8"));
-    decoder = new phoneme.CTCDecoder(vocabJson);
-
-    const quranData = JSON.parse(readFileSync(resolve(ROOT, "public/quran_phonemes.json"), "utf-8"));
-    const db = new QuranDB(quranData, decoder);
-    console.log(`Loaded ${db.totalVerses} verses`);
-
-    const built = phoneme.buildTrie(quranData, vocabJson, 3);
-    trie = built.trie;
-    runOne = (sample, audio) => runSample(sample, db, audio);
-  }
+  console.log("Loading Zipformer host (onnxruntime-node, cpu)...");
+  const host = await loadZipformerSession();
+  const runOne = (sample: Sample, audio: Float32Array) => runZipformerSample(host, sample, audio);
 
   const manifest: { samples: Sample[] } = JSON.parse(
     readFileSync(resolve(BENCHMARK, "manifest.json"), "utf-8"),
@@ -973,8 +732,7 @@ async function main() {
     },
     config: {
       chunkSeconds: CHUNK_SECONDS,
-      tailSilenceSeconds: engineName === "zipformer" ? ZIPFORMER_TAIL_SECONDS : TAIL_SILENCE_SECONDS,
-      hypothesisParams,
+      tailSilenceSeconds: ZIPFORMER_TAIL_SECONDS,
       engine: engineName,
     },
     samples: sampleStabilities,
@@ -1047,14 +805,9 @@ async function main() {
   }
 
   console.log();
-  // onnxruntime-node can abort in native destructors after a clean run
-  // (mutex lock failed). Artifacts are already on disk; force a 0 exit.
-  process.exit(0);
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});

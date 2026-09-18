@@ -1,9 +1,8 @@
 # Live correction
 
 The demo defaults to Tracking and remembers the mode in `tilawa-mode`. Correction
-is live, uses the default Zipformer engine, and keeps all inference/audio local.
-The legacy FastConformer override displays an explicit availability message: it
-does not expose the same word evidence. There is no second feedback-timing picker.
+is live, uses Zipformer, and keeps all inference/audio local.
+Both modes use the same engine. There is no second feedback-timing picker.
 
 ## Evidence
 
