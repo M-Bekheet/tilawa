@@ -68,6 +68,8 @@ class ScriptedOrtSession implements OrtSessionLike {
     this.queue = [...ids];
   }
 
+  enqueue(ids: number[]): void { this.queue.push(...ids); }
+
   get pending(): number {
     return this.queue.length;
   }
@@ -232,3 +234,46 @@ function byAyah(a: string, b: string): number {
   const [bs, ba] = b.split(":").map(Number) as [number, number];
   return as - bs || aa - ba;
 }
+
+
+describe('live correction through the injected ONNX boundary', () => {
+  it.each(['omission', 'substitution'] as const)('detects a %s, isolates fresh retries, and preserves main verse history', async (kind) => {
+    const first = corpus.wordIndex(112, 3, 0);
+    const ayah = Array.from({ length: 4 }, (_, i) => corpus.wordPhonemes(first + i));
+    const intro = corpus.ayahPhonemes(112, 1) + corpus.ayahPhonemes(112, 2);
+    const changed = ayah.map((ph, i) => i !== 1 ? ph : kind === 'omission' ? '' : corpus.wordPhonemes(corpus.wordIndex(109, 1, 2)));
+    const ort = new ScriptedOrtSession(tokenIds(intro + changed.join('')));
+    const session = await ZipformerSession.create({ session: ort, Tensor: TensorCtor, corpus: corpusJson });
+    session.setMode('correction');
+    const seen: WorkerOutbound[] = [];
+    for (let i = 0; i < 60 && session.correction.state.phase === 'idle'; i++) {
+      seen.push(...await session.feed(new Float32Array(CHUNK)));
+    }
+    expect(seen.find(m => m.type === 'correction')).toMatchObject({
+      state: { phase: 'error', issue: { surah: 112, ayah: 3, word: 1, kind: `possible_${kind}` } }, totalWords: 4,
+    });
+    const resume = { ...session.correction.state.resume! };
+    const transcript = session.transcript;
+    const verses = session.verses;
+    expect(verses.map(v => `${v.surah}:${v.ayah}`)).toEqual(["112:1", "112:2", "112:3"]);
+    session.correct('retry');
+    // Silence and a cursor lock must not produce a successful retry.
+    for (let i = 0; i < 5; i++) await session.feed(new Float32Array(CHUNK));
+    expect(session.correction.state.phase).toBe('retrying');
+    ort.enqueue(tokenIds(ayah.join('')));
+    const practice: WorkerOutbound[] = [];
+    for (let i = 0; i < 30 && session.correction.state.phase === 'retrying'; i++) {
+      practice.push(...await session.feed(new Float32Array(CHUNK)));
+    }
+    expect(session.correction.state.phase).toBe('corrected');
+    expect(practice.every(m => m.type === 'correction')).toBe(true);
+    expect(session.transcript).toBe(transcript);
+    expect(session.verses).toEqual(verses);
+    session.correct('continue');
+    expect(session.correction.state).toMatchObject({ phase: 'idle', outcome: 'corrected', resume });
+    ort.enqueue(tokenIds(corpus.ayahPhonemes(112, 4)));
+    const continued: WorkerOutbound[] = [];
+    for (let i = 0; i < 20; i++) continued.push(...await session.feed(new Float32Array(CHUNK)));
+    expect(continued.some(m => m.type === 'word_progress' && m.surah === 112 && m.ayah === 4)).toBe(true);
+  });
+});

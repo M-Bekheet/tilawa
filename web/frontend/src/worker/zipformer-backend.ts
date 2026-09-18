@@ -12,6 +12,7 @@ import {
 
 let session: ZipformerSession | null = null;
 let debugEnabled = false;
+let mode: import("@tilawa/core").RecitationMode = "tracking";
 
 function post(msg: WorkerOutbound): void {
   self.postMessage(msg);
@@ -58,6 +59,7 @@ async function init(): Promise<void> {
       executionProviders: ["wasm"],
       debug: debugEnabled,
     });
+    session.setMode(mode);
     post({ type: "ready" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -66,10 +68,14 @@ async function init(): Promise<void> {
   }
 }
 
-self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
-  const msg = e.data;
+async function handle(msg: WorkerInbound): Promise<void> {
   if (msg.type === "init") {
     await init();
+  } else if (msg.type === "set_mode") {
+    mode = msg.mode;
+    for (const m of session?.setMode(mode) ?? []) post(m);
+  } else if (msg.type === "correction_action") {
+    for (const m of session?.correct(msg.action) ?? []) post(m);
   } else if (msg.type === "reset") {
     session?.reset();
   } else if (msg.type === "set_debug") {
@@ -84,4 +90,13 @@ self.onmessage = async (e: MessageEvent<WorkerInbound>) => {
     if (!session) return;
     for (const m of await session.feed(msg.samples)) post(m);
   }
+
+}
+
+// Stateful ONNX inference, reset and practice commands must never overlap.
+let queue = Promise.resolve();
+self.onmessage = (e: MessageEvent<WorkerInbound>) => {
+  queue = queue.then(() => handle(e.data)).catch(error => {
+    post({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+  });
 };

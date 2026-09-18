@@ -2,6 +2,9 @@ import "@fontsource/amiri/400.css";
 import "@fontsource/amiri/700.css";
 import "./style.css";
 import "./arabic-font.css";
+import type { RecitationMode, CorrectionState } from "@tilawa/core";
+import { CorrectionView } from "./correction-view";
+import { splitUthmaniWords, startsWithBismillah, BISMILLAH_WORD_COUNT } from "./lib/quran-words";
 
 import { initSurahDropdown, openReportDialog } from "./report-dialog";
 
@@ -66,6 +69,15 @@ function browserStorage(): Storage | null {
 
 const ENGINE = resolveEngine(location.search, browserStorage());
 const ENGINE_LABEL = engineLabel(ENGINE);
+let mode: RecitationMode = 'tracking';
+try { mode = localStorage.getItem('tilawa-mode') === 'correction' ? 'correction' : 'tracking'; } catch { /* Optional preference. */ }
+let correctionState: CorrectionState | null = null;
+let practicePending = false;
+const practice = new CorrectionView(action => {
+  if (practicePending) return;
+  practicePending = true;
+  state.worker?.postMessage({ type: 'correction_action', action });
+});
 
 const state = {
   groups: [] as VerseGroup[],
@@ -144,7 +156,62 @@ async function prepareAudioWorklet(): Promise<void> {
   audioWorkletUrl = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
 }
 
+function refreshMode(): void {
+  document.querySelector<HTMLElement>('.bench')!.dataset.mode = mode;
+  document.getElementById('mode-tracking')!.setAttribute('aria-pressed', String(mode === 'tracking'));
+  document.getElementById('mode-correction')!.setAttribute('aria-pressed', String(mode === 'correction'));
+  document.querySelector('.mode-options')!.setAttribute('aria-label', tr('Recitation mode', 'وضع التلاوة'));
+  document.getElementById('mode-help')!.textContent = mode === 'tracking'
+    ? tr('Find your ayah and follow each word.', 'اعثر على آيتك وتابع تلاوتك كلمةً بكلمة.')
+    : ENGINE !== 'zipformer' ? tr('Live correction isn’t available with this recognition engine.', 'التصحيح المباشر غير متاح مع محرّك التعرّف الحالي.')
+    : tr('Spot missed words and retry as you recite.', 'لاحظ الكلمات الفائتة وصحّحها أثناء التلاوة.');
+  const unavailable = mode === 'correction' && ENGINE !== 'zipformer';
+  document.getElementById('correction-engine-link')!.hidden = !unavailable;
+  ($btnStart as HTMLButtonElement).disabled = unavailable;
+  $btnBeginTest.disabled = unavailable || modelInitStarted;
+  const title = document.querySelector<HTMLElement>('#bench-idle h3')!;
+  const copy = document.querySelectorAll<HTMLElement>('#bench-idle .demo-copy');
+  if (mode === 'correction') {
+    title.replaceChildren(document.createTextNode(tr('Catch a missed word.', 'فاتتك كلمة؟')), document.createElement('br'), document.createTextNode(tr('Try it again.', 'أعد الآية وصحّحها.')));
+    copy.forEach(el => el.textContent = tr('See possible mistakes as you recite, then repeat the ayah to correct them.', 'تظهر الأخطاء المحتملة أثناء تلاوتك، ويمكنك إعادة الآية لتصحيحها.'));
+  } else {
+    title.replaceChildren();
+    title.append(document.createTextNode(tr('Start anywhere', 'ابدأ من أي موضع')), document.createElement('br'), document.createTextNode(tr('in the Quran.', 'في القرآن.')));
+    copy.forEach(el => el.textContent = el.dataset[language]!);
+  }
+  document.querySelector('#btn-begin-test span')!.textContent = mode === 'correction'
+    ? tr('Start with correction', 'ابدأ التلاوة مع التصحيح') : tr('Start reciting', 'ابدأ التلاوة');
+  practice.language(language === 'ar');
+}
+
+async function handleCorrection(msg: Extract<WorkerOutbound, { type: 'correction' }>): Promise<void> {
+  practicePending = false;
+  correctionState = msg.state;
+  if (msg.state.phase === 'idle') {
+    const wasOpen = practice.open;
+    practice.close();
+    if (wasOpen && state.isActive) $btnStop.focus({ preventScroll: true });
+    return;
+  }
+  if (mode !== 'correction' || !state.isActive || !msg.state.issue) {
+    state.worker?.postMessage({ type: 'correction_action', action: 'close' });
+    return;
+  }
+  const issue = msg.state.issue;
+  const surah = await fetchSurah(issue.surah);
+  const verse = surah.verses.find(v => v.ayah === issue.ayah);
+  const words = verse ? splitUthmaniWords(verse.text_uthmani).map(w => w.text) : [];
+  // Never attach acoustic indices to a different display tokenization.
+  const wordOffset = issue.ayah === 1 && issue.surah !== 1 && issue.surah !== 9 && verse && startsWithBismillah(verse.text_uthmani) ? BISMILLAH_WORD_COUNT : 0;
+  if (words.length - wordOffset !== msg.totalWords || !words[issue.word + wordOffset]) {
+    state.worker?.postMessage({ type: 'correction_action', action: 'close' });
+    return;
+  }
+  practice.show(msg.state, { words, wordOffset, name: surah.surah_name, nameEn: surah.surah_name_en, ayahCount: surah.verses.length }, language === 'ar');
+}
+
 function refreshLabels(): void {
+  refreshMode();
   $demoTitle.textContent = microphonePending ? tr("Microphone permission", "إذن الميكروفون") : state.isActive
     ? (state.hasFirstMatch ? tr("Verse found", "تمّ التعرّف على الآية") : tr("Listening", "نستمع لتلاوتك"))
     : tr("Try Tilawa", "جرّب تلاوة");
@@ -183,6 +250,18 @@ function applyLanguage(): void {
 }
 
 function failSetup(): void {
+  if (state.modelReady) {
+    practice.close();
+    practicePending = false;
+    correctionState = null;
+    stopAudio();
+    state.modelReady = false;
+    $recordingState.hidden = true;
+    $recordingActions.hidden = true;
+    $readyState.hidden = true;
+    $postRecording.hidden = true;
+    $loadingStatus.hidden = false;
+  }
   setupFailed = true;
   $retryDownload.hidden = false;
   $cancelDownload.hidden = true;
@@ -278,45 +357,6 @@ async function fetchSurah(surahNum: number): Promise<SurahData> {
 // ---------------------------------------------------------------------------
 // Verse rendering
 // ---------------------------------------------------------------------------
-const WAQF_MARKS = new Set([
-  "\u06D6", "\u06D7", "\u06D8", "\u06D9", "\u06DA", "\u06DB", "\u06DC",
-]);
-
-function isWaqfToken(token: string): boolean {
-  return token.length <= 2 && [...token].every((c) => WAQF_MARKS.has(c));
-}
-
-interface WordToken {
-  text: string;
-  isRealWord: boolean;
-}
-
-function splitUthmaniWords(text: string): WordToken[] {
-  const raw = text.split(/\s+/).filter((w) => w.length > 0);
-  const result: WordToken[] = [];
-
-  for (const token of raw) {
-    if (isWaqfToken(token) && result.length > 0) {
-      result[result.length - 1].text += " " + token;
-    } else {
-      result.push({ text: token, isRealWord: true });
-    }
-  }
-
-  return result;
-}
-
-const BISMILLAH_WORD_COUNT = 4;
-const BISMILLAH_BASE = "بسم الله الرحمن الرحيم";
-
-function stripDiacritics(s: string): string {
-  return s.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
-}
-
-function startsWithBismillah(text: string): boolean {
-  const stripped = stripDiacritics(text);
-  return stripped.startsWith(BISMILLAH_BASE) || stripped.startsWith(stripDiacritics(BISMILLAH_BASE));
-}
 
 function createVerseGroupElement(group: VerseGroup): HTMLElement {
   const el = document.createElement("div");
@@ -369,7 +409,7 @@ function createVerseGroupElement(group: VerseGroup): HTMLElement {
     for (let i = startIdx; i < allWords.length; i++) {
       const wordEl = document.createElement("span");
       wordEl.className = "word";
-      wordEl.setAttribute("data-word-idx", String(i));
+      wordEl.setAttribute("data-word-idx", String(ENGINE === "zipformer" ? i - startIdx : i));
       wordEl.textContent = allWords[i].text;
       textEl.appendChild(wordEl);
       if (i < allWords.length - 1) {
@@ -829,7 +869,9 @@ function recordAnomaly(msg: VerseMatchMessage): void {
 // ---------------------------------------------------------------------------
 // Worker message handler
 // ---------------------------------------------------------------------------
-function handleWorkerMessage(msg: WorkerOutbound): void {
+async function handleWorkerMessage(msg: WorkerOutbound): Promise<void> {
+  if (msg.type === 'correction') { await handleCorrection(msg); return; }
+  if (practice.open && ['verse_match', 'verse_candidate', 'word_progress', 'raw_transcript', 'final_sequence'].includes(msg.type)) return;
   if (msg.type === "loading") {
     downloadPercent = Math.max(0, Math.min(100, msg.percent));
     $loadingProgress.style.setProperty("--progress", String(downloadPercent / 100));
@@ -852,20 +894,20 @@ function handleWorkerMessage(msg: WorkerOutbound): void {
       surah: msg.surah, ayah: msg.ayah, confidence: msg.confidence,
     });
     recordAnomaly(msg);
-    handleVerseMatch(msg);
+    await handleVerseMatch(msg);
   } else if (msg.type === "verse_candidate") {
     pushDiagnosticEvent("verse_candidate", {
       best: msg.candidates[0] ? `${msg.candidates[0].surah}:${msg.candidates[0].ayah}` : null,
       confidence: msg.candidates[0]?.confidence ?? 0,
       stable: msg.stable,
     });
-    handleVerseCandidate(msg);
+    await handleVerseCandidate(msg);
   } else if (msg.type === "final_sequence") {
     pushDiagnosticEvent("final_sequence", {
       verses: msg.verses.map((v) => `${v.surah}:${v.ayah}`),
       confidence: msg.confidence,
     });
-    handleFinalSequence(msg);
+    await handleFinalSequence(msg);
   } else if (msg.type === "word_progress") {
     pushDiagnosticEvent("word_progress", {
       surah: msg.surah, ayah: msg.ayah,
@@ -911,6 +953,7 @@ async function startAudio(): Promise<boolean> {
 
     processor.port.onmessage = (e: MessageEvent) => {
       const samples = new Float32Array(e.data as ArrayBuffer);
+      if (practicePending || (correctionState && correctionState.phase !== 'idle' && correctionState.phase !== 'retrying')) return;
       // Save copy to session buffer
       state.sessionAudioChunks.push(samples.slice());
       // Send to worker for recognition
@@ -1009,9 +1052,13 @@ function initializeModel(): void {
     : new Worker(new URL("./worker/inference.ts", import.meta.url), { type: "module" });
   state.worker = worker;
 
+  let messages = Promise.resolve();
   worker.onmessage = (e: MessageEvent<WorkerOutbound>) => {
-    handleWorkerMessage(e.data);
+    messages = messages.then(async () => {
+      if (state.worker === worker) await handleWorkerMessage(e.data);
+    }).catch(error => console.error('Could not display recognition result', error));
   };
+  worker.postMessage({ type: 'set_mode', mode });
 
   worker.onerror = (e) => {
     console.error("Worker error:", e);
@@ -1019,7 +1066,7 @@ function initializeModel(): void {
   };
 
   // Load the UI's Quran data before promising that this tab can work offline.
-  void Promise.all([loadQuranData(), prepareAudioWorklet()]).then(() => {
+  void Promise.all([loadQuranData(), prepareAudioWorklet(), ...[400, 500, 600, 700].map(weight => document.fonts.load(`${weight} 16px "IBM Plex Sans Arabic"`))]).then(() => {
     if (state.worker === worker) worker.postMessage({ type: "init" });
   }).catch(error => {
     if (state.worker !== worker) return;
@@ -1030,7 +1077,7 @@ function initializeModel(): void {
   syncDebugEnabled();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function bindControls(): void {
   $debugPanel.addEventListener("toggle", syncDebugEnabled);
   $debugCopy.addEventListener("click", (event) => {
     event.preventDefault();
@@ -1076,6 +1123,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $candidateStatus.hidden = true;
     $candidateStatus.classList.remove("candidate-status--stable", "candidate-status--pending");
     renderDebugPanel();
+    correctionState = null;
+    practicePending = false;
+    practice.close();
     // Reset tracker in worker
     state.worker?.postMessage({ type: "reset" });
     pushStreamingConfig();
@@ -1144,7 +1194,10 @@ document.addEventListener("DOMContentLoaded", () => {
       debugBundle: buildDebugBundle(),
     });
   });
-});
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindControls, { once: true });
+else bindControls();
 
 applyLanguage();
 document.getElementById("language-toggle")!.addEventListener("click", () => {
@@ -1155,3 +1208,13 @@ document.getElementById("language-toggle")!.addEventListener("click", () => {
 $cancelDownload.addEventListener("click", cancelSetup);
 $retryDownload.addEventListener("click", () => { cancelSetup(); initializeModel(); });
 document.getElementById("btn-retry-mic")!.addEventListener("click", () => $btnStart.click());
+
+for (const value of ['tracking', 'correction'] as const) {
+  document.getElementById(`mode-${value}`)!.addEventListener('click', () => {
+    mode = value;
+    try { localStorage.setItem('tilawa-mode', value); } catch { /* Optional preference. */ }
+    correctionState = null;
+    state.worker?.postMessage({ type: 'set_mode', mode });
+    refreshMode();
+  });
+}

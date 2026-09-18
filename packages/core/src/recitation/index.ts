@@ -97,3 +97,6 @@ export type {
   CorpusSource,
   QuranSource,
 } from "./session.js";
+
+export { CorrectionController, possibleWordIssues } from "./correction.js";
+export type { RecitationMode, CorrectionAction, CorrectionIssue, CorrectionState, RecitationPosition } from "./correction.js";

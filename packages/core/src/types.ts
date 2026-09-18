@@ -80,6 +80,7 @@ export type WorkerInbound =
 
 // Worker -> Main
 export type WorkerOutbound =
+  | { type: "correction"; state: import("./recitation/correction.js").CorrectionState; totalWords: number }
   | { type: "loading"; percent: number }
   | { type: "loading_status"; message: string }
   | { type: "ready" }

@@ -46,6 +46,14 @@
         </section>
         <section class="bench" aria-label="Live recitation demo">
           <header class="bench-heading"><h2 id="demo-title" data-en="Try Tilawa" data-ar="جرّب تلاوة">Try Tilawa</h2><span id="model-status" role="status">100% offline recognition</span></header>
+          <div class="recitation-mode">
+            <div class="mode-options" role="group" aria-label="Recitation mode" aria-describedby="mode-help">
+              <button type="button" id="mode-tracking" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h5m6 0h5M4 18h16M12 9v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span data-en="Tracking" data-ar="تتبّع التلاوة">Tracking</span></button>
+              <button type="button" id="mode-correction" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m8 12 3 3 5-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-en="Correction" data-ar="التصحيح">Correction</span></button>
+            </div>
+            <p id="mode-help" role="status">Find your ayah and follow each word.</p>
+            <a id="correction-engine-link" class="text-btn" href="?engine=zipformer" hidden data-en="Enable live correction" data-ar="تفعيل التصحيح المباشر">Enable live correction</a>
+          </div>
           <div class="bench-frame">
             <div id="bench-idle">
               <div class="demo-intro">
