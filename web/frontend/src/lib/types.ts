@@ -70,6 +70,8 @@ export interface SurroundingVerse {
 
 // Main -> Worker
 export type WorkerInbound =
+  | { type: "set_mode"; mode: import("@tilawa/core").RecitationMode }
+  | { type: "correction_action"; action: import("@tilawa/core").CorrectionAction }
   | { type: "init" }
   | { type: "audio"; samples: Float32Array }
   | { type: "reset" }
@@ -79,6 +81,7 @@ export type WorkerInbound =
 
 // Worker -> Main
 export type WorkerOutbound =
+  | { type: "correction"; state: import("@tilawa/core").CorrectionState; totalWords: number }
   | { type: "loading"; percent: number }
   | { type: "loading_status"; message: string }
   | { type: "ready" }

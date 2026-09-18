@@ -51,6 +51,8 @@ import {
 } from "./zipformerRunner.js";
 import DEFAULT_IO from "./zipformer-io.json" with { type: "json" };
 
+import { CorrectionController, type CorrectionAction, type RecitationMode } from "./correction.js";
+
 const TAIL_SECONDS = 2.0;
 
 /** I/O manifest of the shipped `zipformer_interp_gentle_a05.int8.onnx`. */
@@ -194,6 +196,9 @@ export class ZipformerSession {
   private emitted = new Set<string>();
   private transcriptParts: string[] = [];
   private lastCursor: { surah: number; ayah: number; word: number } | null = null;
+  readonly correction = new CorrectionController();
+  private practiceEngine: RecitationEngine | null = null;
+  private stopping = false;
   lastFallback: FallbackHit | null = null;
   debugEnabled = false;
 
@@ -290,6 +295,8 @@ export class ZipformerSession {
 
   /** Drop all state — new recitation, same model and corpus. */
   reset(): WorkerOutbound[] {
+    this.correction.reset();
+    this.practiceEngine = null;
     this.accumulated = new Map();
     this.emitted = new Set();
     this.transcriptParts = [];
@@ -302,7 +309,40 @@ export class ZipformerSession {
 
   /** Push one chunk of mono 16 kHz float32 PCM. Any size; 480 ms works well. */
   async feed(samples: Float32Array): Promise<WorkerOutbound[]> {
+    if (this.correction.state.phase === "error" || this.correction.state.phase === "corrected") return [];
     return this.dispatch(await this.feedSamples(samples));
+  }
+
+  setMode(mode: RecitationMode): WorkerOutbound[] {
+    const out = this.correction.state.phase !== 'idle' ? this.correct('close') : [];
+    this.correction.setMode(mode);
+    return out;
+  }
+
+  correct(action: CorrectionAction): WorkerOutbound[] {
+    if (!this.correction.act(action)) return [];
+    const state = this.correction.state;
+    this.resetDecoder();
+    if (state.phase === 'retrying') {
+      this.practiceEngine = new RecitationEngine(this.corpus, this.index, this.cfg);
+      this.practiceEngine.setStayOnSurah(true);
+      this.practiceEngine.track(state.issue!.surah, state.issue!.ayah, 0);
+    } else {
+      this.practiceEngine = null;
+      if (state.phase === 'idle' && state.resume) {
+        // Keep verse history, but discard pre-practice acoustic context.
+        this.engine = this.makeEngine();
+        this.engine.track(state.resume.surah, state.resume.ayah, state.resume.word);
+        this.lastCursor = { ...state.resume };
+      }
+    }
+    return this.dispatch([this.correctionMessage()]);
+  }
+
+  private correctionMessage(): WorkerOutbound {
+    const issue = this.correction.state.issue;
+    return { type: 'correction', state: { ...this.correction.state },
+      totalWords: issue ? this.wordCount(issue.surah, issue.ayah) : 0 };
   }
 
   /** Alias of {@link stop} — end of audio, flush the tail, emit the sequence. */
@@ -311,6 +351,13 @@ export class ZipformerSession {
   }
 
   async stop(): Promise<WorkerOutbound[]> {
+    if (this.correction.state.phase !== "idle") return [];
+    this.stopping = true;
+    try { return await this.finish(); }
+    finally { this.stopping = false; }
+  }
+
+  private async finish(): Promise<WorkerOutbound[]> {
     const out: WorkerOutbound[] = [];
     const silence = new Float32Array(Math.round(this.tailSeconds * SAMPLE_RATE));
     out.push(...await this.feedSamples(silence));
@@ -428,11 +475,34 @@ export class ZipformerSession {
 
   private consumeTokens(tokens: Array<{ sym: string; frame: number; margin: number }>): WorkerOutbound[] {
     const out: WorkerOutbound[] = [];
+    if (this.practiceEngine) {
+      this.practiceEngine.feed(tokens, this.decoder.framesDecoded);
+      const engine = this.practiceEngine;
+      const settled = !tokens.length && engine.tracker?.heard.length
+        ? this.decoder.framesDecoded - engine.tracker.heard[engine.tracker.heard.length - 1]!.frame >= this.cfg.settleFrames : false;
+      if (engine.tracer && engine.tracker && !engine.tracker.lost
+        && (engine.tracker.costRate(this.cfg.holdWindow) ?? 0) < this.cfg.holdRate) {
+        if (this.correction.observe(engine.tracer.verdicts(Boolean(settled)),
+          this.correction.state.resume!, this.decoder.framesDecoded)) out.push(this.correctionMessage());
+      } else this.correction.clearEvidence();
+      return out;
+    }
     for (const t of tokens) this.transcriptParts.push(t.sym);
     for (const ev of this.engine.feed(tokens, this.decoder.framesDecoded)) {
       out.push(...this.handle(ev));
     }
     out.push(...this.emitNewMatches());
+    const tracker = this.engine.tracker;
+    if (!this.stopping && this.engine.tracer && tracker && !tracker.lost && this.lastCursor
+      && (tracker.costRate(this.cfg.holdWindow) ?? 0) < this.cfg.holdRate) {
+      const last = tracker.heard[tracker.heard.length - 1];
+      const settled = !!last && this.decoder.framesDecoded - last.frame >= this.cfg.settleFrames;
+      if (this.correction.observe(this.engine.tracer.verdicts(settled), this.lastCursor, this.decoder.framesDecoded)) {
+        // Retain main-session coverage before a practice exit replaces its tracker.
+        this.dumpTallies();
+        out.push(this.correctionMessage());
+      }
+    } else this.correction.clearEvidence();
     if (tokens.length) {
       out.push({
         type: "raw_transcript",
@@ -457,7 +527,13 @@ export class ZipformerSession {
         if (this.lastCursor) out.push(this.wordProgress());
         break;
       }
+      case "lost":
+      case "relocated": {
+        this.correction.clearEvidence();
+        break;
+      }
       case "located": {
+        this.correction.clearEvidence();
         if (ev.surah != null && ev.ayah != null) {
           out.push({
             type: "verse_candidate",
@@ -476,6 +552,7 @@ export class ZipformerSession {
       }
       case "idle":
       case "completed": {
+        this.correction.clearEvidence();
         this.dumpTallies();
         out.push(...this.emitNewMatches(this.accumulated));
         this.engine.startSearch();
