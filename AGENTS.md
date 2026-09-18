@@ -23,7 +23,7 @@ packages/core/     # @tilawa/core SDK (the shipped product)
     ctc-rescore.ts, levenshtein.ts, normalizer.ts, types.ts  # pure helpers
   test/                  # deterministic vitest (decode+match, no ONNX)
 web/                     # live browser demo (Vite + worker), consumes @tilawa/core
-  frontend/src/worker/session.ts  # the web SessionRunner (onnxruntime-web)
+  frontend/src/worker/zipformer-backend.ts  # the web Zipformer host (onnxruntime-web)
 lab/                     # Python research/training/benchmark harness — see lab/AGENTS.md
 README.md, Dockerfile, LICENSE
 ```
@@ -82,9 +82,9 @@ npm run build:server && npm run start   # bundled node server (dist-server/index
 
 ```bash
 cd web/frontend
-npm run test:streaming            # tsx test/validate-streaming.ts
-npm run test:streaming:matrix     # config matrix
-npm run test:streaming:diagnostics
+npm run test:streaming            # Zipformer recordings, one run
+npm run test:streaming:matrix     # three repeated runs
+npm run test:correction           # tracking + correction recording regression
 ```
 
 ## Making changes

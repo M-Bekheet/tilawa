@@ -205,6 +205,6 @@ Also: `transcript`, `tallies` / `verses`, `engineState`, `config`.
 
 ## This repository
 
-Live demo: [web/frontend](https://github.com/yazinsai/tilawa/tree/main/web/frontend) (`?engine=fastconformer` to switch). Bake-off writeups: [lab/EXPERIMENTS.md](https://github.com/yazinsai/tilawa/blob/main/lab/EXPERIMENTS.md).
+Live demo: [web/frontend](https://github.com/yazinsai/tilawa/tree/main/web/frontend) (Zipformer only). Bake-off writeups: [lab/EXPERIMENTS.md](https://github.com/yazinsai/tilawa/blob/main/lab/EXPERIMENTS.md).
 
 Zipformer models, vocabulary, and the phoneme corpus derive from [Quran-Lab/zipformer_p-arabic-v3](https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3) and alketab's [ملقّن القرآن](https://prompter.alketab.app/). They are **NPL-1.2** and are not covered by this repo's MIT licence. [NOTICE.md](https://github.com/yazinsai/tilawa/blob/main/NOTICE.md).

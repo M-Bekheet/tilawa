@@ -1,3 +1,0 @@
-# Track the streaming model via Git LFS so a fresh clone can run the
-# browser streaming pipeline without a manual download step.
-web/frontend/public/fastconformer_full_mixed.onnx filter=lfs diff=lfs merge=lfs -text
