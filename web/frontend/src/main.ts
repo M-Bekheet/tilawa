@@ -142,7 +142,7 @@ let audioWorkletUrl: string | undefined;
 
 async function prepareAudioWorklet(): Promise<void> {
   if (audioWorkletUrl) return;
-  const response = await fetch("/audio-processor.js");
+  const response = await fetch(`/audio-processor.js?v=${__BUILD_ID__}`);
   if (!response.ok) throw new Error(`Audio setup failed: ${response.status}`);
   audioWorkletUrl = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
 }
