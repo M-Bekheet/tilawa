@@ -277,3 +277,99 @@ describe('live correction through the injected ONNX boundary', () => {
     expect(continued.some(m => m.type === 'word_progress' && m.surah === 112 && m.ayah === 4)).toBe(true);
   });
 });
+
+describe('ayah-level gaps in correction mode', () => {
+  /** Deterministic scramble of one ayah: audio was heard, but it matches nothing. */
+  function mush(phonemes: string): string {
+    const chars = [...phonemes];
+    let seed = 7;
+    for (let i = chars.length - 1; i > 0; i--) {
+      seed = (seed * 48271) % 2147483647;
+      const j = seed % (i + 1);
+      [chars[i], chars[j]] = [chars[j]!, chars[i]!];
+    }
+    return chars.join('');
+  }
+  async function run(script: string, silentChunks = 0, tail = '') {
+    const ort = new ScriptedOrtSession(tokenIds(script));
+    const session = await ZipformerSession.create({ session: ort, Tensor: TensorCtor, corpus: corpusJson });
+    session.setMode('correction');
+    const seen: WorkerOutbound[] = [];
+    const drain = async (max: number) => {
+      for (let i = 0; i < max && session.correction.state.phase === 'idle'; i++) {
+        seen.push(...await session.feed(new Float32Array(CHUNK)));
+      }
+    };
+    await drain(Math.ceil(script.length * 2 / FRAMES_PER_RUN) + 4);
+    if (silentChunks) {
+      for (let i = 0; i < silentChunks; i++) seen.push(...await session.feed(new Float32Array(CHUNK)));
+      ort.enqueue(tokenIds(tail));
+      await drain(Math.ceil(tail.length * 2 / FRAMES_PER_RUN) + 4);
+    }
+    const flags = seen.filter(m => m.type === 'correction');
+    const refs = seen.filter(m => m.type === 'verse_match').map(m => m.type === 'verse_match' ? `${m.surah}:${m.ayah}` : '');
+    return { ort, session, seen, flags, refs };
+  }
+  const a = (n: number) => corpus.ayahPhonemes(104, n);
+
+  it('case A: ayah 2 never heard → possible_skipped_ayah for 104:2, whole ayah', async () => {
+    const { flags, refs } = await run(a(1) + a(3));
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ state: { phase: 'error', issue: {
+      surah: 104, ayah: 2, word: 0, wordIndex: corpus.wordIndex(104, 2, 0), kind: 'possible_skipped_ayah', words: 4,
+    }, resume: { surah: 104, ayah: 3 } }, totalWords: 4 });
+    expect(refs).toEqual(['104:1', '104:3']);
+  });
+
+  it('case B: ayah 2 heard but not followed → unclear_ayah, and a retry must clear the whole ayah', async () => {
+    const { ort, session, flags } = await run(a(1) + mush(a(2)) + a(3));
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ state: { phase: 'error', issue: { surah: 104, ayah: 2, word: 0, kind: 'unclear_ayah', words: 4 } } });
+    session.correct('retry');
+    // Only the first word: not enough for an ayah-level issue.
+    ort.enqueue(tokenIds(corpus.wordPhonemes(corpus.wordIndex(104, 2, 0))));
+    for (let i = 0; i < 8; i++) await session.feed(new Float32Array(CHUNK));
+    expect(session.correction.state.phase).toBe('retrying');
+    session.correct('stop_retry');
+    session.correct('retry');
+    ort.enqueue(tokenIds(a(2)));
+    for (let i = 0; i < 30 && session.correction.state.phase === 'retrying'; i++) await session.feed(new Float32Array(CHUNK));
+    expect(session.correction.state.phase).toBe('corrected');
+  });
+
+  it('clean 1→2→3 does not fire', async () => {
+    const { flags, refs } = await run(a(1) + a(2) + a(3));
+    expect(flags).toEqual([]);
+    expect(refs).toEqual(['104:1', '104:2', '104:3']);
+  });
+
+  it('a gap across a tracker re-locate does not fire', async () => {
+    // Ayah 1, then enough silence for the engine to go idle and search again, then ayah 3.
+    const { flags, seen, refs } = await run(a(1), 40, a(3));
+    expect(seen.filter(m => m.type === 'verse_candidate').length).toBeGreaterThanOrEqual(2);
+    expect(refs).toEqual(['104:1', '104:3']);
+    expect(flags).toEqual([]);
+  });
+
+  it('dismiss suppresses the ayah for the session and only fires once per ayah', async () => {
+    const { ort, session, flags } = await run(a(1) + a(3));
+    expect(flags).toHaveLength(1);
+    const first = flags[0]!;
+    session.correct('dismiss');
+    expect(session.correction.state).toMatchObject({ phase: 'idle', outcome: 'dismissed' });
+    expect(session.correction.raise((first as Extract<WorkerOutbound, { type: 'correction' }>).state.issue!, { surah: 104, ayah: 3, word: 0 })).toBe(false);
+    ort.enqueue(tokenIds(a(4) + a(5)));
+    const later: WorkerOutbound[] = [];
+    for (let i = 0; i < 30; i++) later.push(...await session.feed(new Float32Array(CHUNK)));
+    expect(later.filter(m => m.type === 'correction')).toEqual([]);
+    expect(later.filter(m => m.type === 'verse_match').map(m => m.type === 'verse_match' ? m.ayah : 0)).toEqual([4, 5]);
+  });
+
+  it('never fires in tracking mode', async () => {
+    const ort = new ScriptedOrtSession(tokenIds(a(1) + a(3)));
+    const session = await ZipformerSession.create({ session: ort, Tensor: TensorCtor, corpus: corpusJson });
+    const seen: WorkerOutbound[] = [];
+    for (let i = 0; i < 40; i++) seen.push(...await session.feed(new Float32Array(CHUNK)));
+    expect(seen.filter(m => m.type === 'correction')).toEqual([]);
+  });
+});

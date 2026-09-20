@@ -5,8 +5,16 @@ export type CorrectionAction = 'retry' | 'stop_retry' | 'dismiss' | 'review_late
 export interface RecitationPosition { surah: number; ayah: number; word: number }
 export interface CorrectionIssue extends RecitationPosition {
   wordIndex: number;
-  kind: 'possible_omission' | 'possible_substitution' | 'possible_vowel';
+  /** Word-level kinds come from {@link possibleWordIssues}. The two ayah-level
+   * kinds are raised by the session when ayah N+2 is matched right after ayah N
+   * and N+1 never was: `possible_skipped_ayah` when nothing of N+1 was heard,
+   * `unclear_ayah` when audio was heard but the model could not follow it. */
+  kind: 'possible_omission' | 'possible_substitution' | 'possible_vowel' | 'possible_skipped_ayah' | 'unclear_ayah';
+  /** Words the issue covers, starting at `word`. Default 1; ayah-level kinds
+   * set it to the ayah length so a retry must clear the whole ayah. */
+  words?: number;
 }
+export const AYAH_ISSUE_KINDS: ReadonlySet<CorrectionIssue['kind']> = new Set(['possible_skipped_ayah', 'unclear_ayah']);
 
 export interface CorrectionThresholds {
   /** Min CTC margin on a mismatched heard vowel before it counts as evidence. */
@@ -84,9 +92,10 @@ export class CorrectionController {
       const issue = this.state.issue!;
       // Require a fresh, clear prefix from the start of this ayah through the
       // flagged word; a verse match or cursor advance alone cannot succeed.
-      const prefix = verdicts.filter(v => v.surah === issue.surah && v.ayah === issue.ayah && v.word <= issue.word);
+      const through = issue.word + Math.max(1, issue.words ?? 1) - 1;
+      const prefix = verdicts.filter(v => v.surah === issue.surah && v.ayah === issue.ayah && v.word <= through);
       // A retry that repeats a confident vowel error is not a correction.
-      const good = Array.from({ length: issue.word + 1 }, (_, word) =>
+      const good = Array.from({ length: through + 1 }, (_, word) =>
         prefix.find(v => v.word === word)).every(v => clearWord(v)
           && ((v!.vowelErrors ?? 0) === 0 || v!.vowelMargin < this.thresholds.vowelMargin));
       if (!good) { this.retryFrame = null; return false; }
@@ -110,6 +119,16 @@ export class CorrectionController {
       }
     }
     return false;
+  }
+
+  /** Raise an issue the session inferred outside the word-level rules (the
+   * ayah-level kinds). Same gates as a word flag: correction mode, idle, not
+   * dismissed/deferred earlier in this session. */
+  raise(issue: CorrectionIssue, cursor: RecitationPosition): boolean {
+    if (this.mode !== 'correction' || this.state.phase !== 'idle' || this.suppressed.has(issue.wordIndex)) return false;
+    this.state = { phase: 'error', issue: { ...issue }, resume: { ...cursor }, attempt: this.state.attempt, outcome: null };
+    this.clearEvidence();
+    return true;
   }
 
   act(action: CorrectionAction): boolean {

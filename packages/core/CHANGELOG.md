@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1
+
+Correction mode no longer stays silent when a whole ayah is missed.
+
+- **`CorrectionIssue.kind: "possible_skipped_ayah" | "unclear_ayah"`.** When ayah N+2 is matched right after ayah N in the same surah and N+1 was never matched, `ZipformerSession` raises one issue for N+1 at `word: 0`. `possible_skipped_ayah` when the aligner heard almost nothing of N+1 (mean heard ratio below `AYAH_HEARD_FRACTION`, 0.5); `unclear_ayah` when audio was heard but the model could not follow it. The word-level rules (`possibleWordIssues`) are unchanged; they could not see this case because a whole bad ayah has no clear neighbours.
+- **`CorrectionIssue.words`.** Number of words the issue covers from `word` (default 1). Ayah-level issues set it to the ayah length, so a retry must produce a clear prefix through the whole ayah.
+- **`CorrectionController.raise(issue, cursor)`.** Raises a session-inferred issue with the same gates as a word flag (correction mode, idle, not dismissed/deferred earlier). Ayah-level issues reuse retry / dismiss / review_later and fire once per ayah per session.
+- Never fires in tracking mode, during `stop()`, across a tracker re-locate (`located` / `relocated` / idle restart), or across a surah change. A transient `lost` inside one surah does not break the chain — that is the unclear-ayah case.
+- Verified: still 0 flags on the 53 clean calibration clips and on the four `correction-audio` recordings; `unclear_ayah` on 104:2 for the user clip that motivated this.
+
 ## 0.3.0
 
 Correction mode can now flag harakah (short-vowel) errors.

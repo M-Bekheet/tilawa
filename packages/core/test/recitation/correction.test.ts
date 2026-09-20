@@ -73,6 +73,27 @@ describe('conservative word correction', () => {
     c.act('retry'); c.observe(correct, cursor, 10); c.observe(correct, cursor, 22); c.act('continue');
     expect(c.state).toMatchObject({ phase: 'idle', outcome: 'corrected', resume: cursor });
   });
+  it('raise() takes ayah-level issues and a retry must clear all their words', () => {
+    const issue = { surah: 112, ayah: 3, word: 0, wordIndex: 100, kind: 'unclear_ayah' as const, words: 4 };
+    const c = new CorrectionController();
+    expect(c.raise(issue, cursor)).toBe(false); // tracking mode
+    c.setMode('correction');
+    expect(c.raise(issue, cursor)).toBe(true);
+    expect(c.state).toMatchObject({ phase: 'error', issue, resume: cursor });
+    expect(c.raise(issue, cursor)).toBe(false); // not idle
+    c.act('retry');
+    c.observe([word(0), word(1)], cursor, 10); c.observe([word(0), word(1)], cursor, 30);
+    expect(c.state.phase).toBe('retrying');
+    c.observe(correct, cursor, 40); c.observe(correct, cursor, 52);
+    expect(c.state.phase).toBe('corrected');
+    c.act('continue');
+    expect(c.raise(issue, cursor)).toBe(false); // suppressed for the session
+    c.reset();
+    expect(c.raise({ ...issue, kind: 'possible_skipped_ayah' }, cursor)).toBe(true);
+    c.act('dismiss');
+    expect(c.state).toMatchObject({ phase: 'idle', outcome: 'dismissed' });
+    expect(c.raise(issue, cursor)).toBe(false);
+  });
   it('closing or reviewing later never claims success', () => {
     for (const action of ['close', 'review_later'] as const) {
       const c = flag(); c.act('retry'); c.act(action);
