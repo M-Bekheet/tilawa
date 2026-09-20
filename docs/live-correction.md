@@ -18,12 +18,23 @@ ratio 0.75–1.3. Evidence must persist across 12 advancing CTC frames (480 ms).
 Uncertain or revised evidence cancels a candidate. Settling follows actual decoder
 silence, never an ayah match. Lost alignment suppresses correction.
 
+A possible harakah (short-vowel) error is a word whose consonant skeleton matches
+(distance ≤0.15, heard ratio 0.75–1.3, mean word margin ≥ `vowelWordMargin`) but
+where the aligned heard vowel differs from the expected one. The decoder attaches
+to every vowel-final token the probabilities of the same token spelled with fatha,
+damma and kasra (`CtcToken.vowels`); `WordVerdict.vowelMargin` is
+p(heard vowel) − p(expected vowel) at that token's peak frame, minimised over the
+word's mismatches. A flag requires `vowelMargin ≥ CorrectionThresholds.vowelMargin`
+and the same clear anchors and 12-frame persistence as other kinds. The word's
+final vowel is ignored when a stop follows (waqf drops it). A retry that repeats
+a confident vowel error does not count as corrected.
+
 These thresholds are conservative heuristics, not calibrated word probabilities.
 A gross phoneme mismatch suggests a possible word difference; it cannot prove a
 lexical substitution or distinguish every model deletion from a human omission.
 The interface says “possible mistake” and supports dismissal. Boundary omissions,
-consecutive missing words, unclear audio, small phonetic differences, and
-unlocated passages are intentionally not flagged. No pronunciation/tajweed grade
+consecutive missing words, unclear audio, consonant near-misses below the
+substitution threshold, and unlocated passages are intentionally not flagged. No pronunciation/tajweed grade
 is produced.
 
 ## Retry lifecycle

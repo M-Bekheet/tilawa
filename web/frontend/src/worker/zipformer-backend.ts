@@ -18,6 +18,20 @@ function post(msg: WorkerOutbound): void {
   self.postMessage(msg);
 }
 
+// Debug-bundle support: forward the session's latest word verdicts to the page.
+// Every feed when the debug panel is open; otherwise at most once per 500 ms.
+const VERDICTS_CAP = 40;
+const VERDICTS_THROTTLE_MS = 500;
+let lastVerdictsPostAt = 0;
+
+function postDebugVerdicts(): void {
+  if (!session) return;
+  const now = Date.now();
+  if (!debugEnabled && now - lastVerdictsPostAt < VERDICTS_THROTTLE_MS) return;
+  lastVerdictsPostAt = now;
+  post({ type: "debug_verdicts", verdicts: session.verdicts().slice(-VERDICTS_CAP) });
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} fetch failed: ${res.status}`);
@@ -89,6 +103,7 @@ async function handle(msg: WorkerInbound): Promise<void> {
   } else if (msg.type === "audio") {
     if (!session) return;
     for (const m of await session.feed(msg.samples)) post(m);
+    postDebugVerdicts();
   }
 
 }

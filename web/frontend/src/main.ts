@@ -2,7 +2,7 @@ import "@fontsource/amiri/400.css";
 import "@fontsource/amiri/700.css";
 import "./style.css";
 import "./arabic-font.css";
-import type { RecitationMode, CorrectionState } from "@tilawa/core";
+import type { RecitationMode, CorrectionState, WordVerdict } from "@tilawa/core";
 import { CorrectionView } from "./correction-view";
 import { splitUthmaniWords, startsWithBismillah, BISMILLAH_WORD_COUNT } from "./lib/quran-words";
 
@@ -82,6 +82,8 @@ const state = {
   lastModelPrediction: null as { surah: number; ayah: number; confidence: number } | null,
   diagnosticEvents: [] as DiagnosticEvent[],
   debugEvents: [] as DebugMessage[],
+  /** Latest word-verdict snapshot from the worker (debug bundle only). */
+  lastVerdicts: null as WordVerdict[] | null,
   lastDiagnosticSentAt: 0,
   recentVerseMatches: [] as { surah: number; ayah: number; timestamp: number }[],
   finalSequence: [] as { surah: number; ayah: number; confidence: number }[],
@@ -612,11 +614,13 @@ function buildDebugBundle() {
   const totalSamples = state.sessionAudioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const activeGroup = state.groups[state.groups.length - 1] ?? null;
   return {
-    schema: "tilawa-debug-bundle/v1",
+    schema: "tilawa-debug-bundle/v2",
     createdAt: new Date().toISOString(),
     pageUrl: location.href,
     userAgent: navigator.userAgent,
     engine: "zipformer",
+    mode,
+    correctionState,
     modelReady: state.modelReady,
     isActive: state.isActive,
     streamingConfig: state.streamingConfig,
@@ -649,6 +653,7 @@ function buildDebugBundle() {
     },
     diagnostics: state.diagnosticEvents,
     debugEvents: state.debugEvents,
+    lastVerdicts: state.lastVerdicts,
   };
 }
 
@@ -856,6 +861,7 @@ function recordAnomaly(msg: VerseMatchMessage): void {
 // ---------------------------------------------------------------------------
 async function handleWorkerMessage(msg: WorkerOutbound): Promise<void> {
   if (msg.type === 'correction') { await handleCorrection(msg); return; }
+  if (msg.type === 'debug_verdicts') { state.lastVerdicts = msg.verdicts; return; }
   if (practice.open && ['verse_match', 'verse_candidate', 'word_progress', 'raw_transcript', 'final_sequence'].includes(msg.type)) return;
   if (msg.type === "loading") {
     downloadPercent = Math.max(0, Math.min(100, msg.percent));
@@ -1097,6 +1103,7 @@ function bindControls(): void {
     state.groups = [];
     state.diagnosticEvents = [];
     state.debugEvents = [];
+    state.lastVerdicts = null;
     state.recentVerseMatches = [];
     state.finalSequence = [];
     $verses.innerHTML = "";
@@ -1153,6 +1160,7 @@ function bindControls(): void {
     applyLanguage();
     state.groups = [];
     state.debugEvents = [];
+    state.lastVerdicts = null;
     state.finalSequence = [];
     $verses.innerHTML = "";
     $rawTranscript.textContent = "";

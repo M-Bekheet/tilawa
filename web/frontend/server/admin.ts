@@ -76,6 +76,7 @@ adminApp.get("/", async (c) => {
       <td>${new Date(r.timestamp).toLocaleString()}</td>
       <td>Surah ${r.surah}, Ayah ${r.ayah}</td>
       <td>${r.modelPrediction || "—"}</td>
+      <td>${r.debugBundle?.mode || "—"}</td>
       <td>${r.notes ? r.notes.slice(0, 80) : "—"}</td>
       <td><audio controls src="/api/reports/${r.id}/audio" preload="none"></audio></td>
     </tr>`).join("");
@@ -112,7 +113,7 @@ tr:hover td{background:#faf8f3}
 <h1>Error Reports</h1>
 <p class="count">${reports.length} report${reports.length !== 1 ? "s" : ""}</p>
 ${reports.length ? `<table>
-<thead><tr><th>Time</th><th>Expected Verse</th><th>Model Predicted</th><th>Notes</th><th>Audio</th></tr></thead>
+<thead><tr><th>Time</th><th>Expected Verse</th><th>Model Predicted</th><th>Mode</th><th>Notes</th><th>Audio</th></tr></thead>
 <tbody>${rows}</tbody>
 </table>` : "<p class='empty'>No reports yet.</p>"}
 

@@ -64,9 +64,13 @@ export class CorrectionView {
     const set = (id: string, text: string) => { this.dialog.querySelector<HTMLElement>(`#${id}`)!.textContent = text; };
     this.dialog.dir = this.arabic ? 'rtl' : 'ltr';
     this.dialog.dataset.phase = phase;
+    this.dialog.dataset.kind = issue.kind;
+    const vowel = issue.kind === 'possible_vowel';
     this.dialog.querySelector('[data-action="close"]')!.textContent = tr('Close practice', 'إغلاق التدريب');
     set('practice-status', phase === 'retrying' ? tr('RETRYING · MICROPHONE ON', 'نستمع لمحاولتك · الميكروفون يعمل')
-      : phase === 'corrected' ? tr('RETRY COMPLETE', 'اكتملت المحاولة') : tr('FOCUSED PRACTICE · POSSIBLE MISTAKE', 'تدريب مركّز · خطأ محتمل'));
+      : phase === 'corrected' ? tr('RETRY COMPLETE', 'اكتملت المحاولة')
+      : vowel ? tr('FOCUSED PRACTICE · POSSIBLE VOWEL SLIP', 'تدريب مركّز · خطأ محتمل في الحركة')
+      : tr('FOCUSED PRACTICE · POSSIBLE MISTAKE', 'تدريب مركّز · خطأ محتمل'));
     set('practice-surah', this.arabic ? verse.name : verse.nameEn);
     set('practice-meta', tr(`Surah ${issue.surah} · Ayah ${issue.ayah} of ${verse.ayahCount}`, `سورة ${num(issue.surah)} · الآية ${num(issue.ayah)} من ${num(verse.ayahCount)}`));
     const phrase = this.dialog.querySelector('#practice-verse')!;
@@ -78,10 +82,13 @@ export class CorrectionView {
       phrase.append(span, document.createTextNode(index < verse.words.length - 1 ? ' ' : ''));
     });
     set('practice-title', phase === 'retrying' ? tr('Take your time.', 'خذ وقتك.') : phase === 'corrected'
-      ? tr('That’s corrected.', 'تمّ التصحيح.') : tr('One word. Try again.', 'كلمة واحدة. حاول مجددًا.'));
+      ? tr('That’s corrected.', 'تمّ التصحيح.')
+      : vowel ? tr('Check the vowel on this word.', 'راجع حركة هذه الكلمة.')
+      : tr('One word. Try again.', 'كلمة واحدة. حاول مجددًا.'));
     set('practice-description', phase === 'retrying'
       ? tr(`Repeat ayah ${issue.ayah} from the beginning. We’ll check the highlighted word again.`, `أعد الآية ${num(issue.ayah)} من بدايتها. سنتحقّق من الكلمة المظلّلة مجددًا.`)
       : phase === 'corrected' ? tr('The word was detected in your retry. Continue from your saved place.', 'تعرّفنا على الكلمة في محاولتك. تابع من موضعك المحفوظ.')
+      : vowel ? tr(`Recite ayah ${issue.ayah} again and listen for the highlighted word's harakah.`, `أعد الآية ${num(issue.ayah)} وانتبه لحركة الكلمة المظلّلة.`)
       : tr('Recite the ayah above, including the highlighted word.', 'اتلُ الآية أعلاه، بما فيها الكلمة المظلّلة.'));
     const primary = this.dialog.querySelector<HTMLButtonElement>('#practice-primary')!;
     const secondary = this.dialog.querySelector<HTMLButtonElement>('#practice-secondary')!;

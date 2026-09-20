@@ -1,15 +1,21 @@
 export type VerdictState = "ok" | "unsure" | "wrong" | "skipped" | "pending";
 
+/** Probabilities at the token's peak frame of the same token spelled with
+ * fatha, damma, kasra (in that order). Only set for tokens ending in a short vowel. */
+export type VowelProbs = [number, number, number];
+
 export interface CtcToken {
   sym: string;
   frame: number;
   margin: number;
+  vowels?: VowelProbs;
 }
 
 export interface HeardChar {
   ch: string;
   frame: number;
   margin: number;
+  vowels?: VowelProbs;
 }
 
 export interface WordVerdict {
@@ -21,6 +27,10 @@ export interface WordVerdict {
   distance: number;
   heardRatio: number;
   margin: number;
+  /** Aligned short-vowel substitutions (heard vowel ≠ expected vowel). */
+  vowelErrors: number;
+  /** Min CTC margin over the mismatched heard vowels; 0 when none. */
+  vowelMargin: number;
 }
 
 export interface SearchHint {

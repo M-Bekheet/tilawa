@@ -98,5 +98,6 @@ export type {
   QuranSource,
 } from "./session.js";
 
-export { CorrectionController, possibleWordIssues } from "./correction.js";
-export type { RecitationMode, CorrectionAction, CorrectionIssue, CorrectionState, RecitationPosition } from "./correction.js";
+export { CorrectionController, possibleWordIssues, DEFAULT_CORRECTION_THRESHOLDS } from "./correction.js";
+export type { RecitationMode, CorrectionAction, CorrectionIssue, CorrectionState, CorrectionThresholds, RecitationPosition } from "./correction.js";
+export { vowelMismatches } from "./verdicts.js";

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { CorrectionController, possibleWordIssues } from '../../src/recitation/correction';
 import type { WordVerdict } from '../../src/recitation/types';
-const word = (n: number, patch: Partial<WordVerdict> = {}): WordVerdict => ({ surah: 112, ayah: 3, word: n, wordIndex: 100 + n, state: 'ok', distance: 0, margin: .9, heardRatio: 1, ...patch });
+const word = (n: number, patch: Partial<WordVerdict> = {}): WordVerdict => ({ surah: 112, ayah: 3, word: n, wordIndex: 100 + n, state: 'ok', distance: 0, margin: .9, heardRatio: 1, vowelErrors: 0, vowelMargin: 0, ...patch });
 const correct = [word(0), word(1), word(2), word(3)];
 const omission = [word(0), word(1, { state: 'skipped', distance: 1, heardRatio: 0, margin: 0 }), word(2), word(3)];
 const substitution = [word(0), word(1, { state: 'wrong', distance: .8 }), word(2), word(3)];
+const vowel = [word(0), word(1, { distance: .02, vowelErrors: 1, vowelMargin: .8 }), word(2), word(3)];
 const cursor = { surah: 112, ayah: 3, word: 3 };
 function flag() {
   const c = new CorrectionController(); c.setMode('correction');
@@ -19,6 +20,26 @@ describe('conservative word correction', () => {
   it('detects interior omissions and gross substitutions with clear anchors', () => {
     expect(possibleWordIssues(omission)[0]).toMatchObject({ word: 1, kind: 'possible_omission' });
     expect(possibleWordIssues(substitution)[0]).toMatchObject({ word: 1, kind: 'possible_substitution' });
+  });
+  it('detects a confident harakah error on an otherwise matching word', () => {
+    expect(possibleWordIssues(vowel)[0]).toMatchObject({ word: 1, kind: 'possible_vowel' });
+    // Same skeleton, but the decoder was unsure which vowel it heard, or the word itself was weak.
+    for (const patch of [{ vowelMargin: .01 }, { vowelErrors: 0 }, { margin: .3 }, { distance: .3 }, { state: 'wrong' as const }, { heardRatio: .5 }]) {
+      expect(possibleWordIssues([word(0), { ...vowel[1]!, ...patch }, word(2)])).toEqual([]);
+    }
+    // Thresholds are tunable per controller.
+    expect(possibleWordIssues(vowel, { vowelMargin: .9, vowelWordMargin: .5 })).toEqual([]);
+    expect(possibleWordIssues([word(0), { ...vowel[1]!, vowelMargin: .2 }, word(2)], { vowelMargin: .1, vowelWordMargin: .5 })).toHaveLength(1);
+    // A contested vowel (p(heard) 0.54 vs p(expected) 0.44, the rabbuka case) still counts by default.
+    expect(possibleWordIssues([word(0), { ...vowel[1]!, vowelMargin: .1 }, word(2)])).toHaveLength(1);
+  });
+  it('does not accept a retry that repeats the vowel error', () => {
+    const c = new CorrectionController(); c.setMode('correction');
+    c.observe(vowel, cursor, 30); expect(c.observe(vowel, cursor, 42)).toBe(true);
+    expect(c.state.issue).toMatchObject({ kind: 'possible_vowel', word: 1 });
+    c.act('retry');
+    c.observe(vowel, cursor, 100); c.observe(vowel, cursor, 120); expect(c.state.phase).toBe('retrying');
+    c.observe(correct, cursor, 130); c.observe(correct, cursor, 142); expect(c.state.phase).toBe('corrected');
   });
   it('abstains on unclear audio, pending alignment, small phonetic differences and boundary omissions', () => {
     for (const patch of [{ state: 'unsure' as const }, { state: 'pending' as const }, { margin: .2 }, { margin: NaN }, { distance: .45 }, { heardRatio: .2 }]) {

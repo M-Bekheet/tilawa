@@ -56,7 +56,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9969924032248659
+      "margin": 0.9969924032248659,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -66,7 +68,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9998009469890535
+      "margin": 0.9998009469890535,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -76,7 +80,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9998120993329085
+      "margin": 0.9998120993329085,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -86,7 +92,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9945233103531249
+      "margin": 0.9945233103531249,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -96,7 +104,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9956415472374568
+      "margin": 0.9956415472374568,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -106,7 +116,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9998373598264751
+      "margin": 0.9998373598264751,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -116,7 +128,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999408772728395
+      "margin": 0.9999408772728395,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -126,7 +140,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9996082147280656
+      "margin": 0.9996082147280656,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -136,7 +152,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.999378886883731
+      "margin": 0.999378886883731,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -146,7 +164,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9970924594989986
+      "margin": 0.9970924594989986,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -156,7 +176,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9991725895200159
+      "margin": 0.9991725895200159,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -166,7 +188,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999890097296216
+      "margin": 0.9999890097296216,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -176,7 +200,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9979795591606043
+      "margin": 0.9979795591606043,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -186,7 +212,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999761186510244
+      "margin": 0.9999761186510244,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -196,7 +224,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999741180779564
+      "margin": 0.9999741180779564,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -206,7 +236,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999645023081356
+      "margin": 0.9999645023081356,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -216,7 +248,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9998581384725332
+      "margin": 0.9998581384725332,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -226,7 +260,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9998202183734781
+      "margin": 0.9998202183734781,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -236,7 +272,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999753758570937
+      "margin": 0.9999753758570937,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -246,7 +284,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.999687781176202
+      "margin": 0.999687781176202,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -256,7 +296,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.999416937758606
+      "margin": 0.999416937758606,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -266,7 +308,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999880384576725
+      "margin": 0.9999880384576725,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -276,7 +320,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999790453817238
+      "margin": 0.9999790453817238,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -286,7 +332,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999915789896116
+      "margin": 0.9999915789896116,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -296,7 +344,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999003119650387
+      "margin": 0.9999003119650387,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -306,7 +356,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9996457350470365
+      "margin": 0.9996457350470365,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -316,7 +368,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9999437401357395
+      "margin": 0.9999437401357395,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -326,7 +380,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.999937791440317
+      "margin": 0.999937791440317,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     },
     {
       "surah": 1,
@@ -336,7 +392,9 @@
       "state": "ok",
       "distance": 0,
       "heardRatio": 1,
-      "margin": 0.9997153984344839
+      "margin": 0.9997153984344839,
+      "vowelErrors": 0,
+      "vowelMargin": 0
     }
   ],
   "chunks": [
@@ -707,7 +765,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9969924032248659
+              "margin": 0.9969924032248659,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -717,7 +777,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998009469890535
+              "margin": 0.9998009469890535,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -727,7 +789,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998120993329085
+              "margin": 0.9998120993329085,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -737,7 +801,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9945233103531249
+              "margin": 0.9945233103531249,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -747,7 +813,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9956415472374568
+              "margin": 0.9956415472374568,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -757,7 +825,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998373598264751
+              "margin": 0.9998373598264751,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -767,7 +837,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999408772728395
+              "margin": 0.9999408772728395,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -811,7 +883,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998373598264751
+              "margin": 0.9998373598264751,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -821,7 +895,9 @@
               "state": "pending",
               "distance": 0.7857142857142857,
               "heardRatio": 0.21428571428571427,
-              "margin": 0.9999776686253407
+              "margin": 0.9999776686253407,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -863,7 +939,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999408772728395
+              "margin": 0.9999408772728395,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -909,7 +987,9 @@
               "state": "unsure",
               "distance": 0.35714285714285715,
               "heardRatio": 0.6428571428571429,
-              "margin": 0.9999472616941925
+              "margin": 0.9999472616941925,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -941,7 +1021,9 @@
               "state": "pending",
               "distance": 0.07142857142857142,
               "heardRatio": 0.9285714285714286,
-              "margin": 0.9995882189175112
+              "margin": 0.9995882189175112,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -996,7 +1078,9 @@
               "state": "pending",
               "distance": 0.8181818181818182,
               "heardRatio": 0.16666666666666666,
-              "margin": 0.9964066227560754
+              "margin": 0.9964066227560754,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1054,7 +1138,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9996082147280656
+              "margin": 0.9996082147280656,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1098,7 +1184,9 @@
               "state": "pending",
               "distance": 0.7,
               "heardRatio": 0.3,
-              "margin": 0.999985315256628
+              "margin": 0.999985315256628,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1160,7 +1248,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.999378886883731
+              "margin": 0.999378886883731,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -1170,7 +1260,9 @@
               "state": "wrong",
               "distance": 0.5,
               "heardRatio": 0.5,
-              "margin": 0.9999899800714503
+              "margin": 0.9999899800714503,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1217,7 +1309,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9970924594989986
+              "margin": 0.9970924594989986,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1266,7 +1360,9 @@
               "state": "pending",
               "distance": 0.7142857142857143,
               "heardRatio": 0.25,
-              "margin": 0.9996678520048987
+              "margin": 0.9996678520048987,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1308,7 +1404,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9970924594989986
+              "margin": 0.9970924594989986,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1357,7 +1455,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999890097296216
+              "margin": 0.9999890097296216,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1396,7 +1496,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9991725895200159
+              "margin": 0.9991725895200159,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -1406,7 +1508,9 @@
               "state": "pending",
               "distance": 0.625,
               "heardRatio": 0.375,
-              "margin": 0.9999835739290291
+              "margin": 0.9999835739290291,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1452,7 +1556,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999890097296216
+              "margin": 0.9999890097296216,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -1462,7 +1568,9 @@
               "state": "wrong",
               "distance": 0.625,
               "heardRatio": 0.375,
-              "margin": 0.9999835739290291
+              "margin": 0.9999835739290291,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1504,7 +1612,9 @@
               "state": "pending",
               "distance": 0.125,
               "heardRatio": 0.875,
-              "margin": 0.997692979066281
+              "margin": 0.997692979066281,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1574,7 +1684,9 @@
               "state": "pending",
               "distance": 0.375,
               "heardRatio": 0.5555555555555556,
-              "margin": 0.9999586786359268
+              "margin": 0.9999586786359268,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1623,7 +1735,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9979795591606043
+              "margin": 0.9979795591606043,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -1633,7 +1747,9 @@
               "state": "pending",
               "distance": 0.6666666666666666,
               "heardRatio": 0.2857142857142857,
-              "margin": 0.9999832529912098
+              "margin": 0.9999832529912098,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1698,7 +1814,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999761186510244
+              "margin": 0.9999761186510244,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -1708,7 +1826,9 @@
               "state": "pending",
               "distance": 0.8,
               "heardRatio": 0.18181818181818182,
-              "margin": 0.9999961248467051
+              "margin": 0.9999961248467051,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1745,7 +1865,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999741180779564
+              "margin": 0.9999741180779564,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1794,7 +1916,9 @@
               "state": "pending",
               "distance": 0.8333333333333334,
               "heardRatio": 0.16666666666666666,
-              "margin": 0.9999759547247071
+              "margin": 0.9999759547247071,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1836,7 +1960,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999645023081356
+              "margin": 0.9999645023081356,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1882,7 +2008,9 @@
               "state": "wrong",
               "distance": 0.4166666666666667,
               "heardRatio": 0.5833333333333334,
-              "margin": 0.9999434266242672
+              "margin": 0.9999434266242672,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -1939,7 +2067,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998581384725332
+              "margin": 0.9998581384725332,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2008,7 +2138,9 @@
               "state": "pending",
               "distance": 0.16666666666666666,
               "heardRatio": 0.7142857142857143,
-              "margin": 0.9997489609314292
+              "margin": 0.9997489609314292,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2052,7 +2184,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998581384725332
+              "margin": 0.9998581384725332,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -2062,7 +2196,9 @@
               "state": "pending",
               "distance": 0.625,
               "heardRatio": 0.3333333333333333,
-              "margin": 0.9999938693973484
+              "margin": 0.9999938693973484,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2104,7 +2240,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9998202183734781
+              "margin": 0.9998202183734781,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2148,7 +2286,9 @@
               "state": "pending",
               "distance": 0.7692307692307693,
               "heardRatio": 0.23076923076923078,
-              "margin": 0.9999892658893152
+              "margin": 0.9999892658893152,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2190,7 +2330,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999753758570937
+              "margin": 0.9999753758570937,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2236,7 +2378,9 @@
               "state": "unsure",
               "distance": 0.38461538461538464,
               "heardRatio": 0.6153846153846154,
-              "margin": 0.999982395170245
+              "margin": 0.999982395170245,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2293,7 +2437,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.999687781176202
+              "margin": 0.999687781176202,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2342,7 +2488,9 @@
               "state": "pending",
               "distance": 0.7142857142857143,
               "heardRatio": 0.25,
-              "margin": 0.9978166466165774
+              "margin": 0.9978166466165774,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2384,7 +2532,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.999687781176202
+              "margin": 0.999687781176202,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2428,7 +2578,9 @@
               "state": "pending",
               "distance": 0.375,
               "heardRatio": 0.5555555555555556,
-              "margin": 0.999990528845753
+              "margin": 0.999990528845753,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2465,7 +2617,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.999416937758606
+              "margin": 0.999416937758606,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2514,7 +2668,9 @@
               "state": "pending",
               "distance": 0.2857142857142857,
               "heardRatio": 0.625,
-              "margin": 0.99999384313049
+              "margin": 0.99999384313049,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2551,7 +2707,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999880384576725
+              "margin": 0.9999880384576725,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2600,7 +2758,9 @@
               "state": "pending",
               "distance": 0.375,
               "heardRatio": 0.625,
-              "margin": 0.9999919477390093
+              "margin": 0.9999919477390093,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2637,7 +2797,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999790453817238
+              "margin": 0.9999790453817238,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2686,7 +2848,9 @@
               "state": "pending",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999003119650387
+              "margin": 0.9999003119650387,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2730,7 +2894,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999915789896116
+              "margin": 0.9999915789896116,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -2740,7 +2906,9 @@
               "state": "pending",
               "distance": 0.6666666666666666,
               "heardRatio": 0.3,
-              "margin": 0.9999805384817778
+              "margin": 0.9999805384817778,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2782,7 +2950,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999003119650387
+              "margin": 0.9999003119650387,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2826,7 +2996,9 @@
               "state": "pending",
               "distance": 0.75,
               "heardRatio": 0.25,
-              "margin": 0.9998683683617553
+              "margin": 0.9998683683617553,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2868,7 +3040,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9996457350470365
+              "margin": 0.9996457350470365,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2912,7 +3086,9 @@
               "state": "pending",
               "distance": 0.3333333333333333,
               "heardRatio": 0.5,
-              "margin": 0.9999056333041095
+              "margin": 0.9999056333041095,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -2967,7 +3143,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9999437401357395
+              "margin": 0.9999437401357395,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             },
             {
               "surah": 1,
@@ -2977,7 +3155,9 @@
               "state": "pending",
               "distance": 0.8235294117647058,
               "heardRatio": 0.17647058823529413,
-              "margin": 0.9999538703228529
+              "margin": 0.9999538703228529,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -3023,7 +3203,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.999937791440317
+              "margin": 0.999937791440317,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -3065,7 +3247,9 @@
               "state": "pending",
               "distance": 0.47058823529411764,
               "heardRatio": 0.5294117647058824,
-              "margin": 0.9997685080403242
+              "margin": 0.9997685080403242,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -3127,7 +3311,9 @@
               "state": "unsure",
               "distance": 0.29411764705882354,
               "heardRatio": 0.7058823529411765,
-              "margin": 0.9998015835002138
+              "margin": 0.9998015835002138,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -3159,7 +3345,9 @@
               "state": "pending",
               "distance": 0.058823529411764705,
               "heardRatio": 0.9411764705882353,
-              "margin": 0.9997000009243076
+              "margin": 0.9997000009243076,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         }
@@ -3221,7 +3409,9 @@
               "state": "ok",
               "distance": 0,
               "heardRatio": 1,
-              "margin": 0.9997153984344839
+              "margin": 0.9997153984344839,
+              "vowelErrors": 0,
+              "vowelMargin": 0
             }
           ]
         },
