@@ -42,7 +42,7 @@ import { RecitationEngine } from "./engine.js";
 import { BLANK_ID, TOKENS } from "./tokens.js";
 import { costTable } from "./phonemeCost.js";
 import { normalizedDistance } from "./alignment.js";
-import type { EngineEvent, FallbackHit } from "./types.js";
+import type { EngineEvent, FallbackHit, WordVerdict } from "./types.js";
 import {
   ZipformerRunner,
   type OrtLike,
@@ -291,6 +291,13 @@ export class ZipformerSession {
   /** Effective engine config (defaults merged with the constructor overrides). */
   get config(): EngineConfig {
     return this.cfg;
+  }
+
+  /** Latest per-word acoustic verdicts of the active tracker (main or practice
+   * engine). Empty before the recitation is located. Diagnostic use only. */
+  verdicts(): WordVerdict[] {
+    const engine = this.practiceEngine ?? this.engine;
+    return engine.tracer?.verdicts(false) ?? [];
   }
 
   /** Drop all state — new recitation, same model and corpus. */

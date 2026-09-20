@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+Correction mode can now flag harakah (short-vowel) errors.
+
+- **`CorrectionIssue.kind: "possible_vowel"`.** A word whose consonant skeleton matches (distance ≤ 0.15) but whose aligned short vowel differs from the expected one, with the same clear-anchor and 12-frame persistence rules as omissions and substitutions. The word-final vowel (case ending) is never used as evidence: waqf drops it and the model's Quranic prior confidently rewrites it on clean audio. A retry that repeats a confident vowel error does not count as corrected.
+- **`WordVerdict.vowelErrors` / `vowelMargin`.** Count of aligned vowel substitutions in the word and `p(heard vowel) − p(expected vowel)` at the token's peak frame (min over mismatches). Both are `0` when none.
+- **`CtcToken.vowels` / `HeardChar.vowels`.** For tokens ending in a short vowel, the probabilities of the same token spelled with fatha, damma, kasra at its peak frame. The vocab is consonant(+shadda)+vowel, so `ببُ` has siblings `ببَ`, `ببِ`.
+- **`CorrectionThresholds`, `DEFAULT_CORRECTION_THRESHOLDS`, `CorrectionController.thresholds`.** `vowelMargin` (default `0.05`) and `vowelWordMargin` (default `0.5`). Calibrated on 309 clean clips / 106 min: professional recitations produce zero vowel mismatches; crowd-sourced TLOG clips produce 2 flags that look like genuine reciter errors.
+- **`ZipformerSession.verdicts()`.** Public read of the active tracker's latest word verdicts, for debug bundles.
+- **`vowelMismatches()`** exported for tests and tooling.
+
 ## 0.2.1
 
 Browser hang fix, packaging, and README that an outside consumer can follow.

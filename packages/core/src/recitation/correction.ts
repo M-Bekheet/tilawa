@@ -5,8 +5,16 @@ export type CorrectionAction = 'retry' | 'stop_retry' | 'dismiss' | 'review_late
 export interface RecitationPosition { surah: number; ayah: number; word: number }
 export interface CorrectionIssue extends RecitationPosition {
   wordIndex: number;
-  kind: 'possible_omission' | 'possible_substitution';
+  kind: 'possible_omission' | 'possible_substitution' | 'possible_vowel';
 }
+
+export interface CorrectionThresholds {
+  /** Min CTC margin on a mismatched heard vowel before it counts as evidence. */
+  vowelMargin: number;
+  /** Min mean word margin for a vowel flag (the whole word must be confidently heard). */
+  vowelWordMargin: number;
+}
+export const DEFAULT_CORRECTION_THRESHOLDS: CorrectionThresholds = { vowelMargin: 0.05, vowelWordMargin: 0.5 };
 export interface CorrectionState {
   phase: 'idle' | 'error' | 'retrying' | 'corrected';
   issue: CorrectionIssue | null;
@@ -24,7 +32,10 @@ function clearWord(v: WordVerdict | undefined): boolean {
     && Number.isFinite(v.heardRatio) && v.heardRatio >= 0.75 && v.heardRatio <= 1.3;
 }
 
-export function possibleWordIssues(verdicts: readonly WordVerdict[]): CorrectionIssue[] {
+export function possibleWordIssues(
+  verdicts: readonly WordVerdict[],
+  th: CorrectionThresholds = DEFAULT_CORRECTION_THRESHOLDS,
+): CorrectionIssue[] {
   const byIndex = new Map(verdicts.map(v => [v.wordIndex, v]));
   return verdicts.flatMap(v => {
     const before = byIndex.get(v.wordIndex - 1);
@@ -36,8 +47,15 @@ export function possibleWordIssues(verdicts: readonly WordVerdict[]): Correction
     const substitution = v.state === 'wrong' && Number.isFinite(v.distance) && v.distance >= 0.6
       && Number.isFinite(v.margin) && v.margin >= 0.65
       && v.heardRatio >= 0.5 && v.heardRatio <= 1.5;
-    return omission || substitution ? [{ surah: v.surah, ayah: v.ayah, word: v.word,
-      wordIndex: v.wordIndex, kind: omission ? 'possible_omission' as const : 'possible_substitution' as const }] : [];
+    // Harakah error: consonant skeleton matches (distance within `ok`), but at
+    // least one aligned short vowel differs and the decoder was sure about it.
+    const vowel = (v.state === 'ok' || v.state === 'unsure') && Number.isFinite(v.distance) && v.distance <= 0.15
+      && (v.vowelErrors ?? 0) >= 1 && Number.isFinite(v.vowelMargin) && v.vowelMargin >= th.vowelMargin
+      && Number.isFinite(v.margin) && v.margin >= th.vowelWordMargin
+      && v.heardRatio >= 0.75 && v.heardRatio <= 1.3;
+    const kind = omission ? 'possible_omission' as const : substitution ? 'possible_substitution' as const
+      : vowel ? 'possible_vowel' as const : null;
+    return kind ? [{ surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind }] : [];
   });
 }
 
@@ -46,6 +64,7 @@ export function possibleWordIssues(verdicts: readonly WordVerdict[]): Correction
  * attempt ID, so old audio/results cannot accidentally produce success. */
 export class CorrectionController {
   mode: RecitationMode = 'tracking';
+  thresholds: CorrectionThresholds = DEFAULT_CORRECTION_THRESHOLDS;
   state: CorrectionState = { phase: 'idle', issue: null, resume: null, attempt: 0, outcome: null };
   private suppressed = new Set<number>();
   private candidates = new Map<number, { kind: CorrectionIssue['kind']; frame: number }>();
@@ -66,8 +85,10 @@ export class CorrectionController {
       // Require a fresh, clear prefix from the start of this ayah through the
       // flagged word; a verse match or cursor advance alone cannot succeed.
       const prefix = verdicts.filter(v => v.surah === issue.surah && v.ayah === issue.ayah && v.word <= issue.word);
+      // A retry that repeats a confident vowel error is not a correction.
       const good = Array.from({ length: issue.word + 1 }, (_, word) =>
-        prefix.find(v => v.word === word)).every(clearWord);
+        prefix.find(v => v.word === word)).every(v => clearWord(v)
+          && ((v!.vowelErrors ?? 0) === 0 || v!.vowelMargin < this.thresholds.vowelMargin));
       if (!good) { this.retryFrame = null; return false; }
       if (this.retryFrame === null || frame < this.retryFrame) this.retryFrame = frame;
       if (frame - this.retryFrame < 12) return false;
@@ -75,7 +96,7 @@ export class CorrectionController {
       return true;
     }
     if (this.state.phase !== 'idle') return false;
-    const issues = possibleWordIssues(verdicts).filter(v => !this.suppressed.has(v.wordIndex));
+    const issues = possibleWordIssues(verdicts, this.thresholds).filter(v => !this.suppressed.has(v.wordIndex));
     const live = new Set(issues.map(v => v.wordIndex));
     for (const key of this.candidates.keys()) if (!live.has(key)) this.candidates.delete(key);
     for (const issue of issues) {

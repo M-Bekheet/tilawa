@@ -82,6 +82,8 @@ export type WorkerInbound =
 // Worker -> Main
 export type WorkerOutbound =
   | { type: "correction"; state: import("@tilawa/core").CorrectionState; totalWords: number }
+  /** Worker-local debug snapshot of the latest word verdicts (capped, throttled). */
+  | { type: "debug_verdicts"; verdicts: import("@tilawa/core").WordVerdict[] }
   | { type: "loading"; percent: number }
   | { type: "loading_status"; message: string }
   | { type: "ready" }

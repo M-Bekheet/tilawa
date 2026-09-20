@@ -227,6 +227,7 @@ export class VerdictTracer {
         t.corpus.wordInAyah[globalWord]! ===
         t.corpus.ayahWordCount(t.corpus.wordSurah[globalWord]!, t.corpus.wordAyah[globalWord]!) - 1;
       const pausal = pausalPhonemes(exp, t.corpus.plain[globalWord]!, atAyahEnd);
+      let expUsed = exp;
       if (distance > this.cfg.okDistance && pausal) {
         const stop = stopBoundary(t.heard, from, to, this.cfg.settleFrames);
         if (stop >= 0) {
@@ -239,9 +240,15 @@ export class VerdictTracer {
             this.table.encode(pausal),
             this.table,
           );
-          distance = Math.min(distance, d2);
+          if (d2 < distance) {
+            distance = d2;
+            expUsed = pausal;
+          }
         }
       }
+      const vowels = pending
+        ? { errors: 0, margin: 0 }
+        : vowelMismatches(t.heard, from, heardSlice, expUsed, this.table);
       let margin = 0;
       const spanHeard = span.to - span.from;
       if (spanHeard > 0) {
@@ -254,7 +261,9 @@ export class VerdictTracer {
       else if (distance <= this.cfg.okDistance) state = "ok";
       else if (distance <= this.cfg.unsureDistance || margin < this.cfg.minMargin) state = "unsure";
       else state = "wrong";
-      out.push(this.makeVerdict(globalWord, state, distance, heardRatio, margin));
+      out.push(
+        this.makeVerdict(globalWord, state, distance, heardRatio, margin, vowels.errors, vowels.margin),
+      );
     }
     return out;
   }
@@ -273,6 +282,8 @@ export class VerdictTracer {
     distance: number,
     heardRatio: number,
     margin: number,
+    vowelErrors = 0,
+    vowelMargin = 0,
   ): WordVerdict {
     const c = this.tracker.corpus;
     return {
@@ -284,9 +295,55 @@ export class VerdictTracer {
       distance,
       heardRatio,
       margin,
+      vowelErrors,
+      vowelMargin,
     };
   }
 }
+
+/** Count aligned short-vowel substitutions inside one word. Only positions where
+ * the heard char and the expected char are both short vowels count; consonant
+ * errors, insertions and deletions are the distance's job. The expected word's
+ * final vowel is always ignored: waqf drops it, and the model's Quranic prior
+ * confidently rewrites case endings (e.g. الأرضَ heard as الأرضِ at p=0.99 on a
+ * clean reference clip), so it cannot be trusted as evidence against the reciter. */
+export function vowelMismatches(
+  heard: readonly HeardChar[],
+  from: number,
+  heardSlice: string,
+  expected: string,
+  table: CostTable,
+): { errors: number; margin: number } {
+  if (!heardSlice.length || !expected.length) return { errors: 0, margin: 0 };
+  const h = table.encode(heardSlice);
+  const e = table.encode(expected);
+  const assign = alignGlobal(h, e, 0, e.length, table);
+  let errors = 0;
+  let margin = Infinity;
+  const lastVowel = SHORT_VOWELS.has(expected[expected.length - 1]!) ? expected.length - 1 : -1;
+  for (let i = 0; i < assign.length; i++) {
+    const j = assign[i]!;
+    if (j < 0) continue;
+    const hc = heardSlice[i]!;
+    const ec = expected[j]!;
+    if (hc === ec || !SHORT_VOWELS.has(hc) || !SHORT_VOWELS.has(ec)) continue;
+    if (j === lastVowel) continue;
+    errors++;
+    const heardChar = heard[from + i];
+    // Prefer the direct contrast p(heard vowel) - p(expected vowel) at the
+    // token's peak frame; fall back to the token margin when unavailable.
+    let m = heardChar?.margin ?? 0;
+    if (heardChar?.vowels) {
+      const hi = VOWEL_INDEX[hc];
+      const ei = VOWEL_INDEX[ec];
+      if (hi !== undefined && ei !== undefined) m = heardChar.vowels[hi]! - heardChar.vowels[ei]!;
+    }
+    if (m < margin) margin = m;
+  }
+  return { errors, margin: errors ? margin : 0 };
+}
+
+const VOWEL_INDEX: Record<string, number> = { "َ": 0, "ُ": 1, "ِ": 2 };
 
 function tWordStart(t: Tracker, localWord: number): number {
   return t.wordStarts[localWord]!;
