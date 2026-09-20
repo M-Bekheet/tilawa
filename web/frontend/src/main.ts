@@ -930,7 +930,15 @@ async function startAudio(): Promise<boolean> {
     state.stream = stream;
     $permissionPrompt.hidden = true;
 
-    const audioCtx = new AudioContext();
+    // Ask the browser for a 16 kHz graph so it does the mic resampling with a
+    // proper filter; the worklet then copies 1:1. Fall back to the device rate
+    // (the worklet resamples with continuous phase) where the option is refused.
+    let audioCtx: AudioContext;
+    try {
+      audioCtx = new AudioContext({ sampleRate: 16000 });
+    } catch {
+      audioCtx = new AudioContext();
+    }
     state.audioCtx = audioCtx;
 
     await audioCtx.audioWorklet.addModule(audioWorkletUrl!);
