@@ -12,6 +12,12 @@ try {
 }
 
 export default defineConfig({
+  define: {
+    // Cache-buster for /audio-processor.js: the worklet is fetched by URL from
+    // public/, so CDN edges (Cloudflare, max-age=14400) can pin a stale copy
+    // across deploys. A per-build id in the query string sidesteps that.
+    __BUILD_ID__: JSON.stringify(Date.now().toString(36)),
+  },
   resolve: {
     alias: {
       "@tilawa/core": fileURLToPath(
