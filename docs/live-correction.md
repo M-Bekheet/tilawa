@@ -37,6 +37,33 @@ consecutive missing words, unclear audio, consonant near-misses below the
 substitution threshold, and unlocated passages are intentionally not flagged. No pronunciation/tajweed grade
 is produced.
 
+## Whole-ayah gaps
+
+The word rules need clear neighbours inside the same ayah, so a whole ayah the
+model could not follow produces no word flag. `ZipformerSession` covers that
+case at the ayah level, in correction mode only. When ayah N+2 is matched right
+after ayah N of the same surah and N+1 was never matched, it raises one issue for
+N+1 at `word: 0` with `words` set to the ayah length:
+
+- `possible_skipped_ayah` — the aligner heard almost nothing of N+1. Its words are
+  `skipped` (heard ratio 0), apart from a little of the next ayah's onset lent to
+  the first words. Mean heard ratio over the ayah is below `AYAH_HEARD_FRACTION`
+  (0.5).
+- `unclear_ayah` — audio was heard for N+1 (words `wrong`, heard ratio near 1),
+  but the model could not follow it. The demo says “We couldn't follow ayah N.
+  Recite it again.” It does not say the reciter skipped it.
+
+The issue goes through `CorrectionController.raise()`, so it obeys the same gates
+as a word flag (correction mode, idle, not dismissed or deferred earlier) and
+reuses retry / dismiss / review_later. A retry must produce a clear prefix through
+the whole ayah. It fires once per ayah per session. It never fires in tracking
+mode, during `stop()`, across a tracker re-locate (`located`, `relocated`, or an
+idle restart), or across a surah change. A transient `lost` inside one surah
+keeps the match chain: losing and recovering in place is the unclear-ayah case.
+
+The heard-ratio split is a heuristic on one real clip and scripted decodes. The
+demo highlights the whole ayah for both kinds.
+
 ## Retry lifecycle
 
 Enable with `ZipformerSession.setMode('correction')`. `correct(action)` accepts
@@ -64,6 +91,10 @@ remains separate. Long ayahs wrap and scroll without truncation.
 
 - Deterministic SDK tests cover omissions, substitutions, correct/uncertain
   input, revised/stale evidence, dismissal, retries, and position preservation.
+- Scripted-decode session tests cover both ayah-level kinds, a clean 1→2→3 run,
+  a gap across a re-locate, dismissal, and tracking mode (none of which fire).
+- `node --import tsx test/correction-calibrate.ts --clips <dir>` replays a user
+  clip through the SDK in correction mode and prints every flag.
 - Injected ONNX timelines exercise fbank → CTC → alignment → flag → isolated
   successful retry → continuation for both omissions and substitutions.
 - Run `node --import tsx test/correction-audio.ts` in `web/frontend` for real local

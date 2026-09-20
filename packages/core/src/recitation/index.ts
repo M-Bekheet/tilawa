@@ -90,6 +90,7 @@ export {
   createZipformerSession,
   displayQuranFromRaw,
   DEFAULT_ZIPFORMER_IO,
+  AYAH_HEARD_FRACTION,
 } from "./session.js";
 export type {
   ZipformerSessionOptions,
@@ -98,6 +99,6 @@ export type {
   QuranSource,
 } from "./session.js";
 
-export { CorrectionController, possibleWordIssues, DEFAULT_CORRECTION_THRESHOLDS } from "./correction.js";
+export { CorrectionController, possibleWordIssues, DEFAULT_CORRECTION_THRESHOLDS, AYAH_ISSUE_KINDS } from "./correction.js";
 export type { RecitationMode, CorrectionAction, CorrectionIssue, CorrectionState, CorrectionThresholds, RecitationPosition } from "./correction.js";
 export { vowelMismatches } from "./verdicts.js";

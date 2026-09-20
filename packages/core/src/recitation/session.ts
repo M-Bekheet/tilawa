@@ -54,6 +54,9 @@ import DEFAULT_IO from "./zipformer-io.json" with { type: "json" };
 import { CorrectionController, type CorrectionAction, type RecitationMode } from "./correction.js";
 
 const TAIL_SECONDS = 2.0;
+/** Mean heard ratio over an unmatched ayah's words at or above which the gap
+ * counts as heard-but-unfollowed (`unclear_ayah`) rather than skipped. */
+export const AYAH_HEARD_FRACTION = 0.5;
 
 /** I/O manifest of the shipped `zipformer_interp_gentle_a05.int8.onnx`. */
 export const DEFAULT_ZIPFORMER_IO = DEFAULT_IO as ZipformerIo;
@@ -196,6 +199,10 @@ export class ZipformerSession {
   private emitted = new Set<string>();
   private transcriptParts: string[] = [];
   private lastCursor: { surah: number; ayah: number; word: number } | null = null;
+  /** Last `verse_match` emitted by the current tracker lock. Cleared on
+   * locate / relocate / lost so an ayah gap across a jump never flags. */
+  private lastMatch: { surah: number; ayah: number } | null = null;
+  private ayahIssuesRaised = new Set<string>();
   readonly correction = new CorrectionController();
   private practiceEngine: RecitationEngine | null = null;
   private stopping = false;
@@ -308,6 +315,8 @@ export class ZipformerSession {
     this.emitted = new Set();
     this.transcriptParts = [];
     this.lastCursor = null;
+    this.lastMatch = null;
+    this.ayahIssuesRaised = new Set();
     this.lastFallback = null;
     this.resetDecoder();
     this.engine = this.makeEngine();
@@ -534,13 +543,20 @@ export class ZipformerSession {
         if (this.lastCursor) out.push(this.wordProgress());
         break;
       }
-      case "lost":
+      case "lost": {
+        // Transient: the tracker keeps its place. Losing and recovering inside
+        // one surah is exactly the unclear-ayah case, so the match chain stays.
+        this.correction.clearEvidence();
+        break;
+      }
       case "relocated": {
         this.correction.clearEvidence();
+        this.lastMatch = null;
         break;
       }
       case "located": {
         this.correction.clearEvidence();
+        this.lastMatch = null;
         if (ev.surah != null && ev.ayah != null) {
           out.push({
             type: "verse_candidate",
@@ -560,6 +576,7 @@ export class ZipformerSession {
       case "idle":
       case "completed": {
         this.correction.clearEvidence();
+        this.lastMatch = null;
         this.dumpTallies();
         out.push(...this.emitNewMatches(this.accumulated));
         this.engine.startSearch();
@@ -591,11 +608,50 @@ export class ZipformerSession {
   private emitNewMatches(source?: Map<string, AyahTally>): WorkerOutbound[] {
     const tallies = source ?? mergeTallies(this.accumulated, this.currentSnapshot());
     const out: WorkerOutbound[] = [];
-    for (const t of newlyEligibleAyahs(tallies, this.emitted, this.minWordFraction)) {
+    const batch = newlyEligibleAyahs(tallies, this.emitted, this.minWordFraction);
+    for (const t of batch) {
       this.emitted.add(ayahKey(t));
       out.push(this.toVerseMatch(t));
     }
+    for (const t of batch) out.push(...this.checkAyahGap(t));
     return out;
+  }
+
+  /**
+   * Correction mode only. `t` (ayah N+2) was just matched; if the previous
+   * match of this tracker lock was ayah N of the same surah and N+1 was never
+   * matched, raise one ayah-level issue for N+1. `possible_skipped_ayah` when
+   * nothing of N+1 was heard, `unclear_ayah` when it was heard but not followed.
+   * Word-level rules are untouched; this only covers the whole-ayah hole they
+   * cannot see (no clear neighbours inside the ayah).
+   */
+  private checkAyahGap(t: AyahTally): WorkerOutbound[] {
+    const prev = this.lastMatch;
+    this.lastMatch = { surah: t.surah, ayah: t.ayah };
+    if (this.stopping || this.correction.mode !== "correction" || !prev || !this.lastCursor) return [];
+    if (prev.surah !== t.surah || t.ayah !== prev.ayah + 2) return [];
+    const surah = t.surah;
+    const ayah = t.ayah - 1;
+    const key = ayahKey({ surah, ayah });
+    if (this.emitted.has(key) || this.ayahIssuesRaised.has(key)) return [];
+    const words = this.wordCount(surah, ayah);
+    // How much of the ayah's expected audio the aligner actually heard. A real
+    // skip leaves most words `skipped` (heardRatio 0) and lends only a little
+    // of the next ayah's onset to the first words; a heard-but-unfollowed ayah
+    // has `wrong` words with heardRatio near 1.
+    const gapVerdicts = (this.engine.tracer?.verdicts(true) ?? []).filter((v) => v.surah === surah && v.ayah === ayah);
+    const heardFraction = gapVerdicts.reduce((sum, v) => sum + Math.min(1, Math.max(0, v.heardRatio || 0)), 0) / Math.max(1, words);
+    const kind = heardFraction >= AYAH_HEARD_FRACTION ? "unclear_ayah" as const : "possible_skipped_ayah" as const;
+    const issue = {
+      surah, ayah, word: 0,
+      wordIndex: this.corpus.ayahFirstWord(surah, ayah),
+      kind,
+      words,
+    };
+    if (!this.correction.raise(issue, this.lastCursor)) return [];
+    this.ayahIssuesRaised.add(key);
+    this.dumpTallies();
+    return [this.correctionMessage()];
   }
 
   private toVerseMatch(t: AyahTally): WorkerOutbound {

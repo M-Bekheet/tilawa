@@ -66,10 +66,15 @@ export class CorrectionView {
     this.dialog.dataset.phase = phase;
     this.dialog.dataset.kind = issue.kind;
     const vowel = issue.kind === 'possible_vowel';
+    const skippedAyah = issue.kind === 'possible_skipped_ayah';
+    const unclearAyah = issue.kind === 'unclear_ayah';
+    const wholeAyah = skippedAyah || unclearAyah;
     this.dialog.querySelector('[data-action="close"]')!.textContent = tr('Close practice', 'إغلاق التدريب');
     set('practice-status', phase === 'retrying' ? tr('RETRYING · MICROPHONE ON', 'نستمع لمحاولتك · الميكروفون يعمل')
       : phase === 'corrected' ? tr('RETRY COMPLETE', 'اكتملت المحاولة')
       : vowel ? tr('FOCUSED PRACTICE · POSSIBLE VOWEL SLIP', 'تدريب مركّز · خطأ محتمل في الحركة')
+      : skippedAyah ? tr('FOCUSED PRACTICE · POSSIBLE SKIPPED AYAH', 'تدريب مركّز · آية ربما سقطت')
+      : unclearAyah ? tr('FOCUSED PRACTICE · AYAH NOT FOLLOWED', 'تدريب مركّز · لم نتمكّن من متابعة الآية')
       : tr('FOCUSED PRACTICE · POSSIBLE MISTAKE', 'تدريب مركّز · خطأ محتمل'));
     set('practice-surah', this.arabic ? verse.name : verse.nameEn);
     set('practice-meta', tr(`Surah ${issue.surah} · Ayah ${issue.ayah} of ${verse.ayahCount}`, `سورة ${num(issue.surah)} · الآية ${num(issue.ayah)} من ${num(verse.ayahCount)}`));
@@ -78,16 +83,23 @@ export class CorrectionView {
     // Display the original full ayah, including all diacritics and stop marks.
     verse.words.forEach((word, index) => {
       const span = document.createElement('span'); span.textContent = word;
-      if (index === issue.word + (verse.wordOffset ?? 0)) span.className = 'practice-word';
+      // Ayah-level issues highlight the whole ayah (the bismillah prefix stays plain).
+      if (wholeAyah ? index >= (verse.wordOffset ?? 0) : index === issue.word + (verse.wordOffset ?? 0)) span.className = 'practice-word';
       phrase.append(span, document.createTextNode(index < verse.words.length - 1 ? ' ' : ''));
     });
     set('practice-title', phase === 'retrying' ? tr('Take your time.', 'خذ وقتك.') : phase === 'corrected'
       ? tr('That’s corrected.', 'تمّ التصحيح.')
       : vowel ? tr('Check the vowel on this word.', 'راجع حركة هذه الكلمة.')
+      : skippedAyah ? tr(`Ayah ${issue.ayah} may have been skipped.`, `ربما سقطت الآية ${num(issue.ayah)}.`)
+      : unclearAyah ? tr(`We couldn't follow ayah ${issue.ayah}. Recite it again.`, `لم نتمكّن من متابعة الآية ${num(issue.ayah)}. أعد تلاوتها.`)
       : tr('One word. Try again.', 'كلمة واحدة. حاول مجددًا.'));
     set('practice-description', phase === 'retrying'
-      ? tr(`Repeat ayah ${issue.ayah} from the beginning. We’ll check the highlighted word again.`, `أعد الآية ${num(issue.ayah)} من بدايتها. سنتحقّق من الكلمة المظلّلة مجددًا.`)
-      : phase === 'corrected' ? tr('The word was detected in your retry. Continue from your saved place.', 'تعرّفنا على الكلمة في محاولتك. تابع من موضعك المحفوظ.')
+      ? (wholeAyah ? tr(`Repeat ayah ${issue.ayah} from the beginning. We’ll listen for the whole ayah.`, `أعد الآية ${num(issue.ayah)} من بدايتها. سنستمع إلى الآية كاملة.`)
+        : tr(`Repeat ayah ${issue.ayah} from the beginning. We’ll check the highlighted word again.`, `أعد الآية ${num(issue.ayah)} من بدايتها. سنتحقّق من الكلمة المظلّلة مجددًا.`))
+      : phase === 'corrected' ? (wholeAyah ? tr('The ayah was detected in your retry. Continue from your saved place.', 'تعرّفنا على الآية في محاولتك. تابع من موضعك المحفوظ.')
+        : tr('The word was detected in your retry. Continue from your saved place.', 'تعرّفنا على الكلمة في محاولتك. تابع من موضعك المحفوظ.'))
+      : skippedAyah ? tr(`We heard ayah ${issue.ayah - 1} and then ayah ${issue.ayah + 1}, but not ayah ${issue.ayah}. Recite it before you continue.`, `سمعنا الآية ${num(issue.ayah - 1)} ثم الآية ${num(issue.ayah + 1)}، ولم نسمع الآية ${num(issue.ayah)}. اتلُها قبل أن تتابع.`)
+      : unclearAyah ? tr(`We heard you recite, but could not match ayah ${issue.ayah}. Recite it from the beginning at a steady pace.`, `سمعنا تلاوتك، لكن لم نتمكّن من مطابقة الآية ${num(issue.ayah)}. اتلُها من بدايتها بوتيرة ثابتة.`)
       : vowel ? tr(`Recite ayah ${issue.ayah} again and listen for the highlighted word's harakah.`, `أعد الآية ${num(issue.ayah)} وانتبه لحركة الكلمة المظلّلة.`)
       : tr('Recite the ayah above, including the highlighted word.', 'اتلُ الآية أعلاه، بما فيها الكلمة المظلّلة.'));
     const primary = this.dialog.querySelector<HTMLButtonElement>('#practice-primary')!;
