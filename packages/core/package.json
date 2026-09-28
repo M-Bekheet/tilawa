@@ -33,9 +33,11 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "sync-docs": "cp ../../README.md README.md && cp ../../LICENSE LICENSE && cp ../../NOTICE.md NOTICE.md",
+    "prepare": "npm run build",
     "prepack": "npm run sync-docs && npm run build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:browser": "npm run build && node examples/browser/test.mjs"
   },
   "keywords": [
     "quran",
@@ -48,6 +50,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "playwright": "^1.57.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   },
