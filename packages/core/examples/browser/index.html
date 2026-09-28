@@ -52,10 +52,11 @@ const CHUNK = 4800; // 300 ms, same cadence as the demo worklet
 const $ = (id) => document.getElementById(id);
 const setStatus = (s) => ($("status").textContent = s);
 const log = (s) => { $("log").textContent += s + "\n"; $("log").scrollTop = 1e9; };
-const json = (path) => fetch(ASSETS + path).then((r) => {
+const get = (path) => fetch(ASSETS + path).then((r) => {
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
-  return r.json();
+  return r;
 });
+addEventListener("error", (e) => setStatus(`Error: ${e.message}`));
 
 // The app's job: wire up ort + fetch assets. Everything else is the SDK.
 ort.env.wasm.numThreads = 1;
@@ -64,9 +65,9 @@ ort.env.wasm.simd = true;
 setStatus("Fetching model + corpus…");
 const t0 = performance.now();
 const [model, corpus, quran] = await Promise.all([
-  fetch(ASSETS + "models/zipformer_interp_gentle_a05.int8.onnx").then((r) => r.arrayBuffer()),
-  json("zipformer_quran.json"),
-  json("quran.json"),
+  get("models/zipformer_interp_gentle_a05.int8.onnx").then((r) => r.arrayBuffer()),
+  get("zipformer_quran.json").then((r) => r.json()),
+  get("quran.json").then((r) => r.json()),
 ]);
 
 const session = await createRecognitionSession({
@@ -133,13 +134,19 @@ $("file").onchange = (e) => enqueue(async () => {
   if (!f) return;
   session.reset();
   resetUi();
-  const pcm = await decodeTo16k(await f.arrayBuffer());
-  setStatus(`Recognizing ${f.name} (${(pcm.length / SAMPLE_RATE).toFixed(1)} s)…`);
-  const t = performance.now();
-  for (let i = 0; i < pcm.length; i += CHUNK) await session.feed(pcm.subarray(i, i + CHUNK));
-  await session.stop();
-  setStatus(`Done: ${f.name} in ${Math.round(performance.now() - t)} ms`);
-  document.body.dataset.done = "1";
+  try {
+    const pcm = await decodeTo16k(await f.arrayBuffer());
+    setStatus(`Recognizing ${f.name} (${(pcm.length / SAMPLE_RATE).toFixed(1)} s)…`);
+    const t = performance.now();
+    for (let i = 0; i < pcm.length; i += CHUNK) await session.feed(pcm.subarray(i, i + CHUNK));
+    await session.stop();
+    setStatus(`Done: ${f.name} in ${Math.round(performance.now() - t)} ms`);
+  } catch (err) {
+    setStatus(`Error: ${f.name}: ${err.message}`);
+    throw err;
+  } finally {
+    document.body.dataset.done = "1";
+  }
 });
 
 // --- Mic: the demo's worklet resamples to 16 kHz and posts 300 ms Float32 chunks.
