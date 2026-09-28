@@ -255,9 +255,12 @@ h3 { font-size: 23px; font-weight: 400; letter-spacing: -.04em; line-height: 31p
 
 /* Paper: mode selector and Option 3 focus screen. */
 .recitation-mode { padding-top: 24px; display: flex; flex-direction: column; gap: 12px; }
-.mode-options { display: flex; padding: 4px; gap: 4px; border-radius: 12px; background: var(--color-selected); }
-.mode-options button { display: flex; align-items: center; justify-content: center; flex: 1; gap: 8px; padding: 12px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--color-muted); font-size: 14px; font-weight: 600; line-height: 18px; min-height: 44px; }
-.mode-options button[aria-pressed="true"] { background: var(--color-ink); color: white; }
+.mode-options { position: relative; display: flex; padding: 4px; gap: 4px; border-radius: 12px; background: var(--color-selected); }
+.mode-options::before { content: ""; position: absolute; inset-block: 4px; inset-inline-start: 4px; width: calc(50% - 6px); border-radius: 8px; background: var(--color-ink); pointer-events: none; transition: transform .42s cubic-bezier(.4, 0, .2, 1); }
+.bench[data-mode="correction"] .mode-options::before { transform: translateX(calc(100% + 4px)); }
+[dir="rtl"] .bench[data-mode="correction"] .mode-options::before { transform: translateX(calc(-100% - 4px)); }
+.mode-options button { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; gap: 8px; padding: 12px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--color-muted); font-size: 14px; font-weight: 600; line-height: 18px; min-height: 44px; transition: color .2s ease; }
+.mode-options button[aria-pressed="true"] { color: white; }
 .mode-options svg { flex-shrink: 0; width: 20px; height: 20px; }
 #mode-help { color: var(--color-muted); font-size: 14px; line-height: 22px; text-align: center; }
 [lang="ar"] .mode-options button, [lang="ar"] #mode-help { line-height: 24px; }
