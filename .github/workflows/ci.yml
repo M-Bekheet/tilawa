@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/core/package-lock.json
+      - run: npm ci # `prepare` runs tsc -> dist
+      - run: npx vitest run
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/core/package-lock.json
+      - uses: actions/cache@v4
+        id: zipformer
+        with:
+          key: zipformer-assets-v0.3.0
+          path: |
+            web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx
+            web/frontend/public/zipformer_quran.json
+      - if: steps.zipformer.outputs.cache-hit != 'true'
+        run: web/frontend/scripts/fetch-zipformer-assets.sh
+      - run: npm ci
+        working-directory: packages/core
+      - run: npx playwright install --with-deps chromium
+        working-directory: packages/core
+      - run: npm run test:browser
+        working-directory: packages/core
+
+  demo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
