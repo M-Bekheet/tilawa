@@ -4,7 +4,7 @@ Offline Quran verse recognition — give it 16kHz audio, get `surah:ayah`. Fully
 
 This repo ships two things:
 
-- **`@tilawa/core`** (`packages/core/`) — the SDK. Pure TypeScript: CTC decode + `QuranDB` verse matching + streaming tracker. Zero native deps; the app dev injects an ONNX `SessionRunner`.
+- **`@tilawa/core`** (`packages/core/`) — the SDK. Pure TypeScript, zero native deps. Default engine: streaming Zipformer2-CTC over tajweed phonemes (`src/recitation/`). Alternate engine: FastConformer text CTC. The app dev passes in their `onnxruntime` build; the SDK never imports it.
 - **Web demo** (`web/`) — live browser recitation demo that consumes `@tilawa/core` as its regression guard.
 
 The Python research/training/benchmark harness lives under `lab/` and has its own `lab/AGENTS.md`. Model weights are proven out there, then their logic graduates into the SDK.
@@ -14,55 +14,66 @@ The Python research/training/benchmark harness lives under `lab/` and has its ow
 ```
 packages/core/     # @tilawa/core SDK (the shipped product)
   src/
-    index.ts             # createTilawaSession(runner, assets) + TilawaSession, TilawaAssets
-    session.ts           # SessionRunner injection seam (type-only, no onnxruntime)
-    quran-db.ts          # QuranDB — verse matching (bestJoint03Match)
-    tracker.ts           # RecitationTracker — streaming verse detection
-    text-ctc-decode.ts   # TextCTCDecoder — logprobs -> text
-    quran-text-adapter.ts# adaptQuranTextData / validateCtcTokenRoundTrip
-    ctc-rescore.ts, levenshtein.ts, normalizer.ts, types.ts  # pure helpers
-  test/                  # deterministic vitest (decode+match, no ONNX)
-web/                     # live browser demo (Vite + worker), consumes @tilawa/core
+    index.ts             # createRecognitionSession (engine switch), createTilawaSession, TilawaAssets
+    recitation/          # default Zipformer engine
+      session.ts         #   ZipformerSession / createZipformerSession — {ort, model} or {session, Tensor}
+      zipformerRunner.ts #   ONNX I/O over the injected ort namespace
+      fbank.ts, ctcDecoder.ts, search.ts, tracker.ts, engine.ts, emission.ts, correction.ts, ...
+      zipformer-io.json  #   bundled I/O manifest (DEFAULT_ZIPFORMER_IO)
+    session.ts           # SessionRunner seam — FastConformer only (type-only, no onnxruntime)
+    quran-db.ts          # QuranDB — display text + FastConformer verse matching
+    tracker.ts, text-ctc-decode.ts, quran-text-adapter.ts, ctc-rescore.ts  # FastConformer pipeline
+    levenshtein.ts, normalizer.ts, types.ts  # shared helpers + WorkerOutbound event union
+  test/                  # deterministic vitest (no ONNX)
+  examples/
+    browser/index.html   # no-bundler page: import map -> dist + onnxruntime-web, file + mic input
+    browser/test.mjs     # headless Chromium regression over test_corpus (npm run test:browser)
+    session-*.ts, react-native.md  # copy-paste runtime adapters
+web/                     # live browser demo (Vite + worker), consumes @tilawa/core src
   frontend/src/worker/zipformer-backend.ts  # the web Zipformer host (onnxruntime-web)
+  frontend/scripts/fetch-zipformer-assets.sh  # model + corpus -> public/ (gitignored, NPL-1.2)
 lab/                     # Python research/training/benchmark harness — see lab/AGENTS.md
+.github/workflows/ci.yml # core (vitest), browser (test:browser), demo (build)
 README.md, Dockerfile, LICENSE
 ```
 
+`README.md` at the root is the SDK's published README. `packages/core/README.md` is a gitignored copy made by `npm run sync-docs` at pack time; edit the root file.
+
 ## SDK architecture
-
-The working pipeline cleanly splits into:
-
-- **Pure-TS core** — `quran-db`, `tracker`, `text-ctc-decode`, `quran-text-adapter`, `ctc-rescore`, `levenshtein`, `normalizer`, `types`. Zero ONNX imports.
-- **ONNX boundary** — a single `SessionRunner` interface the app dev injects. Contract: input `audio_signal [1,N]` float32 + `length`, output `[1,T,vocab]` logprobs. Preprocessing is baked into the ONNX graph.
-
-So the SDK is one package, zero native deps, and works in web/node/RN by swapping which `onnxruntime` build the dev wires into their `SessionRunner`.
 
 ```mermaid
 graph LR
-  dev[App dev] -->|"injects ort session"| runner[SessionRunner iface]
-  runner --> core["@tilawa/core: tracker + QuranDB + CTC decode"]
-  core --> result["surah / ayah / transcript"]
+  dev[App dev] -->|"ort + model bytes + corpus"| zf["createRecognitionSession (Zipformer)"]
+  zf --> core["fbank -> Zipformer CTC -> n-gram search + DP tracker"]
+  core --> events["WorkerOutbound: verse_candidate / verse_match / word_progress / final_sequence"]
 ```
+
+- **Zipformer (default)** — the app passes the `ort` namespace plus model bytes (web/node), or an already-created `session` plus `Tensor` (React Native, where sessions load from a path). The SDK builds the ONNX session, runs Kaldi fbank in TS, and feeds the streaming Zipformer. The phoneme corpus (`zipformer_quran.json`) is required and not bundled. `quran.json` is display text only.
+- **FastConformer (alternate)** — the app writes a `SessionRunner`: input `audio_signal [1,N]` float32 + `length`, output `[1,T,vocab]` logprobs, preprocessing in-graph. Needs `{ vocab, quranCtcTokens, quran }` assets.
+
+Both engines emit the same `WorkerOutbound` union through `onEvent` / `onOutput` and as the return value of `feed()` / `stop()`.
 
 ### Public surface (`@tilawa/core`)
 
-- `createTilawaSession(runner, assets, options?) -> TilawaSession`
-- `TilawaSession`: `transcribe(audio)`, `transcribeRaw(audio)`, `feed(chunk)`, `reset()`, `setConfig()`, `getConfig()`, `db`, `decoder`
-- `SessionRunner` (inject), `SessionOutput`, `TilawaAssets`, `TilawaPrediction`
-- Config + types: `StreamingConfig`, presets, `normalizeStreamingConfig`, `QuranVerse`, `SurahData`, `QuranDB`, `TextCTCDecoder`, `RecitationTracker`
+- `createRecognitionSession(options) -> RecognitionSession`: `feed(chunk)`, `stop()` / `flush()`, `reset()`, `engine`, `zipformer`, `fastconformer`. `engine` defaults to `"zipformer"`.
+- `createZipformerSession(options) -> ZipformerSession`: adds `transcript`, `verses`, `verdicts()`, `setMode()`, `correct()`, `engineState`. Options: `ort`+`model` or `session`+`Tensor`, `corpus`, `quran?`, `io?`, `executionProviders?`, `onEvent?`, tuning knobs.
+- `createTilawaSession(runner, assets, options?) -> TilawaSession` (FastConformer): `transcribe()`, `transcribeRaw()`, `feed()`, `reset()`, `setConfig()`, `getConfig()`, `db`, `decoder`.
+- Types: `WorkerOutbound` and its message types, `SessionRunner`, `SessionOutput`, `TilawaAssets`, `TilawaPrediction`, `StreamingConfig` + presets, `QuranVerse`, `QuranDB`.
 
-`assets` = `{ vocab, quranCtcTokens, quran, blankId? }` — JSON blobs the dev loads. Model bytes go into their `SessionRunner`, not into `assets`.
+`feed`, `stop` and `reset` on one session must never overlap: they share the streaming encoder state. Serialize them (a promise queue is enough).
 
 ## Build & test the SDK
 
 ```bash
 cd packages/core
-npm install
-npx tsc -p tsconfig.json   # typecheck / build
-npx vitest run             # deterministic decode+match tests (no ONNX)
+npm install                # `prepare` builds dist/
+npx vitest run             # deterministic tests (no ONNX)
+npm run test:browser       # rebuilds dist, runs examples/browser in headless Chromium
 ```
 
-Both must be green before merge.
+`test:browser` needs the model + corpus in `web/frontend/public` (`web/frontend/scripts/fetch-zipformer-assets.sh`) and a Playwright browser (`npx playwright install chromium`, or `PW_CHANNEL=chrome` to use installed Chrome). `-- --all` runs every mp3/wav sample in `lab/benchmark/test_corpus`.
+
+`vitest` and `test:browser` must be green before merge. CI (`.github/workflows/ci.yml`) runs both plus the demo build.
 
 ## Run the web demo
 
@@ -89,7 +100,7 @@ npm run test:correction           # tracking + correction recording regression
 
 ## Making changes
 
-- **SDK core change** (decode / matcher / tracker) → edit `packages/core/src/`. Add/extend a `packages/core/test/*.test.ts` that deterministically exercises it without ONNX. `npx vitest run` stays green.
+- **SDK core change** (decode / matcher / tracker) → edit `packages/core/src/`. Add/extend a `packages/core/test/*.test.ts` that deterministically exercises it without ONNX. `npx vitest run` stays green. If the change touches the Zipformer engine, the public API, or the build output, run `npm run test:browser` too.
 - **Demo change** → edit `web/frontend/src/`. Verify `npm run build` typechecks and the demo still recognizes recitation.
 - **New model / matching strategy / training** → that's lab work. See `lab/AGENTS.md`. Nothing in `lab/` may import from `packages/` or `web/`, and vice versa.
 
@@ -100,7 +111,7 @@ Develop every change in a worktree under `./.worktrees/`, then merge back with `
 ```bash
 git worktree add .worktrees/<name> -b <name>
 cd .worktrees/<name>
-# ... implement, test (vitest + demo build) ...
+# ... implement, test (vitest + test:browser + demo build) ...
 git commit                 # subject: "<area>: <what changed>" (≤72 chars); body: the why + before/after
 git merge <name> --no-ff -m "Merge branch '<name>': ..."
 git worktree remove .worktrees/<name>
