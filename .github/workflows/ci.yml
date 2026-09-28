@@ -22,6 +22,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: packages/core/package-lock.json
+      - uses: actions/cache@v4
+        id: zipformer
+        with:
+          key: zipformer-assets-v0.3.0
+          path: |
+            web/frontend/public/models/zipformer_interp_gentle_a05.int8.onnx
+            web/frontend/public/zipformer_quran.json
+      - if: steps.zipformer.outputs.cache-hit != 'true'
+        run: ../../web/frontend/scripts/fetch-zipformer-assets.sh
       - run: npm ci # `prepare` runs tsc -> dist
       - run: npx vitest run
 
