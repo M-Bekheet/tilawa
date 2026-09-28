@@ -75,7 +75,7 @@ h3 { font-size: 23px; font-weight: 400; letter-spacing: -.04em; line-height: 31p
 .verse-group--exiting { display: none; }
 #candidate-status, #raw-transcript { font-size: 13px; color: var(--color-muted); margin-block: 12px; }
 #raw-transcript:empty { display: none; }
-#raw-transcript { font-family: Amiri, serif; font-size: 22px; }
+#raw-transcript { font-family: Amiri, serif; font-size: 22px; overflow-wrap: anywhere; }
 .paused-title { margin-bottom: 16px; }
 .post-actions { display: flex; flex-direction: column; gap: 8px; }
 #permission-prompt { padding-top: 24px; }
