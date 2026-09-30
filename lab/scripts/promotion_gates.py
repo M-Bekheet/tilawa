@@ -10,7 +10,9 @@ Hard gates (all must pass):
      tlog_holdout non-clean clips and the TLOG dev non-clean slice
   4. held-out multi-ayah tracker SeqAcc >= v3
   5. correction false flags per clean minute <= v3 (when both provided)
-Reported, not gated: madd-free headline, per-source PER, dev PER, dev drops.
+Reported, not gated: madd-free headline (secondary headline; our training
+labels put waqf madd at 4 harakat, the v1.1 gold at 2), per-source PER, dev
+PER, dev drops.
 
   ../.venv/bin/python scripts/promotion_gates.py --eval-dir /tmp/phase0/eval --cand a0-ep2 --base v3 \\
       --holdout-scores /tmp/phase0/holdout_v3.jsonl --tracker-dir /tmp/phase0/tracker --correction-dir /tmp/phase0/correction
@@ -45,7 +47,65 @@ def drops(rows: list[dict]) -> int:
     return sum(f >= 0.5 for r in rows for f in r.get("ayah_del_frac", []))
 
 
-def model_view(eval_dir: Path, name: str, holdout_nonclean: set[str]) -> dict:
+_GOLD: dict = {}
+
+
+def madd_free_golds(qlab_dir: Path | None, corpora: dict[str, Path]) -> dict[str, list[int]]:
+    """id -> madd-free gold ids (headline gold for q-lab, ordered for corpora); text only, no audio."""
+    import sys
+
+    lab = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(lab))
+    sys.path.insert(0, str(lab / "scripts"))
+    from qlab_per_eval import build_corpus_rows, build_rows
+    from qlab_per_report import MADD_CHARS, madd_free_map
+    from shared.paths import resolve_data_file
+    from shared.phoneme_labels import PhonemeTokenizer, load_tokens
+
+    tokens = load_tokens()
+    m = madd_free_map(tokens)
+    madd = {m[i] for i, t in enumerate(tokens) if t and set(t) <= MADD_CHARS and len(set(t)) == 1}
+    _GOLD["map"], _GOLD["madd"] = m, madd
+    tok = PhonemeTokenizer(tokens)
+    ref = resolve_data_file("zipformer/reference/quran_text2phoneme.json").parent
+    out = {}
+    if qlab_dir is not None:
+        for r in build_rows(qlab_dir, lab / "benchmark" / "test_corpus_qlab" / "manifest.json", ref, tok, require_audio=False):
+            out[r["id"]] = r["gold_headline"]
+    for d in corpora.values():
+        if (d / "manifest.json").is_file():
+            for r in build_corpus_rows(d, ref, tok):
+                out[r["id"]] = r["gold_ordered"]
+    return out
+
+
+def collapse(ids):
+    m, madd, out = _GOLD["map"], _GOLD["madd"], []
+    for i in ids:
+        j = m[i]
+        if not (out and out[-1] == j and j in madd):
+            out.append(j)
+    return out
+
+
+def madd_free_rate(rows: list[dict], golds: dict, keep=lambda r: True) -> dict:
+    from Levenshtein import editops
+
+    n = s = i = d = c = 0
+    for r in rows:
+        g = golds.get(r["id"])
+        if not g or not keep(r):
+            continue
+        ref, hyp = collapse(g), collapse(r["hyp"])
+        for op, _, _ in editops("".join(chr(0x100 + x) for x in ref), "".join(chr(0x100 + x) for x in hyp)):
+            s += op == "replace"; i += op == "insert"; d += op == "delete"
+        n += len(ref); c += 1
+    n = max(n, 1)
+    return {"clips": c, "per": round(100 * (s + i + d) / n, 3), "sub": round(100 * s / n, 3),
+            "ins": round(100 * i / n, 3), "del": round(100 * d / n, 3)}
+
+
+def model_view(eval_dir: Path, name: str, holdout_nonclean: set[str], golds: dict | None = None) -> dict:
     d = eval_dir / name
     q, hm, dev = load(d / "qlab.jsonl"), load(d / "heldout_multi.jsonl"), load(d / "dev_everyayah.jsonl")
     tdev, tnc = load(d / "tlog_dev.jsonl"), load(d / "tlog_dev_nonclean.jsonl")
@@ -59,6 +119,12 @@ def model_view(eval_dir: Path, name: str, holdout_nonclean: set[str]) -> dict:
                       "ayahs_dropped": drops([r for r in dev if len(r.get("ayah_lens", [1])) > 1])}
     v["tlog_dev"] = rate(tdev, "ordered")
     v["tlog_dev_nonclean"] = rate(tnc, "ordered")
+    if golds:
+        v["maddfree_headline"] = madd_free_rate(q, golds)
+        for src in ("everyayah_heldout", "qul_alnufais", "tlog_holdout"):
+            v[f"maddfree_{src}"] = madd_free_rate(q, golds, lambda r, s=src: r["source"] == s)
+        v["maddfree_dev_single"] = madd_free_rate(dev, golds, lambda r: len(r.get("ayah_lens", [1])) == 1)
+        v["maddfree_heldout_multi"] = madd_free_rate(hm, golds)
     return v
 
 
@@ -71,11 +137,17 @@ def main() -> None:
     ap.add_argument("--tracker-dir", default="")
     ap.add_argument("--correction-dir", default="")
     ap.add_argument("--json", default="")
+    ap.add_argument("--qlab-text", default="", help="dir with q-lab benchmark.jsonl (text only) for madd-free views")
+    ap.add_argument("--corpus-manifests", default="", help="name=dir,... of dev/held-out corpora for madd-free views")
     args = ap.parse_args()
 
     nonclean = {r["id"] for r in load(Path(args.holdout_scores)) if r.get("bucket") != "clean"}
     ev = Path(args.eval_dir)
-    base, cand = model_view(ev, args.base, nonclean), model_view(ev, args.cand, nonclean)
+    golds = None
+    if args.qlab_text:
+        corpora = dict(kv.split("=", 1) for kv in args.corpus_manifests.split(",") if kv)
+        golds = madd_free_golds(Path(args.qlab_text), {k: Path(v) for k, v in corpora.items()})
+    base, cand = model_view(ev, args.base, nonclean, golds), model_view(ev, args.cand, nonclean, golds)
 
     def tracker(name):
         p = Path(args.tracker_dir) / f"{name}_heldout_multi.summary.json" if args.tracker_dir else None

@@ -50,7 +50,7 @@ def qlab_norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok) -> list[dict]:
+def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok, require_audio: bool = True) -> list[dict]:
     ordered = json.loads((ref_dir / "ordered_quran_phonemes.json").read_text(encoding="utf-8"))
     raw = json.loads((ref_dir / "quran_text2phoneme.json").read_text(encoding="utf-8"))
     t2p = {qlab_norm(k): v for k, v in raw.items()}
@@ -89,7 +89,7 @@ def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok) -> list[dict]
             continue
         o = json.loads(line)
         wav = qlab_dir / o["audio"]
-        if not wav.is_file():
+        if require_audio and not wav.is_file():
             continue
         sa = sa_by_id.get(o["id"])
         g_ord = None
