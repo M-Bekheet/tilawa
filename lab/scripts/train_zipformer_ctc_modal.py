@@ -1015,6 +1015,7 @@ def train(
     base_lr: float = DEFAULT_BASE_LR,
     warmup_batches: float = DEFAULT_WARMUP_BATCHES,
     allow_leaks: bool = False,
+    extra_train_flags: str = "",
 ) -> dict:
     import subprocess
     import time
@@ -1099,6 +1100,7 @@ def train(
             limit_cuts=limit_cuts,
             smoke=smoke,
         ),
+        *extra_train_flags.split(),
     ]
 
     env = os.environ.copy()
@@ -1126,6 +1128,7 @@ def train(
         "sources": sources,
         "source_weights": source_weights,
         "leak_check": leak_summary,
+        "extra_train_flags": extra_train_flags,
         "allow_leaks": allow_leaks,
         "init_from": init_from,
         "init_meta": init_meta,
@@ -1242,6 +1245,7 @@ def main(
     skip_export: bool = False,
     export_interp: str = "",
     allow_leaks: bool = False,
+    extra_train_flags: str = "",
 ):
     """Fine-tune from Quran-Lab v3.1 (or from scratch if ``init_from=""``).
 
@@ -1299,6 +1303,7 @@ def main(
         base_lr=base_lr,
         warmup_batches=warmup_batches,
         allow_leaks=allow_leaks,
+        extra_train_flags=extra_train_flags,
     )
     print("train result:", result)
     should_export = (not skip_export) and (smoke or num_epochs >= 1)
