@@ -90,6 +90,41 @@ def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok) -> list[dict]
     return rows
 
 
+def build_corpus_rows(corpus_dir: Path, ref_dir: Path, tok) -> list[dict]:
+    """Rows for a v3-schema corpus; gold = concatenated ordered phonemes per ayah."""
+    ordered = json.loads((ref_dir / "ordered_quran_phonemes.json").read_text(encoding="utf-8"))
+    man = json.loads((corpus_dir / "manifest.json").read_text(encoding="utf-8"))
+    rows = []
+    for smp in man["samples"] if isinstance(man, dict) else man:
+        verses = smp.get("expected_verses") or [{"surah": smp["surah"], "ayah": smp["ayah"]}]
+        parts = []
+        for v in verses:
+            e = ordered[f"{v['surah']}:{v['ayah']}"]
+            parts.append(tok.encode(str(e["aya_phoneme"] if isinstance(e, dict) else e).replace(" ", "")))
+        rows.append({
+            "id": smp["id"], "source": smp.get("source", "corpus"), "wav": str(corpus_dir / smp["file"]),
+            "surah": smp["surah"], "ayah": smp["ayah"], "bridge": bool(smp.get("bridge")),
+            "gold_ordered": [u for p in parts for u in p], "gold_text": None,
+            "ayah_lens": [len(p) for p in parts],
+        })
+    return rows
+
+
+def ayah_deleted_fraction(ref, hyp, ayah_lens) -> list[float]:
+    """Per-ayah share of reference units the alignment deletes."""
+    from Levenshtein import editops
+
+    deleted = [0] * len(ref)
+    for op, i, _ in editops("".join(chr(0x100 + u) for u in ref), "".join(chr(0x100 + u) for u in hyp)):
+        if op == "delete":
+            deleted[i] = 1
+    out, i = [], 0
+    for n in ayah_lens:
+        out.append(round(sum(deleted[i : i + n]) / max(n, 1), 3))
+        i += n
+    return out
+
+
 _W: dict = {}
 
 
@@ -111,6 +146,10 @@ def _run(row: dict) -> dict:
     out["duration"] = round(len(audio) / 16000, 3)
     out["hyp_len"] = len(hyp)
     out["hyp"] = hyp
+    if row.get("ayah_lens"):
+        out["bridge"] = row["bridge"]
+        out["ayah_lens"] = row["ayah_lens"]
+        out["ayah_del_frac"] = ayah_deleted_fraction(row["gold_ordered"], hyp, row["ayah_lens"])
     for g in ("ordered", "text"):
         ref = row[f"gold_{g}"]
         if ref is None:
@@ -146,6 +185,15 @@ def summarize(per_clip: list[dict]) -> dict:
                 a["del"] += s["del"]
                 a["exact"] += int(s["sub"] + s["ins"] + s["del"] == 0)
         res[g] = {}
+        if g == "ordered" and any("ayah_del_frac" in r for r in per_clip):
+            fr = [(f, n) for r in per_clip for f, n in zip(r.get("ayah_del_frac", []), r.get("ayah_lens", []))]
+            res["ayah_dropped"] = {
+                "ayahs": len(fr),
+                "dropped_ge50": sum(f >= 0.5 for f, _ in fr),
+                "short_ayahs": sum(n <= 20 for _, n in fr),
+                "short_dropped_ge50": sum(f >= 0.5 and n <= 20 for f, n in fr),
+                "windows_with_drop": sum(any(f >= 0.5 for f in r.get("ayah_del_frac", [])) for r in per_clip),
+            }
         for src, a in sorted(agg.items()):
             n = max(a["ref_len"], 1)
             err = a["sub"] + a["ins"] + a["del"]
@@ -162,7 +210,8 @@ def summarize(per_clip: list[dict]) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--qlab-dir", required=True)
+    ap.add_argument("--qlab-dir", default="")
+    ap.add_argument("--corpus", default="", help="v3-schema corpus dir instead of q-lab (multi-ayah windows)")
     ap.add_argument("--manifest", default=str(LAB / "benchmark" / "test_corpus_qlab" / "manifest.json"))
     ap.add_argument("--ref-dir", default="")
     ap.add_argument("--out-dir", required=True)
@@ -179,7 +228,13 @@ def main() -> None:
         raise SystemExit("--out-dir must be outside the repo (per-clip ids are not committed)")
     out_dir.mkdir(parents=True, exist_ok=True)
     ref_dir = Path(args.ref_dir) if args.ref_dir else resolve_data_file("zipformer/reference/quran_text2phoneme.json").parent
-    rows = build_rows(Path(args.qlab_dir), Path(args.manifest), ref_dir, PhonemeTokenizer(load_tokens()))
+    tok = PhonemeTokenizer(load_tokens())
+    if args.corpus:
+        rows = build_corpus_rows(Path(args.corpus), ref_dir, tok)
+    elif args.qlab_dir:
+        rows = build_rows(Path(args.qlab_dir), Path(args.manifest), ref_dir, tok)
+    else:
+        raise SystemExit("pass --qlab-dir or --corpus")
     if args.limit:
         rows = rows[: args.limit]
     print(f"rows={len(rows)} ordered_gold={sum(r['gold_ordered'] is not None for r in rows)} "
@@ -192,6 +247,8 @@ def main() -> None:
             per_clip = list(ex.map(_run, rows, chunksize=4))
         (out_dir / f"{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in per_clip), encoding="utf-8")
         summaries[name] = summarize(per_clip)
+        if "ayah_dropped" in summaries[name]:
+            print(f"[{name}] ayah_dropped: {summaries[name]['ayah_dropped']}", flush=True)
         for g in ("ordered", "text"):
             line = "  ".join(f"{s}={v['per']:.2f}(S{v['sub']:.2f}/I{v['ins']:.2f}/D{v['del']:.2f})" for s, v in summaries[name][g].items())
             print(f"[{name}] {g}: {line}", flush=True)
