@@ -272,6 +272,80 @@ def qua_fingerprint(tol_s: float = 0.06, n_controls: int = 150) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- label variants
+
+WAQF_MADD = ("ۥ", "ۦ", "ا")
+
+
+_WAQF_RE = __import__("re").compile(r"([ۥۦا])\1{3}(?!\1)([^ۥۦا]{0,2})$")
+
+
+def waqf2(ayah_ph: str) -> str:
+    """Ayah-final 4-beat madd (optionally before <=2 closing chars) -> 2 beats.
+
+    Matches the q-lab v1.1 reference gold on 406/487 shared clips vs 228 before;
+    the reference table itself keeps 4 beats on most of the rest.
+    """
+    m = _WAQF_RE.search(ayah_ph)
+    if m and not ayah_ph[: m.start()].endswith(m.group(1)):
+        return ayah_ph[: m.start()] + m.group(1) * 2 + m.group(2)
+    return ayah_ph
+
+
+@app.function(cpu=2, memory=8192, timeout=3 * 3600, **_KW)
+def relabel_source(src: str, dst: str, repeat: int = 1, relabel_json: str = "", only_relabelled: bool = False,
+                   waqf: bool = True) -> dict:
+    """Write `<dst>_cuts_fbank` from `<src>_cuts_fbank` with waqf-2 labels, optional
+    per-clip ayah relabels ({base_id: "s:a"}) and whole-manifest repeats."""
+    _boot()
+    import gzip
+
+    from shared.leak_guard import base_cut_id
+    from shared.phoneme_labels import PhonemeCorpus
+
+    corpus = PhonemeCorpus("/app/data/zipformer/quran.json")
+    relabel = json.loads(Path(relabel_json).read_text()) if relabel_json else {}
+    n = changed = mismatch = relabelled = 0
+    out = MAN / f"{dst}_cuts_fbank.jsonl.gz"
+    tmp = out.with_suffix(".tmp")
+    rows = []
+    for c in _iter_jsonl_gz(MAN / f"{src}_cuts_fbank.jsonl.gz"):
+        n += 1
+        sup = c["supervisions"][0]
+        cu = sup["custom"]
+        s, a, e = int(cu["surah"]), int(cu["ayah"]), int(cu.get("ayah_end") or cu["ayah"])
+        new_sa = relabel.get(base_cut_id(c["id"]))
+        if only_relabelled and not new_sa:
+            n -= 1
+            continue
+        if new_sa:
+            s, a = map(int, new_sa.split(":"))
+            e = a
+            cu.update(surah=s, ayah=a, ayah_end=a, relabelled=True)
+            relabelled += 1
+        try:
+            parts = [corpus.ayah_phonemes(s, x) for x in range(a, e + 1)]
+        except ValueError:
+            parts = None
+        if parts is None or (not new_sa and "".join(parts) != sup["text"]):
+            mismatch += 1
+            text = waqf2(sup["text"]) if waqf else sup["text"]  # end-only fallback
+        else:
+            text = "".join(waqf2(p) if waqf else p for p in parts)
+        changed += text != sup["text"]
+        sup["text"] = text
+        rows.append(c)
+    with gzip.open(tmp, "wt", encoding="utf-8") as f:
+        for r in range(repeat):
+            for c in rows:
+                if r:
+                    c = {**c, "id": f"{c['id']}_rep{r}", "supervisions": [{**c["supervisions"][0], "id": f"{c['supervisions'][0]['id']}_rep{r}"}]}
+                f.write(json.dumps(c, ensure_ascii=False) + "\n")
+    tmp.replace(out)
+    vol.commit()
+    return {"src": src, "dst": dst, "cuts": n * repeat, "changed": changed, "fallback": mismatch, "relabelled": relabelled}
+
+
 # --------------------------------------------------------------------------- TLOG filter
 
 _S: dict = {}
@@ -461,6 +535,14 @@ def main(action: str, model: str = "v3", shards: int = 64, write_rx: bool = Fals
         print(f"scored {tot} clips in {shards} shards; errors={sum(r['errors'] for r in res)}; "
               f"max shard secs={max(r['secs'] for r in res)}")
         print("holdout:", hold.get())
+    elif action == "relabel":
+        # --sources src:dst[:repeat][:relabel_json][:only|all][:w2|raw],...
+        specs = []
+        for spec in sources.split(","):
+            parts = spec.split(":") + [""] * 6
+            specs.append((parts[0], parts[1], int(parts[2] or 1), parts[3], parts[4] == "only", parts[5] != "raw"))
+        for r in relabel_source.starmap(specs):
+            print(r)
     elif action == "qua-fingerprint":
         print(json.dumps(qua_fingerprint.remote(), indent=2, ensure_ascii=False))
     elif action == "tlog-holdout":

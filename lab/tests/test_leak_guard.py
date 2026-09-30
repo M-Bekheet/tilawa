@@ -114,3 +114,19 @@ def test_perturbed_copies_follow_their_base_cut():
     rep = scan_cuts("tlog", cuts, twins=twins)
     assert rep.flagged_ids == {"t"}
     assert all(rep.is_flagged(c["id"]) for c in cuts)
+
+
+def test_waqf2_rewrites_only_ayah_final_four_beat_madd():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("p0", Path(__file__).parent.parent / "scripts" / "phase0_modal.py")
+    p0 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(p0)
+    assert p0.waqf2("ررَحِۦۦۦۦم") == "ررَحِۦۦم"
+    assert p0.waqf2("ثَمُۥۥۥۥدڇ") == "ثَمُۥۥدڇ"
+    assert p0.waqf2("ۦۦۦۦنَاا") == "ۦۦۦۦنَاا"
+    assert p0.waqf2("نَسۡتَعِۦۦۦۦ") == "نَسۡتَعِۦۦ"
+    assert p0.waqf2("يُوعَدُۥۥۥۥ") == "يُوعَدُۥۥ"
+    assert p0.waqf2("مَآاااااا") == "مَآاااااا"
+    assert p0.waqf2("مَااا") == "مَااا"
