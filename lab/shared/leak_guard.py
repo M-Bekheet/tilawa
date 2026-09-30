@@ -65,6 +65,14 @@ def match_heldout_reciter(*values: object) -> str | None:
     return None
 
 
+_SP_SUFFIX = re.compile(r"_sp\d+(?:\.\d+)?$")
+
+
+def base_cut_id(cut_id: str) -> str:
+    """Strip lhotse speed-perturb suffixes (`_sp0.9`, `_sp1.1`)."""
+    return _SP_SUFFIX.sub("", str(cut_id))
+
+
 def cut_identity_fields(cut: Mapping) -> list[object]:
     """Every field of a lhotse cut dict that can carry a reciter name."""
     out: list[object] = []
@@ -109,15 +117,25 @@ class LeakReport:
     twin_hits: Counter = field(default_factory=Counter)
     examples: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
     flagged_ids: set[str] = field(default_factory=set)
+    _bases: set[str] | None = field(default=None, repr=False)
+    _bases_n: int = field(default=-1, repr=False)
 
     @property
     def n_flagged(self) -> int:
         return len(self.flagged_ids)
 
+    def is_flagged(self, cut_id: str) -> bool:
+        """True for a flagged cut and every speed-perturbed copy of it."""
+        if self._bases is None or self._bases_n != len(self.flagged_ids):
+            self._bases = {base_cut_id(i) for i in self.flagged_ids}
+            self._bases_n = len(self.flagged_ids)
+        return base_cut_id(cut_id) in self._bases
+
     def to_json(self) -> dict:
         return {
             "source": self.source,
-            "policy": SOURCE_POLICY.get(self.source.split("_rx")[0], "unknown source"),
+            "policy": next((v for k, v in sorted(SOURCE_POLICY.items(), key=lambda kv: -len(kv[0]))
+                            if self.source.startswith(k)), "unknown source"),
             "n_cuts": self.n_cuts,
             "n_flagged": self.n_flagged,
             "reciter_hits": dict(self.reciter_hits),
@@ -162,6 +180,9 @@ def scan_cuts(
                 continue
             dur = float(cut.get("duration") or 0.0)
             for h in twins.get((sa[0], sa[1]), ()):
+                # perturbed copies are caught via is_flagged(base id)
+                if cid != base_cut_id(cid):
+                    break
                 if abs(dur - h.duration) <= twin_tol_s:
                     key = f"twin:{h.source}"
                     rep.twin_hits[h.source] += 1

@@ -159,13 +159,14 @@ def audit_source(source: str, write_rx: bool = False) -> dict:
     rep_only = scan_cuts(source, cuts, twins=report_only) if report_only else None
     out = rep.to_json()
     out["hours"] = round(sum(float(c.get("duration") or 0) for c in cuts) / 3600, 2)
-    out["flagged_hours"] = round(sum(float(c.get("duration") or 0) for c in cuts if c.get("id") in rep.flagged_ids) / 3600, 2)
+    out["flagged_hours"] = round(sum(float(c.get("duration") or 0) for c in cuts if rep.is_flagged(c.get("id"))) / 3600, 2)
+    out["flagged_cuts_incl_perturbed"] = sum(1 for c in cuts if rep.is_flagged(c.get("id")))
     if rep_only is not None:
         out["report_only_twins"] = dict(rep_only.twin_hits)
 
     if write_rx:
         dest = MAN / f"{source}_rx_cuts_fbank.jsonl.gz"
-        kept = [c for c in cuts if c.get("id") not in rep.flagged_ids]
+        kept = [c for c in cuts if not rep.is_flagged(c.get("id"))]
         tmp = dest.with_suffix(".tmp")
         with gzip.open(tmp, "wt", encoding="utf-8") as f:
             for c in kept:
@@ -177,6 +178,98 @@ def audit_source(source: str, write_rx: bool = False) -> dict:
     (OUT / "leak_audit" / f"{source}.json").write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     vol.commit()
     return out
+
+
+# --------------------------------------------------------------------------- QUA fingerprint
+
+
+def _fbank_sim(a_wav: str, b_wav: str, max_lag: int = 30) -> float:
+    """Best-lag mean frame cosine of mean-normalised fbank; ~1 for the same recording."""
+    import numpy as np
+    import soundfile as sf
+
+    from shared.fbank import compute_fbank
+
+    def feats(p):
+        x, sr = sf.read(p, dtype="float32", always_2d=False)
+        if x.ndim > 1:
+            x = x.mean(1)
+        if sr != 16000:
+            import torch
+            import torchaudio
+
+            x = torchaudio.functional.resample(torch.from_numpy(np.ascontiguousarray(x)), sr, 16000).numpy()
+        f = compute_fbank(x, sr=16000)
+        f = f - f.mean(0, keepdims=True)
+        return f / (np.linalg.norm(f, axis=1, keepdims=True) + 1e-8)
+
+    a, b = feats(a_wav), feats(b_wav)
+    best = -1.0
+    for lag in range(-max_lag, max_lag + 1):
+        aa, bb = (a[lag:], b) if lag >= 0 else (a, b[-lag:])
+        n = min(len(aa), len(bb))
+        if n < 50:
+            continue
+        best = max(best, float((aa[:n] * bb[:n]).sum(1).mean()))
+    return best
+
+
+@app.function(cpu=4, memory=8192, timeout=3 * 3600, **_KW)
+def qua_fingerprint(tol_s: float = 0.06, n_controls: int = 150) -> dict:
+    """Audio check of QUA clips that are (surah, ayah, duration) twins of held-out clips."""
+    _boot()
+    import random
+    from collections import Counter, defaultdict
+
+    clips = [r for r in json.loads((OUT / "qlab_clips.json").read_text(encoding="utf-8"))
+             if r["source"] in ("everyayah_heldout", "qul_alnufais")]
+    by_sa = defaultdict(list)
+    for r in clips:
+        by_sa[(r["surah"], r["ayah"])].append(r)
+    qua_by_sa = defaultdict(list)
+    for c in _iter_jsonl_gz(MAN / "qua_cuts.jsonl.gz"):
+        sup = c["supervisions"][0]
+        cu = sup["custom"]
+        key = (int(cu["surah"]), int(cu["ayah"]))
+        if key in by_sa:
+            qua_by_sa[key].append((c["id"], sup.get("speaker"), float(c["duration"]), c["recording"]["sources"][0]["source"]))
+    pairs, controls = [], []
+    rng = random.Random(0)
+    for key, hs in by_sa.items():
+        for h in hs:
+            cands = qua_by_sa.get(key, [])
+            twins = [q for q in cands if abs(q[2] - h["duration"]) <= tol_s]
+            others = [q for q in cands if abs(q[2] - h["duration"]) > 0.5]
+            pairs += [(h, q) for q in twins]
+            if others:
+                controls.append((h, rng.choice(others)))
+    rng.shuffle(controls)
+    controls = controls[:n_controls]
+    rows = []
+    for kind, lst in (("twin", pairs), ("control", controls)):
+        for h, q in lst:
+            try:
+                sim = _fbank_sim(h["wav"], q[3])
+            except Exception as e:
+                sim = None
+            rows.append({"kind": kind, "heldout_source": h["source"], "qua_speaker": q[1], "sim": sim,
+                         "dur_h": h["duration"], "dur_q": q[2]})
+    (OUT / "qua_fingerprint.json").write_text(json.dumps(rows) + "\n", encoding="utf-8")
+    vol.commit()
+    import numpy as np
+
+    def q(kind, src=None):
+        v = [r["sim"] for r in rows if r["kind"] == kind and r["sim"] is not None and (src is None or r["heldout_source"] == src)]
+        return {"n": len(v), **({p: round(float(np.quantile(v, p)), 3) for p in (0.05, 0.5, 0.95, 1.0)} if v else {})}
+
+    ctrl_max = max((r["sim"] for r in rows if r["kind"] == "control" and r["sim"] is not None), default=0.0)
+    hits = [r for r in rows if r["kind"] == "twin" and r["sim"] is not None and r["sim"] > max(0.9, ctrl_max)]
+    return {
+        "twins": q("twin"), "twins_ea": q("twin", "everyayah_heldout"), "twins_nufais": q("twin", "qul_alnufais"),
+        "controls": q("control"), "control_max": round(ctrl_max, 3),
+        "same_recording_hits": len(hits),
+        "hit_speakers": dict(Counter((r["heldout_source"], r["qua_speaker"]) for r in hits).most_common(10)),
+    }
 
 
 # --------------------------------------------------------------------------- TLOG filter
@@ -285,11 +378,12 @@ def tlog_holdout_score(model: str) -> dict:
 
 
 @app.function(cpu=2, memory=8192, timeout=3600, **_KW)
-def tlog_merge(model: str, clean_max: float = 0.10, mislabel_min: float = 0.35) -> dict:
+def tlog_merge(model: str, clean_max: float = 0.10, mislabel_min: float = 0.35, dev_frac: float = 0.02) -> dict:
     _boot()
     import gzip
     from collections import Counter
 
+    from shared.leak_guard import base_cut_id
     from shared.zipformer_score import bucket
 
     d = OUT / "tlog_filter" / model
@@ -308,8 +402,19 @@ def tlog_merge(model: str, clean_max: float = 0.10, mislabel_min: float = 0.35) 
     import numpy as np
 
     pers = np.array([r["per"] for r in ok]) if ok else np.zeros(1)
+    import hashlib
+
     clean_ids = {r["id"] for r in ok if r["bucket"] == "clean"}
+    # TLOG has no speaker ids, so this dev slice is clip-disjoint only.
+    dev_ids = {i for i in clean_ids if int(hashlib.sha1(i.encode()).hexdigest(), 16) % 1000 < int(dev_frac * 1000)}
+    clean_ids -= dev_ids
     (d / "clean_ids.txt").write_text("\n".join(sorted(clean_ids)) + "\n", encoding="utf-8")
+    (d / "dev_ids.txt").write_text("\n".join(sorted(dev_ids)) + "\n", encoding="utf-8")
+    nonclean_dev = sorted(
+        (r for r in ok if r["bucket"] != "clean"),
+        key=lambda r: hashlib.sha1(r["id"].encode()).hexdigest(),
+    )[:300]
+    (d / "dev_nonclean_ids.txt").write_text("\n".join(r["id"] for r in nonclean_dev) + "\n", encoding="utf-8")
 
     src = MAN / "tlog_rx_cuts_fbank.jsonl.gz"
     if not src.is_file():
@@ -318,7 +423,7 @@ def tlog_merge(model: str, clean_max: float = 0.10, mislabel_min: float = 0.35) 
     n_out = 0
     with gzip.open(dest, "wt", encoding="utf-8") as f:
         for c in _iter_jsonl_gz(src):
-            if c["id"] in clean_ids:
+            if base_cut_id(c["id"]) in clean_ids:
                 f.write(json.dumps(c, ensure_ascii=False) + "\n")
                 n_out += 1
     summary = {
@@ -331,6 +436,7 @@ def tlog_merge(model: str, clean_max: float = 0.10, mislabel_min: float = 0.35) 
         "per_quantiles": {q: round(float(np.quantile(pers, q)), 4) for q in (0.1, 0.25, 0.5, 0.75, 0.9, 0.95)},
         "non_clean_closer_to_other_ayah": alt_better,
         "clean_manifest": {"path": str(dest), "from": str(src), "n_cuts": n_out},
+        "dev": {"clean_clips": len(dev_ids), "nonclean_clips": len(nonclean_dev)},
     }
     (d / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     vol.commit()
@@ -355,6 +461,8 @@ def main(action: str, model: str = "v3", shards: int = 64, write_rx: bool = Fals
         print(f"scored {tot} clips in {shards} shards; errors={sum(r['errors'] for r in res)}; "
               f"max shard secs={max(r['secs'] for r in res)}")
         print("holdout:", hold.get())
+    elif action == "qua-fingerprint":
+        print(json.dumps(qua_fingerprint.remote(), indent=2, ensure_ascii=False))
     elif action == "tlog-holdout":
         print(tlog_holdout_score.remote(model))
     elif action == "tlog-merge":

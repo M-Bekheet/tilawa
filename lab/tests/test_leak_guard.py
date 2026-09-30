@@ -102,3 +102,15 @@ def test_assert_no_leaks():
     with pytest.raises(LeakError):
         assert_no_leaks([twin])
     assert_no_leaks([twin], allow_twins=True)
+
+
+def test_perturbed_copies_follow_their_base_cut():
+    from shared.leak_guard import base_cut_id
+
+    assert base_cut_id("tlog_00000064_100_10_sp0.9") == "tlog_00000064_100_10"
+    assert base_cut_id("tlog_00000064_100_10") == "tlog_00000064_100_10"
+    twins = build_twin_index([HeldoutClip("tlog_holdout", "h", 1, 2, 3.0)])
+    cuts = [_cut("t", "tlog", 1, 2, 3.0), _cut("t_sp0.9", "tlog", 1, 2, 3.0 / 0.9), _cut("t_sp1.1", "tlog", 1, 2, 3.0 / 1.1)]
+    rep = scan_cuts("tlog", cuts, twins=twins)
+    assert rep.flagged_ids == {"t"}
+    assert all(rep.is_flagged(c["id"]) for c in cuts)
