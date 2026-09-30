@@ -29,6 +29,16 @@ LAB = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(LAB))
 
 RECITERS = ("Sahl_Yassin_128kbps", "Akram_AlAlaqimy_128kbps", "Muhsin_Al_Qasim_192kbps")
+# Reciter-disjoint dev set: everyayah.com Hafs reciters outside the curated
+# 35-reciter set and outside every training manifest (incl. QUA mushaf names).
+DEV_RECITERS = (
+    "Ghamadi_40kbps",
+    "Ali_Jaber_64kbps",
+    "Fares_Abbad_64kbps",
+    "khalefa_al_tunaiji_64kbps",
+    "Karim_Mansoori_40kbps",
+    "Parhizgar_48kbps",
+)
 BASE_URL = "https://everyayah.com/data"
 SR = 16000
 GAP_S = 0.5
@@ -80,7 +90,12 @@ def main() -> None:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--per-reciter", type=int, default=20)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--reciters", default="heldout", help="heldout | dev | comma list of everyayah dirs")
+    ap.add_argument("--singles", type=int, default=0, help="also N single-ayah clips per reciter")
+    ap.add_argument("--source", default="everyayah_heldout_multi")
     args = ap.parse_args()
+    reciters = RECITERS if args.reciters == "heldout" else DEV_RECITERS if args.reciters == "dev" else tuple(
+        r.strip() for r in args.reciters.split(",") if r.strip())
 
     import soundfile as sf
 
@@ -95,7 +110,22 @@ def main() -> None:
     bridge, plain = candidate_windows(words)
     rng = random.Random(args.seed)
     samples = []
-    for reciter in RECITERS:
+    singles_pool = [k for k, w in words.items() if 3 <= w <= 30]
+    for reciter in reciters:
+        tag = reciter.split("_")[0].lower()
+        for s, a in rng.sample(singles_pool, args.singles * 2) if args.singles else []:
+            if sum(1 for x in samples if x["reciter"] == reciter and x["category"] == "single") >= args.singles:
+                break
+            pcm = fetch_pcm(reciter, s, a, cache)
+            if pcm is None or len(pcm) / SR > 20.0:
+                continue
+            sid = f"{args.source}_{tag}_{s:03d}_{a:03d}"
+            sf.write(out / f"{sid}.wav", pcm, SR, subtype="PCM_16")
+            samples.append({
+                "id": sid, "file": f"{sid}.wav", "surah": s, "ayah": a, "ayah_end": None,
+                "category": "single", "source": args.source, "reciter": reciter, "bridge": False,
+                "expected_verses": [{"surah": s, "ayah": a}],
+            })
         picks = rng.sample(bridge, args.per_reciter) + rng.sample(plain, args.per_reciter)
         kept_b = kept_p = 0
         for s, a0, a1 in picks:
@@ -109,11 +139,11 @@ def main() -> None:
             wav = np.concatenate([x for p in parts for x in (p, gap)][:-1])
             if len(wav) / SR > MAX_WINDOW_S:
                 continue
-            sid = f"heldout_multi_{reciter.split('_')[0].lower()}_{s:03d}_{a0:03d}_{a1:03d}"
+            sid = f"{args.source}_{tag}_{s:03d}_{a0:03d}_{a1:03d}"
             sf.write(out / f"{sid}.wav", wav, SR, subtype="PCM_16")
             samples.append({
                 "id": sid, "file": f"{sid}.wav", "surah": s, "ayah": a0, "ayah_end": a1,
-                "category": "multi", "source": "everyayah_heldout_multi", "reciter": reciter,
+                "category": "multi", "source": args.source, "reciter": reciter,
                 "bridge": is_bridge,
                 "expected_verses": [{"surah": s, "ayah": a} for a in range(a0, a1 + 1)],
             })
@@ -123,7 +153,7 @@ def main() -> None:
                 kept_p += 1
     (out / "manifest.json").write_text(json.dumps({"samples": samples}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {len(samples)} windows to {out} "
-          f"(bridge={sum(s['bridge'] for s in samples)}, per reciter={args.per_reciter})")
+          f"(bridge={sum(s['bridge'] for s in samples)}, singles={sum(s['category'] == 'single' for s in samples)})")
 
 
 if __name__ == "__main__":

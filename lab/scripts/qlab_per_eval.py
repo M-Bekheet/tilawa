@@ -1,5 +1,8 @@
-"""Per-clip q-lab PER for streaming Zipformer ONNX exports, two gold variants.
+"""Per-clip q-lab PER for streaming Zipformer ONNX exports, three gold variants.
 
+- ``headline`` (the promotion metric): ``text`` where Quran-Lab's table has
+  the v1.1 reference, else ordered phonemes repeated to the reference length
+  with waqf madd at 2 harakat — covers all 600 clips.
 - ``ordered``: `ordered_quran_phonemes.json[surah:ayah]` (what
   `per_onnx_wrapper.py` has always reported; surah:ayah from our
   `test_corpus_qlab` manifest, so everyayah_heldout rows below the 0.95
@@ -61,6 +64,25 @@ def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok) -> list[dict]
         except Exception:
             return None
 
+    from shared.quran_db import QuranDB
+
+    db = QuranDB(LAB / "data" / "quran.json")
+    waqf = {tok.encode(m * 4)[0]: tok.encode(m * 2)[0] for m in ("ۥ", "ۦ", "ا")}
+
+    def fallback(o, sa, e):
+        """v1.1 gold for table misses: ordered phonemes x repeats, waqf madd at 2 harakat."""
+        if sa is None or e is None:
+            return None
+        one = enc(e["aya_phoneme"] if isinstance(e, dict) else e)
+        if not one:
+            return None
+        if one[-1] in waqf:
+            one = one[:-1] + [waqf[one[-1]]]
+        v = db.get_verse(*sa)
+        ayah_len = len(qlab_norm(v.get("text_clean") or v.get("text_uthmani") or "")) if v else 0
+        k = max(1, round(len(qlab_norm(o["reference_text"])) / max(ayah_len, 1)))
+        return one * k
+
     rows = []
     for line in (qlab_dir / "benchmark.jsonl").read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -71,11 +93,11 @@ def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok) -> list[dict]
             continue
         sa = sa_by_id.get(o["id"])
         g_ord = None
-        if sa is not None:
-            e = ordered.get(f"{sa[0]}:{sa[1]}")
-            if e is not None:
-                g_ord = enc(e["aya_phoneme"] if isinstance(e, dict) else e)
+        e = ordered.get(f"{sa[0]}:{sa[1]}") if sa is not None else None
+        if e is not None:
+            g_ord = enc(e["aya_phoneme"] if isinstance(e, dict) else e)
         ph = t2p.get(qlab_norm(o["reference_text"]))
+        g_text = enc(ph) if ph is not None else None
         rows.append(
             {
                 "id": o["id"],
@@ -84,7 +106,8 @@ def build_rows(qlab_dir: Path, manifest: Path, ref_dir: Path, tok) -> list[dict]
                 "surah": sa[0] if sa else 0,
                 "ayah": sa[1] if sa else 0,
                 "gold_ordered": g_ord,
-                "gold_text": enc(ph) if ph is not None else None,
+                "gold_text": g_text,
+                "gold_headline": g_text if g_text else fallback(o, sa, e),
             }
         )
     return rows
@@ -150,8 +173,8 @@ def _run(row: dict) -> dict:
         out["bridge"] = row["bridge"]
         out["ayah_lens"] = row["ayah_lens"]
         out["ayah_del_frac"] = ayah_deleted_fraction(row["gold_ordered"], hyp, row["ayah_lens"])
-    for g in ("ordered", "text"):
-        ref = row[f"gold_{g}"]
+    for g in ("headline", "ordered", "text"):
+        ref = row.get(f"gold_{g}")
         if ref is None:
             out[g] = None
             continue
@@ -170,7 +193,7 @@ def _run(row: dict) -> dict:
 
 def summarize(per_clip: list[dict]) -> dict:
     res: dict = {}
-    for g in ("ordered", "text"):
+    for g in ("headline", "ordered", "text"):
         agg = defaultdict(lambda: defaultdict(int))
         for r in per_clip:
             s = r.get(g)
@@ -238,7 +261,8 @@ def main() -> None:
     if args.limit:
         rows = rows[: args.limit]
     print(f"rows={len(rows)} ordered_gold={sum(r['gold_ordered'] is not None for r in rows)} "
-          f"text_gold={sum(r['gold_text'] is not None for r in rows)}", flush=True)
+          f"text_gold={sum(r['gold_text'] is not None for r in rows)} "
+          f"headline_gold={sum(r.get('gold_headline') is not None for r in rows)}", flush=True)
 
     summaries = {}
     for spec in args.model:
@@ -249,7 +273,7 @@ def main() -> None:
         summaries[name] = summarize(per_clip)
         if "ayah_dropped" in summaries[name]:
             print(f"[{name}] ayah_dropped: {summaries[name]['ayah_dropped']}", flush=True)
-        for g in ("ordered", "text"):
+        for g in ("headline", "ordered", "text"):
             line = "  ".join(f"{s}={v['per']:.2f}(S{v['sub']:.2f}/I{v['ins']:.2f}/D{v['del']:.2f})" for s, v in summaries[name][g].items())
             print(f"[{name}] {g}: {line}", flush=True)
     (out_dir / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n", encoding="utf-8")
