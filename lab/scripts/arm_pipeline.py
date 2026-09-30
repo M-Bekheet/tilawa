@@ -81,12 +81,14 @@ def main() -> None:
     ap.add_argument("--arm", required=True)
     ap.add_argument("--run", required=True, help="/vol/exp/<run> with epoch-1.pt and epoch-2.pt")
     ap.add_argument("--skip-export", action="store_true")
+    ap.add_argument("--epochs", type=int, default=2)
     args = ap.parse_args()
 
-    names = [vname(args.arm, ep, a) for ep, a in VARIANTS]
+    variants = [(ep, a) for ep, a in VARIANTS if ep <= args.epochs]
+    names = [vname(args.arm, ep, a) for ep, a in variants]
     if not args.skip_export:
         with ThreadPoolExecutor(6) as ex:
-            list(ex.map(lambda v: export_and_eval(args.arm, args.run, *v), VARIANTS))
+            list(ex.map(lambda v: export_and_eval(args.arm, args.run, *v), variants))
     results = {n: gates(n, extra=False) for n in names}
     ok = [n for n in names if results[n]["gates"]["heldout_multi_zero_drops"]]
     best = min(ok or names, key=lambda n: results[n]["metrics"]["cand"]["headline"]["per"])

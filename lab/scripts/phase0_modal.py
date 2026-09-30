@@ -150,7 +150,7 @@ def audit_source(source: str, write_rx: bool = False) -> dict:
     if not path.is_file():
         return {"source": source, "missing": str(path)}
     clips = _load_qlab_clips()
-    plan = TWIN_PLAN.get(source, ())
+    plan = next((v for k, v in sorted(TWIN_PLAN.items(), key=lambda kv: -len(kv[0])) if source.startswith(k)), ())
     enforce = build_twin_index(c for c in clips if (c.source, "enforce") in plan)
     report_only = build_twin_index(c for c in clips if (c.source, "report") in plan)
 
