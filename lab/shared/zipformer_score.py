@@ -117,6 +117,45 @@ def ctc_forced_logprob(lp: np.ndarray, ref_ids, blank: int = BLANK) -> float:
     return float(tail)
 
 
+def ctc_viterbi_spans(lp: np.ndarray, ref_ids, blank: int = BLANK) -> list[tuple[int, int]] | None:
+    """Best CTC alignment of ``ref_ids``: (first, last) output frame per label. None if infeasible."""
+    T, L = lp.shape[0], len(ref_ids)
+    if L == 0 or T < L:
+        return None
+    ext = np.full(2 * L + 1, blank, dtype=np.int64)
+    ext[1::2] = np.asarray(ref_ids, dtype=np.int64)
+    S = ext.size
+    skip = np.zeros(S, dtype=bool)
+    skip[2:] = (ext[2:] != blank) & (ext[2:] != ext[:-2])
+    neg = -np.inf
+    delta = np.full(S, neg)
+    delta[0] = lp[0, ext[0]]
+    delta[1] = lp[0, ext[1]]
+    back = np.zeros((T, S), dtype=np.int8)  # 0 stay, 1 from s-1, 2 from s-2
+    for t in range(1, T):
+        a0 = delta
+        a1 = np.concatenate(([neg], delta[:-1]))
+        a2 = np.where(skip, np.concatenate(([neg, neg], delta[:-2])), neg)
+        stack = np.stack([a0, a1, a2])
+        back[t] = stack.argmax(0)
+        delta = stack.max(0) + lp[t, ext]
+    s = S - 1 if delta[S - 1] >= delta[S - 2] else S - 2
+    if not np.isfinite(delta[s]):
+        return None
+    states = np.empty(T, dtype=np.int64)
+    for t in range(T - 1, -1, -1):
+        states[t] = s
+        s -= int(back[t, s])
+    spans: list[list[int]] = [[-1, -1] for _ in range(L)]
+    for t, st in enumerate(states):
+        if st % 2 == 1:
+            k = st // 2
+            if spans[k][0] < 0:
+                spans[k][0] = t
+            spans[k][1] = t
+    return [tuple(x) for x in spans]
+
+
 def best_path_logprob(lp: np.ndarray) -> float:
     return float(lp.max(-1).sum())
 

@@ -80,3 +80,11 @@ def test_score_clip_json_roundtrip():
     s = score_clip(lp, [3, 4], clip_id="x", surah=1, ayah=2, duration=1.0).to_json()
     assert s["per"] == 0 and s["bucket"] == "clean" and s["frames"] == 5
     assert s["alt_per"] is None
+
+
+def test_viterbi_spans_follow_the_peaks():
+    from shared.zipformer_score import ctc_viterbi_spans
+
+    lp = _lp([BLANK, 3, 3, BLANK, BLANK, 4, BLANK, 4, 4, BLANK])
+    assert ctc_viterbi_spans(lp, [3, 4, 4]) == [(1, 2), (5, 5), (7, 8)]
+    assert ctc_viterbi_spans(_lp([1, 2]), [1, 2, 3, 4]) is None

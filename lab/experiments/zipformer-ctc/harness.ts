@@ -1,7 +1,7 @@
 // Node harness around the native MIT recitation engine.
 //
 // Protocol: one JSON request per stdin line, one JSON response per stdout line.
-//   {"id": 1, "pcm": "/path/to/float32le-16k.bin"}
+//   {"id": 1, "pcm": "/path/to/float32le-16k.bin", "mode": "tracking" | "correction"}
 //   -> {"id": 1, "verses": [{surah, ayah, ok, unsure, words}], "transcript": "...",
 //       "events": [...], "decodeMs": n}
 // Host loop is @tilawa/core's ZipformerSession + emission (same as the browser worker).
@@ -97,15 +97,26 @@ function ayahWordCount(host: ZipformerSession, surah: number, ayah: number): num
   }
 }
 
-async function recognize(host: ZipformerSession, pcm: Float32Array) {
+async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "tracking") {
   const t0 = performance.now();
   host.reset();
+  host.setMode(mode === "correction" ? "correction" : "tracking");
   const events: Array<Record<string, unknown>> = [];
   const cursorOrder: string[] = [];
+  // Correction issues are dismissed on sight so the rest of the clip is still
+  // decoded (the session drops audio while an issue is open).
+  const corrections: Array<Record<string, unknown>> = [];
+  let offset = 0;
 
-  const collect = (msgs: Array<{ type: string; [k: string]: unknown }>) => {
+  const collect = (msgs: Array<{ type: string; [k: string]: unknown }>): void => {
     for (const ev of msgs) {
-      if (ev.type === "word_progress") {
+      if (ev.type === "correction") {
+        const state = ev.state as { phase: string; issue: Record<string, unknown> | null };
+        if (state.phase === "error" && state.issue) {
+          corrections.push({ ...state.issue, atSeconds: offset / 16000 });
+          collect(host.correct("dismiss") as Array<{ type: string; [k: string]: unknown }>);
+        }
+      } else if (ev.type === "word_progress") {
         const key = `${ev.surah}:${ev.ayah}`;
         if (cursorOrder[cursorOrder.length - 1] !== key) cursorOrder.push(key);
       } else if (ev.type === "debug") {
@@ -116,7 +127,8 @@ async function recognize(host: ZipformerSession, pcm: Float32Array) {
   };
 
   for (let i = 0; i < pcm.length; i += CHUNK) {
-    collect(await host.feed(pcm.subarray(i, Math.min(pcm.length, i + CHUNK))));
+    offset = Math.min(pcm.length, i + CHUNK);
+    collect(await host.feed(pcm.subarray(i, offset)));
   }
   collect(await host.stop());
 
@@ -145,6 +157,7 @@ async function recognize(host: ZipformerSession, pcm: Float32Array) {
     fallback,
     all: tallies,
     cursorOrder,
+    corrections,
     transcript: host.transcript,
     events,
     state: host.engineState,
@@ -169,9 +182,9 @@ async function main(): Promise<void> {
 
   for await (const line of rl) {
     if (!line.trim()) continue;
-    let req: { id?: number; pcm: string };
+    let req: { id?: number; pcm: string; mode?: string };
     try {
-      req = JSON.parse(line) as { id?: number; pcm: string };
+      req = JSON.parse(line) as { id?: number; pcm: string; mode?: string };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       process.stdout.write(JSON.stringify({ error: `bad json: ${msg}` }) + "\n");
@@ -180,7 +193,7 @@ async function main(): Promise<void> {
     try {
       const buf = readFileSync(req.pcm);
       const pcm = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-      const res = await recognize(host, pcm);
+      const res = await recognize(host, pcm, req.mode);
       process.stdout.write(JSON.stringify({ id: req.id, ...res }) + "\n");
     } catch (e) {
       process.stdout.write(JSON.stringify({
