@@ -148,6 +148,22 @@ def test_confidence_ranks_a_clean_whole_word_edit_highest():
     assert glued < high
 
 
+def test_passage_slip_maps_onto_the_ayah_of_its_first_word():
+    # Ayah 1:1 is ب ت, ayah 1:2 is م ل. The hypothesis drops م.
+    slips = loc.locate_clip(["ب", "ت", "م", "ل"], [B, T, L], TOKENS)
+    assert len(slips) == 1 and slips[0].word_index == 2
+    index = [(1, 1, 0), (1, 1, 1), (1, 2, 0), (1, 2, 1)]
+    key, local = loc.ayah_local_slip(slips[0], index)
+    assert key == (1, 2)
+    assert (local.word_index, local.kind) == (0, "omitted")
+    # A slip that starts in ayah 1 stays there, even if the span is passage-indexed.
+    first = loc.locate_clip(["ب", "ت", "م", "ل"], [T, M, L], TOKENS)
+    assert first and first[0].word_index == 0
+    key, local = loc.ayah_local_slip(first[0], index)
+    assert key == (1, 1)
+    assert local.word_index == 0
+
+
 def test_agreement_requires_the_same_word_index():
     left = _slips([[B, T], [M, L], [N]], [B, T, N])
     right = _slips([[B, T], [M, L], [N]], [B, T, M, L, R])

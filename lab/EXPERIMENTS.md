@@ -526,6 +526,103 @@ a0w int8 − fp32: headline −0.01, madd-free −0.01, insertions +0.08 / −0.
 
 Full 6-variant rows per arm (raw ep1/ep2 + α 0.5/0.7) are in the per-arm reports. Pattern across every arm: α 0.7 and raw epochs score lower headline but fail the insertion floor (they learn to not transcribe deviations); α 0.5 at epoch 1 is the only setting that passes everything each time.
 
+## Correction eval on real recordings (baseline)
+
+2026-10-01. Correction mode of the shipped recitation engine (`recognize(..., mode="correction")`, issues dismissed on sight) over real audio. One CPU pass per model (RTF 0.052 shipped int8, 0.068 v3 fp32, 0.062 a0w fp32). Engine rules were not changed. Scorer: `lab/scripts/correction_eval.py`.
+
+Real slips only. No audio was spliced, deleted, duplicated, swapped, or resynthesized, and no acted-mistake set was used. Help `use=slip` is a reciter's self-reported accidental slip at an unknown spot. TLOG rows are an unverified recall set from `locate_slips.py` (no one has listened; substitutions in particular may be a shared model mis-hear). Per-clip rows stay in `/tmp/correction_eval/`.
+
+A slip counts as caught when any issue is on the same surah:ayah and `word` is within ±1 of the located word. Kind-correct: omitted → `possible_omission`, substituted → `possible_substitution`, repeated/restarted → any word kind or `unclear_ayah`. Exact-word is distance 0. Latency is the earliest catching issue's `atSeconds` minus the slip span start (median over catches that have a span).
+
+### Data
+
+| set | clips | minutes | what it is |
+|---|---:|---:|---|
+| Help clean (dev+test) | 266 | 48.79 | `use=clean`. Dev 105 / 19.82 min, test 161 / 28.98 min |
+| Help slip | 10 | 3.38 | Self-reported slips. 8 single-ayah, 2 multi-ayah |
+| Help slips located | 5 clips, 10 slips | — | v3 and a0w agree on a review-grade word. 9 substituted, 1 repeated. Both multi-ayah clips stayed unlocated |
+| TLOG clean dev | 267 | 33.68 | `phase0/tlog_filter/v3/dev_ids.txt` (PER ≤ 0.10) |
+| v1 | 53 | 16.95 | `test_corpus` manifest |
+| TLOG candidates | 1,119 clips / 1,519 slips | 202.72 | Every omitted (1,027), repeated (74), restarted (18), plus 400/2,795 substituted rows (seed 0). Unverified |
+
+Help locations use the same review bar as the TLOG file (`is_review_slip`: whole-word edit, repeat, restart, or a partial edit of ≥2 tokens covering at least half the word) and keep a word only when v3 and a0w both mark it. Multi-ayah takes are aligned as one passage (`ayah_local_slip`) and the word index is mapped back into its ayah. Both 2-ayah clips produced a review slip on at least one model; the models did not share a word, so those slips are unlocated and are not in the recall denominator. Three single-ayah clips produced no review slip on either model.
+
+### False flags per clean minute
+
+Primary guardrail. Parentheses are issue count and clips with any flag.
+
+| model | help clean | TLOG clean dev | v1 |
+|---|---|---|---|
+| shipped interp-gentle-a0.5 int8 | 0.020 (1, 1/266) | 0.119 (4, 4/267) | 0 (0/53) |
+| v3 fp32 | 0.041 (2, 2/266) | 0.119 (4, 4/267) | 0.059 (1, 1/53) |
+| a0w-ep1-a0.5 fp32 | 0.061 (3, 3/266) | 0.089 (3, 3/267) | 0 (0/53) |
+
+Shipped help-clean's only issue is `unclear_ayah`. Shipped v1 is clean. TLOG-dev flags are mostly `possible_vowel`.
+
+### Recall
+
+Help, on the 10 located slips (unverified word spot; the clip itself is a real self-report):
+
+| model | recall | kind-correct | exact word | median latency |
+|---|---|---|---|---|
+| shipped | 1/10 | 0/10 | 1/10 | 5.12 s |
+| v3 | 2/10 | 1/10 | 1/10 | 4.56 s |
+| a0w | 1/10 | 0/10 | 1/10 | 5.12 s |
+
+The shipped and a0w catch is a `possible_vowel` on a partial substitution (exact word, wrong kind). v3's kind-correct hit is `possible_substitution` on one of those nine. The one repeated slip was missed by all three. No omitted or restarted slip was located in this set.
+
+TLOG candidates, unverified, by kind. Cells are caught/n.
+
+| model | omitted (1027) | repeated (74) | restarted (18) | substituted sample (400) | all (1519) |
+|---|---|---|---|---|---|
+| shipped recall | 2 | 1 | 0 | 4 | 7 |
+| shipped kind-correct | 2 | 1 | 0 | 0 | 3 |
+| shipped exact | 2 | 0 | 0 | 2 | 4 |
+| shipped median latency | 3.48 s | 2.20 s | — | 5.09 s | 4.48 s |
+| v3 recall | 2 | 1 | 0 | 7 | 10 |
+| v3 kind-correct | 2 | 1 | 0 | 3 | 6 |
+| v3 exact | 2 | 0 | 0 | 3 | 5 |
+| v3 median latency | 3.48 s | 2.20 s | — | 2.88 s | 2.78 s |
+| a0w recall | 3 | 2 | 1 | 6 | 12 |
+| a0w kind-correct | 2 | 2 | 1 | 3 | 8 |
+| a0w exact | 3 | 1 | 0 | 2 | 6 |
+| a0w median latency | 2.88 s | 3.00 s | 3.92 s | 2.62 s | 2.76 s |
+
+811/1,519 TLOG slips are the first or last word of the ayah. Every model caught 0 of those. All catches are among the 708 middle words (shipped 7/708, v3 10/708, a0w 12/708).
+
+### Help clean, false flags per minute by slice
+
+Same minutes for every model. Cell is flags/min (issues).
+
+| slice | value | clips | min | shipped | v3 | a0w |
+|---|---|---:|---:|---:|---:|---:|
+| device | phone | 196 | 36.48 | 0.027 (1) | 0.055 (2) | 0.055 (2) |
+| device | laptop | 55 | 8.93 | 0 | 0 | 0 |
+| device | desktop | 6 | 1.66 | 0 | 0 | 0 |
+| device | tablet | 6 | 1.29 | 0 | 0 | 0.777 (1) |
+| device | headset | 3 | 0.43 | 0 | 0 | 0 |
+| gender | unknown | 134 | 25.44 | 0.039 (1) | 0.039 (1) | 0.118 (3) |
+| gender | male | 128 | 22.45 | 0 | 0.045 (1) | 0 |
+| gender | female | 4 | 0.91 | 0 | 0 | 0 |
+| level | unknown | 134 | 25.44 | 0.039 (1) | 0.039 (1) | 0.118 (3) |
+| level | intermediate | 80 | 15.07 | 0 | 0 | 0 |
+| level | hafiz | 25 | 4.31 | 0 | 0 | 0 |
+| level | beginner | 27 | 3.98 | 0 | 0.251 (1) | 0 |
+| ayah | single | 223 | 36.15 | 0 | 0.028 (1) | 0.055 (2) |
+| ayah | multi | 43 | 12.65 | 0.079 (1) | 0.079 (1) | 0.079 (1) |
+| split | dev | 105 | 19.82 | 0 | 0.050 (1) | 0 |
+| split | test | 161 | 28.98 | 0.035 (1) | 0.035 (1) | 0.104 (3) |
+
+Gender and level are missing on 134 help-clean clips (recorded as unknown). Shipped's single help-clean flag is on a multi-ayah test clip from a phone.
+
+### Why recall stays low
+
+The word rules in `packages/core/src/recitation/correction.ts` are written for a gross mismatch between two clearly heard words. That is what the numbers show.
+
+1. **Both neighbours must already be clear, so edges never flag.** `possibleWordIssues` returns nothing unless the previous and next word are the same ayah and `clearWord`: `ok`, distance ≤ 0.15, margin ≥ 0.55, heardRatio in [0.75, 1.3]. The comment on that gate is explicit: do not infer leading or trailing omissions. 811/1,519 TLOG slips sit on word 0 or the last word, and all three models caught none of them.
+2. **Omission and substitution require a gross hole, not a partial edit.** Omission fires only for `state === 'skipped'` and `heardRatio === 0`. Substitution fires only for `wrong` with distance ≥ 0.6, margin ≥ 0.65, and heardRatio in [0.5, 1.5]. On the shipped model, partial omissions were 0/259 and whole-word omissions 2/768; kind-correct substitutions were 0/400. Of the 49 issues on the shipped candidate run, 41 are `possible_vowel`, which needs the consonant skeleton to already match (distance ≤ 0.15) plus a sure vowel error. A partial substitution the aligner marks is often inside that vowel gate and outside the substitution gate, so it can count as a catch and still miss kind-correct.
+3. **Nothing in `possibleWordIssues` represents a repeat or a restart, and a candidate must hold for 12 frames.** Repeated and restarted slips are kind-correct only if some other word kind or `unclear_ayah` happens to land on them. `unclear_ayah` is an ayah-level kind: the session raises it when ayah N+2 is matched immediately after N, which a restart inside one ayah does not do. Shipped recall is 1/74 repeated and 0/18 restarted. `CorrectionController.observe` also waits until the same kind has persisted for 12 frames before it raises, then a dismiss suppresses that `wordIndex` for the rest of the clip. Median latency on the catches that exist is 2–5 s after the slip span start.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.

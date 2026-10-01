@@ -501,6 +501,43 @@ def locate_clip(word_phonemes: list[str], hyp_ids: list[int], tokens: list[str])
     return locate_word_slips(word_ids, hyp_ids, tokens)
 
 
+def ayah_local_slip(
+    slip: WordSlip,
+    index_map: list[tuple[int, int, int]],
+) -> tuple[tuple[int, int], WordSlip] | None:
+    """Move a passage-level slip onto the ayah that contains its first word.
+
+    ``locate_clip`` indexes words in one flat sequence. For a multi-ayah take,
+    ``index_map[i]`` is ``(surah, ayah, word_index)`` of passage word ``i``.
+    The returned slip's ``word_index`` is the index inside that ayah. A span
+    that crosses into the next ayah is clipped at the boundary. ``hyp_indexes``
+    still index the clip hypothesis (needed for time spans).
+    """
+    if slip.word_index < 0 or slip.word_index >= len(index_map):
+        return None
+    surah, ayah, word = index_map[slip.word_index]
+    end = slip.word_index
+    limit = max(slip.word_end, slip.word_index + 1)
+    while end < limit and end < len(index_map):
+        s, a, _w = index_map[end]
+        if (s, a) != (surah, ayah):
+            break
+        end += 1
+    if end == slip.word_index:
+        return None
+    local_end = index_map[end - 1][2] + 1
+    local = WordSlip(
+        word_index=word,
+        kind=slip.kind,
+        extent=slip.extent,
+        ops=list(slip.ops),
+        hyp_indexes=list(slip.hyp_indexes),
+        word_end=local_end,
+        n_ref_tokens=slip.n_ref_tokens,
+    )
+    return (surah, ayah), local
+
+
 def span_seconds(
     token_frames: list[tuple[int, int] | None],
     indexes: list[int],
