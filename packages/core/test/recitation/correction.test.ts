@@ -126,6 +126,26 @@ describe('conservative word correction', () => {
     expect(c.state).toMatchObject({ phase: 'idle', outcome: 'dismissed' });
     expect(c.raise(issue, cursor)).toBe(false);
   });
+  it('settle() checks the words observe() never saw in full context', () => {
+    // The skipped word is second to last: observe() never saw the word after next settled.
+    const tail = [word(0), word(1), word(2, { state: 'skipped', distance: 1, heardRatio: 0, margin: 0 }), word(3)];
+    const live = tail.map((v, i) => i === 3 ? { ...v, state: 'pending' as const } : v);
+    const c = new CorrectionController(); c.setMode('correction');
+    c.observe(live, cursor, 10); c.observe(live, cursor, 22); expect(c.state.phase).toBe('idle');
+    expect(c.settle(tail, cursor)).toBe(true);
+    expect(c.state).toMatchObject({ phase: 'error', issue: { word: 2, kind: 'possible_omission' }, resume: cursor });
+    // A word observe() already judged with settled context had its chance.
+    const d = new CorrectionController(); d.setMode('correction');
+    d.observe([word(0, { margin: .2 }), ...omission.slice(1)], cursor, 10);
+    expect(d.settle(omission, cursor)).toBe(false);
+    // Vowel flags stay observe-only; settle can be turned off; tracking mode never settles.
+    const e = new CorrectionController(); e.setMode('correction');
+    expect(e.settle([word(0), word(1), { ...vowel[1]!, word: 2, wordIndex: 102 }, word(3)], cursor)).toBe(false);
+    const f = new CorrectionController(); f.setMode('correction');
+    f.thresholds = { ...f.thresholds, settle: false };
+    expect(f.settle(tail, cursor)).toBe(false);
+    expect(new CorrectionController().settle(tail, cursor)).toBe(false);
+  });
   it('closing or reviewing later never claims success', () => {
     for (const action of ['close', 'review_later'] as const) {
       const c = flag(); c.act('retry'); c.act(action);

@@ -31,9 +31,12 @@ export interface CorrectionThresholds {
   gopFlag?: number;
   /** A neighbour anchors a GOP flag when it is clear, or fits with GOP at or above this. */
   gopAnchor?: number;
+  /** Check words `observe()` never judged in full context when the tracker is
+   * dropped (stop, surah completed, silent idle). */
+  settle?: boolean;
 }
 export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
-  vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1, gopFlag: -3, gopAnchor: -2,
+  vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1, gopFlag: -3, gopAnchor: -2, settle: true,
 };
 const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>
   ({ ...DEFAULT_CORRECTION_THRESHOLDS, ...th }) as Required<CorrectionThresholds>;
@@ -117,10 +120,14 @@ export class CorrectionController {
   private suppressed = new Set<number>();
   private candidates = new Map<number, { kind: CorrectionIssue['kind']; frame: number }>();
   private retryFrame: number | null = null;
+  /** Words observe() has judged with their context settled (both neighbours
+   * and the word after next) since the last settle(). */
+  private seenSettled = new Set<number>();
 
   reset(): void {
     this.state = { phase: 'idle', issue: null, resume: null, attempt: this.state.attempt + 1, outcome: null };
     this.suppressed.clear();
+    this.seenSettled.clear();
     this.clearEvidence();
   }
   clearEvidence(): void { this.candidates.clear(); this.retryFrame = null; }
@@ -146,6 +153,10 @@ export class CorrectionController {
       return true;
     }
     if (this.state.phase !== 'idle') return false;
+    const settledAt = new Set(verdicts.filter(v => v.state !== 'pending').map(v => v.wordIndex));
+    for (const w of settledAt) {
+      if (settledAt.has(w - 1) && settledAt.has(w + 1) && settledAt.has(w + 2)) this.seenSettled.add(w);
+    }
     const issues = possibleWordIssues(verdicts, th).filter(v => !this.suppressed.has(v.wordIndex));
     const live = new Set(issues.map(v => v.wordIndex));
     for (const key of this.candidates.keys()) if (!live.has(key)) this.candidates.delete(key);
@@ -160,6 +171,26 @@ export class CorrectionController {
       }
     }
     return false;
+  }
+
+  /** Final word-level check on settled verdicts when the tracker is about to
+   * be dropped (end of audio, surah completed, silent idle). Settled verdicts
+   * no longer change, so no persistence is required. Without it, an error in
+   * the last words before a stop is never judged with its right neighbour.
+   * Only words observe() never judged in full context are checked, and vowel
+   * flags stay observe-only. Raises the earliest issue. */
+  settle(verdicts: readonly WordVerdict[], cursor: RecitationPosition): boolean {
+    const th = withDefaults(this.thresholds);
+    const seen = this.seenSettled;
+    this.seenSettled = new Set();
+    if (this.mode !== 'correction' || this.state.phase !== 'idle' || !th.settle) return false;
+    const issue = possibleWordIssues(verdicts, th)
+      .filter(v => !this.suppressed.has(v.wordIndex) && !seen.has(v.wordIndex) && v.kind !== 'possible_vowel')
+      .sort((a, b) => a.wordIndex - b.wordIndex)[0];
+    if (!issue) return false;
+    this.state = { phase: 'error', issue, resume: { ...cursor }, attempt: this.state.attempt, outcome: null };
+    this.clearEvidence();
+    return true;
   }
 
   /** Raise an issue the session inferred outside the word-level rules (the

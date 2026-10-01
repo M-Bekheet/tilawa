@@ -392,6 +392,7 @@ export class ZipformerSession {
     if (flushed.length) {
       out.push(...this.consumeTokens(flushed));
     }
+    out.push(...this.settleCorrection());
 
     this.dumpTallies();
     const live = newlyEligibleAyahs(this.accumulated, this.emitted, this.minWordFraction);
@@ -589,6 +590,7 @@ export class ZipformerSession {
       }
       case "idle":
       case "completed": {
+        if (ev.type === "completed" || ev.reason === "silent") out.push(...this.settleCorrection());
         this.correction.clearEvidence();
         this.lastMatch = null;
         this.dumpTallies();
@@ -610,6 +612,15 @@ export class ZipformerSession {
       });
     }
     return out;
+  }
+
+  /** Correction mode: last word-level check before the main tracker is dropped. */
+  private settleCorrection(): WorkerOutbound[] {
+    const tracker = this.engine.tracer && this.engine.tracker;
+    if (this.practiceEngine || !tracker || tracker.lost || !this.lastCursor) return [];
+    if (!this.correction.settle(this.engine.tracer!.verdicts(true), this.lastCursor)) return [];
+    this.dumpTallies();
+    return [this.correctionMessage()];
   }
 
   private wordProgress(): WorkerOutbound {
