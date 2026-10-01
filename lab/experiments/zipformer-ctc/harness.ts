@@ -19,6 +19,7 @@ import {
   ZipformerSession,
   type BridgedAyahTally,
   type EngineConfig,
+  type WordVerdict,
   type ZipformerIo,
 } from "@tilawa/core";
 
@@ -59,6 +60,19 @@ const GAP_MAX_WORDS = Number(process.env.ZIPFORMER_GAP_MAX_WORDS ?? 3);
 const MODE = process.env.ZIPFORMER_MODE ?? "recognize";
 const FALLBACK = process.env.ZIPFORMER_FALLBACK !== "0";
 const FALLBACK_MAX_DISTANCE = Number(process.env.ZIPFORMER_FALLBACK_MAX_DISTANCE ?? 0.5);
+// ZIPFORMER_TRACE=1: record every correction-controller input and never flag,
+// so the decode is the undisturbed verdict stream (replay_correction.ts).
+const TRACE = process.env.ZIPFORMER_TRACE === "1";
+// JSON CorrectionThresholds overrides for correction mode.
+const THRESHOLDS = process.env.ZIPFORMER_CORRECTION_THRESHOLDS
+  ? (JSON.parse(process.env.ZIPFORMER_CORRECTION_THRESHOLDS) as Record<string, number | boolean>)
+  : null;
+const STATES = ["ok", "unsure", "wrong", "skipped", "pending"];
+const r3 = (x: number | undefined): number | null => (x === undefined || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
+const packVerdict = (v: WordVerdict): unknown[] => [
+  v.surah, v.ayah, v.word, v.wordIndex, STATES.indexOf(v.state), r3(v.distance), r3(v.heardRatio), r3(v.margin),
+  v.vowelErrors, r3(v.vowelMargin), r3(v.gop), r3(v.gopTwice), r3(v.gopNone), r3(v.repGain), r3(v.pairGop),
+];
 
 const require = createRequire(path.join(ORT_DIR, "/"));
 const ort = require("onnxruntime-node");
@@ -107,6 +121,47 @@ async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "trac
   // decoded (the session drops audio while an issue is open).
   const corrections: Array<Record<string, unknown>> = [];
   let offset = 0;
+  const trace: unknown[] = [];
+  const ctl = host.correction;
+  ctl.thresholds = { ...ctl.thresholds, ...(THRESHOLDS ?? {}) };
+  const own = ctl as unknown as Record<string, unknown>;
+  for (const k of ["observe", "clearEvidence", "raise", "settle"]) delete own[k];
+  delete (host as unknown as Record<string, unknown>).dumpTallies;
+  if (TRACE) {
+    // Session internals, read only: the tracker trail gives backward jumps,
+    // and every tally dump is a settled snapshot of the tracker being dropped.
+    const internals = host as unknown as {
+      engine: { tracker: { trail: number[]; heard: Array<{ frame: number }>; firstWord: number; localWordOfPos: Int32Array; len: number } | null; tracer: { verdicts(settled: boolean): WordVerdict[] } | null };
+      dumpTallies: () => void;
+      decoder: { framesDecoded: number };
+    };
+    const jumps = (): number[][] => {
+      const tr = internals.engine.tracker;
+      if (!tr) return [];
+      const out: number[][] = [];
+      const word = (cell: number) => tr.firstWord + (cell <= 0 ? 0 : tr.localWordOfPos[Math.min(cell, tr.len) - 1]!);
+      for (let g = 1; g < tr.trail.length; g++) {
+        if (tr.trail[g]! < tr.trail[g - 1]!) out.push([tr.heard[g]!.frame, word(tr.trail[g - 1]!), word(tr.trail[g]! + 1)]);
+      }
+      return out;
+    };
+    own.observe = (verdicts: WordVerdict[], cursor: object, frame: number) => {
+      trace.push({ op: "observe", t: offset / 16000, frame, cursor: { ...cursor }, v: verdicts.map(packVerdict), j: jumps() });
+      return false;
+    };
+    own.clearEvidence = () => { trace.push({ op: "clear", t: offset / 16000 }); };
+    own.raise = (issue: object) => { trace.push({ op: "raise", t: offset / 16000, issue: { ...issue } }); return false; };
+    own.settle = () => false;
+    const dump = internals.dumpTallies;
+    internals.dumpTallies = function () {
+      const tracer = internals.engine.tracer;
+      if (tracer) {
+        trace.push({ op: "settle", t: offset / 16000, frame: internals.decoder.framesDecoded,
+          v: tracer.verdicts(true).map(packVerdict), j: jumps() });
+      }
+      return dump.call(host);
+    };
+  }
 
   const collect = (msgs: Array<{ type: string; [k: string]: unknown }>): void => {
     for (const ev of msgs) {
@@ -158,6 +213,7 @@ async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "trac
     all: tallies,
     cursorOrder,
     corrections,
+    ...(TRACE ? { trace } : {}),
     transcript: host.transcript,
     events,
     state: host.engineState,

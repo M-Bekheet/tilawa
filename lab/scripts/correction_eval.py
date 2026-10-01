@@ -30,6 +30,7 @@ recall set. Substituted TLOG slips are a seeded sample of 400 rows
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -44,14 +45,37 @@ LAB = Path(__file__).resolve().parent.parent
 if str(LAB) not in sys.path:
     sys.path.insert(0, str(LAB))
 
-WORD_KINDS = frozenset({"possible_omission", "possible_substitution", "possible_vowel"})
+WORD_KINDS = frozenset({"possible_omission", "possible_substitution", "possible_vowel", "possible_repetition"})
 KIND_CORRECT = {
     "omitted": frozenset({"possible_omission"}),
     "substituted": frozenset({"possible_substitution"}),
     "repeated": WORD_KINDS | frozenset({"unclear_ayah"}),
     "restarted": WORD_KINDS | frozenset({"unclear_ayah"}),
 }
+# Tuning vs held-out partition. Help: the manifest's speaker-disjoint split.
+# TLOG candidates: by hash of the clip id. v1 is held-out only; TLOG clean dev
+# is the false-flag guard in both.
+PARTS = ("all", "tune", "held")
+
+
+def tlog_half(clip_id: str) -> str:
+    return "tune" if int(hashlib.sha1(str(clip_id).encode()).hexdigest()[:8], 16) % 2 == 0 else "held"
+
+
+def in_part(set_name: str, clip: dict, part: str) -> bool:
+    if part == "all":
+        return True
+    if set_name in ("help-clean", "help-slip"):
+        return clip.get("split") == ("dev" if part == "tune" else "test")
+    if set_name == "tlog-candidates":
+        return tlog_half(clip["id"]) == part
+    if set_name == "v1":
+        return part == "held"
+    return True
 WORD_TOLERANCE = 1
+# A TLOG slip whose span starts or ends this close to the clip edge is most
+# likely a segmentation cut (word clipped by the ayah segmenter), not a slip.
+EDGE_S = 0.3
 SUB_SAMPLE = 400
 SUB_SEED = 0
 SLICE_FIELDS = ("device", "gender", "level", "ayah_span", "split")
@@ -225,6 +249,19 @@ def issue_kind_counts(clips: list[dict]) -> dict:
     return dict(sorted(counts.items()))
 
 
+def interior_slips(slips: list[dict], durations: dict[str, float], edge_s: float = EDGE_S) -> list[dict]:
+    """Slips whose span sits at least ``edge_s`` inside both clip edges."""
+    out = []
+    for slip in slips:
+        span = slip.get("span_s")
+        dur = durations.get(str(slip.get("id")))
+        if not span or len(span) != 2 or not dur:
+            continue
+        if float(span[0]) >= edge_s and float(dur) - float(span[1]) >= edge_s:
+            out.append(slip)
+    return out
+
+
 def select_tlog_slips(rows: list[dict], n_sub: int = SUB_SAMPLE, seed: int = SUB_SEED) -> list[dict]:
     """Every omitted, repeated, and restarted row, plus ``n_sub`` substituted rows.
 
@@ -355,6 +392,27 @@ def _recognize():
 
 def _done_ids(path: Path) -> set[str]:
     return {str(row["id"]) for row in load_jsonl(path)}
+
+
+def trace_clips(recognize, clips: list[dict], dest: Path) -> None:
+    """Record correction-controller inputs (harness ZIPFORMER_TRACE=1) per clip."""
+    done = _done_ids(dest)
+    pending = [clip for clip in clips if clip["id"] not in done]
+    for n, clip in enumerate(pending, start=1):
+        t0 = time.time()
+        row = {"id": clip["id"], "duration_s": clip.get("duration_s"), "split": clip.get("split")}
+        if not Path(clip["audio"]).is_file():
+            row["error"] = "missing audio"
+        else:
+            try:
+                if not row["duration_s"]:
+                    row["duration_s"] = round(audio_duration_s(clip["audio"]), 3)
+                res = recognize(clip["audio"], mode="correction")
+                row["trace"] = res.get("trace") or []
+            except Exception as exc:
+                row["error"] = f"{type(exc).__name__}: {exc}"[:400]
+        append_jsonl(dest, row)
+        print(f"{dest.name} {n}/{len(pending)} {clip['id']} ops={len(row.get('trace') or [])} {time.time() - t0:.1f}s", flush=True)
 
 
 def run_clips(recognize, clips: list[dict], dest: Path, limit: int = 0) -> None:
@@ -592,11 +650,12 @@ def _rtf(rows: list[dict]) -> float | None:
     return num / den
 
 
-def build_report(tag_dir: Path, located: list[dict], tlog_slips: list[dict], n_words_of) -> dict:
+def build_report(tag_dir: Path, located: list[dict], tlog_slips: list[dict], n_words_of, part: str = "all") -> dict:
     sets = {}
     raw = {}
+    tlog_slips = [slip for slip in tlog_slips if in_part("tlog-candidates", slip, part)]
     for name in ("help-clean", "help-slip", "v1", "tlog-dev", "tlog-candidates"):
-        rows = load_jsonl(tag_dir / f"{name}.jsonl")
+        rows = [row for row in load_jsonl(tag_dir / f"{name}.jsonl") if in_part(name, row, part)]
         good, errors = _ok(rows)
         raw[name] = good
         sets[name] = {
@@ -611,11 +670,15 @@ def build_report(tag_dir: Path, located: list[dict], tlog_slips: list[dict], n_w
     tlog_map = _issues_map(raw["tlog-candidates"])
     return {
         "tag": tag_dir.name,
+        "part": part,
         "sets": sets,
         "slices": slice_false_flags(raw["help-clean"]),
         "help_slips": score_slips(located, help_map),
         "help_position": position_recall(located, help_map, n_words_of),
         "tlog_candidates": score_slips(tlog_slips, tlog_map),
+        "tlog_interior": score_slips(
+            interior_slips(tlog_slips, {str(r["id"]): r.get("duration_s") for r in raw["tlog-candidates"]}), tlog_map
+        ),
         "tlog_position": position_recall(tlog_slips, tlog_map, n_words_of),
     }
 
@@ -663,7 +726,7 @@ def render_markdown(reports: list[dict], locate_summary: dict) -> str:
     lines.append("| model | set | kind | recall |")
     lines.append("|---|---|---|---|")
     for report in reports:
-        for label, key in (("help slips", "help_slips"), ("tlog", "tlog_candidates")):
+        for label, key in (("help slips", "help_slips"), ("tlog", "tlog_candidates"), ("tlog interior", "tlog_interior")):
             block = report[key]
             lines.append(f"| {report['tag']} | {label} | all | {_fmt_recall(block['all'])} |")
             for kind, row in block["by_kind"].items():
@@ -775,6 +838,8 @@ def main(argv: list[str] | None = None) -> None:
     run_p.add_argument("--candidates", type=Path, default=Path("/tmp/tlog_slips/tlog_candidates.jsonl"))
     run_p.add_argument("--limit", type=int, default=0)
     run_p.add_argument("--fetch", action="store_true")
+    run_p.add_argument("--part", choices=PARTS, default="all")
+    run_p.add_argument("--trace", action="store_true", help="record controller inputs instead of issues")
 
     rep_p = sub.add_parser("report")
     rep_p.add_argument("--tags", default="shipped,v3,a0w")
@@ -782,12 +847,16 @@ def main(argv: list[str] | None = None) -> None:
     rep_p.add_argument("--located", type=Path, default=DEFAULT_OUT / "help_located.jsonl")
     rep_p.add_argument("--candidates", type=Path, default=Path("/tmp/tlog_slips/tlog_candidates.jsonl"))
     rep_p.add_argument("--locate-summary", type=Path, default=DEFAULT_OUT / "help_locate_summary.json")
+    rep_p.add_argument("--part", choices=PARTS, default="all")
+    rep_p.add_argument("--name", default="report", help="output basename under --out-dir")
 
     args = parser.parse_args(argv)
     if args.cmd == "locate-help":
         locate_help(args.manifest, args.audio_dir, args.v3, args.a0w, args.out, args.threads)
         return
     if args.cmd == "run":
+        if args.trace:
+            os.environ["ZIPFORMER_TRACE"] = "1"
         _prepare_env(args.model)
         recognize = _recognize()
         want = [part.strip() for part in args.sets.split(",") if part.strip()]
@@ -811,19 +880,22 @@ def main(argv: list[str] | None = None) -> None:
                 ids.extend(clip["id"] for clip in builders["tlog-candidates"]())
             _fetch_missing(sorted(set(ids)), args.tlog_audio)
         for name in want:
-            clips = builders[name]()
-            print(f"run {args.tag} {name} clips={len(clips)}", flush=True)
-            run_clips(recognize, clips, tag_dir / f"{name}.jsonl", args.limit)
+            clips = [clip for clip in builders[name]() if in_part(name, clip, args.part)]
+            print(f"run {args.tag} {name} part={args.part} clips={len(clips)}", flush=True)
+            if args.trace:
+                trace_clips(recognize, clips, tag_dir / f"{name}.jsonl")
+            else:
+                run_clips(recognize, clips, tag_dir / f"{name}.jsonl", args.limit)
         return
     tags = [part.strip() for part in args.tags.split(",") if part.strip()]
     located = load_jsonl(args.located)
     tlog_slips = select_tlog_slips(load_jsonl(args.candidates)) if args.candidates.is_file() else []
     lookup = _n_words_lookup()
-    reports = [build_report(args.out_dir / tag, located, tlog_slips, lookup) for tag in tags]
+    reports = [build_report(args.out_dir / tag, located, tlog_slips, lookup, args.part) for tag in tags]
     locate_summary = load_json(args.locate_summary) if args.locate_summary.is_file() else {}
     text = render_markdown(reports, locate_summary)
-    (args.out_dir / "report.md").write_text(text, encoding="utf-8")
-    (args.out_dir / "report.json").write_text(json.dumps(reports, indent=2) + "\n", encoding="utf-8")
+    (args.out_dir / f"{args.name}.md").write_text(text, encoding="utf-8")
+    (args.out_dir / f"{args.name}.json").write_text(json.dumps(reports, indent=2) + "\n", encoding="utf-8")
     print(text, flush=True)
 
 
