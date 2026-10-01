@@ -6,7 +6,7 @@
 //
 //   tsx --tsconfig ../web/frontend/tsconfig.json experiments/zipformer-ctc/replay_correction.ts \
 //     --in /tmp/correction_eval/traces/shipped --out /tmp/correction_eval/replay/x/shipped \
-//     [--thresholds '{"edgeWords": false}']
+//     [--thresholds '{"gopFlag": -1e309, "settle": false}']
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
