@@ -3,6 +3,8 @@ import { alignGlobal, normalizedDistance } from "./alignment.js";
 import type { CostTable } from "./phonemeCost.js";
 import type { Tracker } from "./tracker.js";
 import type { HeardChar, VerdictState, WordVerdict } from "./types.js";
+import { encodePhonemeSpan, encodePhonemes, pairScores, wordGop, type FramePosteriors, type WordGop } from "./posteriors.js";
+import { BLANK_ID } from "./tokens.js";
 
 const SEGMENT_CUT = 300;
 const CONTEXT_CHARS = 6;
@@ -80,6 +82,11 @@ export class VerdictTracer {
   private readonly cfg: EngineConfig;
   private cache = new Map<string, CachedSeg>();
   private cacheRevision = -1;
+  private gopCache = new Map<string, WordGop | null>();
+  private idsCache = new Map<number, Array<readonly number[]>>();
+  private pairCache = new Map<number, { wordTokens: number; once: number[]; twice: number[] } | null>();
+  /** When set, non-pending interior words also get GOP scores (correction mode). */
+  posteriors: FramePosteriors | null = null;
 
   constructor(tracker: Tracker, table: CostTable, cfg: EngineConfig = DEFAULT_CONFIG) {
     this.tracker = tracker;
@@ -91,6 +98,7 @@ export class VerdictTracer {
     const t = this.tracker;
     if (this.cacheRevision !== t.revision) {
       this.cache.clear();
+      this.gopCache.clear();
       this.cacheRevision = t.revision;
     }
     const segs = this.segment(t.trail);
@@ -111,7 +119,98 @@ export class VerdictTracer {
       }
       for (const [w, sp] of got.spans) spans.set(w, sp);
     }
-    return this.judge(spans, settled);
+    const out = this.judge(spans, settled);
+    if (this.posteriors) this.score(out, spans);
+    return out;
+  }
+
+  /** Attach GOP scores to settled words whose two neighbours were heard. The
+   * acoustic window is the frames strictly between the previous word's last
+   * token (and its continuation) and the next word's first token. */
+  private score(out: WordVerdict[], spans: Map<number, Span>): void {
+    const t = this.tracker;
+    const post = this.posteriors!;
+    const heard = t.heard;
+    const firstFrame = (sp: Span | undefined) => (sp && sp.to > sp.from ? heard[sp.from]!.frame : -1);
+    const lastFrame = (sp: Span | undefined) => (sp && sp.to > sp.from ? heard[sp.to - 1]!.frame : -1);
+    for (const v of out) {
+      if (v.state === "pending") continue;
+      const w = v.wordIndex - t.firstWord;
+      const prev = spans.get(w - 1);
+      const next = spans.get(w + 1);
+      if (lastFrame(prev) < 0 || firstFrame(next) < 0) continue;
+      let from = lastFrame(prev);
+      let to = firstFrame(next);
+      const tail = post.has(from, from + 1) ? post.argmax(from) : -1;
+      from++;
+      while (from < to && tail >= 0 && tail !== BLANK_ID && post.has(from, from + 1) && post.argmax(from) === tail) from++;
+      // One multi-char token can straddle a word boundary (its chars share a
+      // frame); keep the word's own heard frames inside the window.
+      const own = spans.get(w);
+      if (firstFrame(own) >= 0) {
+        from = Math.min(from, firstFrame(own));
+        to = Math.max(to, lastFrame(own) + 1);
+      }
+      if (to < from) continue;
+      // The repetition window runs through the next word: a repeated copy
+      // often gets aligned to the start of the next word.
+      const next2 = firstFrame(spans.get(w + 2));
+      const repTo = Math.max(to, next2 >= 0 ? next2 : lastFrame(next) + 1);
+      const key = `${v.wordIndex}:${from}:${to}:${repTo}`;
+      let g = this.gopCache.get(key);
+      if (g === undefined) {
+        g = null;
+        for (const ids of this.wordIds(v.wordIndex)) {
+          const s = wordGop(post, ids, from, to);
+          if (s && (!g || s.gop > g.gop)) g = s;
+        }
+        const pair = this.pairIds(v.wordIndex);
+        const ps = pair ? pairScores(post, pair.wordTokens, pair.once, pair.twice, from, repTo) : null;
+        if (g && ps) g = { ...g, ...ps };
+        this.gopCache.set(key, g);
+      }
+      if (g) {
+        v.gop = g.gop;
+        v.gopTwice = g.gopTwice;
+        v.gopNone = g.gopNone;
+        if (g.repGain !== undefined) v.repGain = g.repGain;
+        if (g.pairGop !== undefined) v.pairGop = g.pairGop;
+      }
+    }
+  }
+
+  /** Jointly tokenized ids of word + next word, and word twice + next word. */
+  private pairIds(globalWord: number): { wordTokens: number; once: number[]; twice: number[] } | null {
+    const hit = this.pairCache.get(globalWord);
+    if (hit !== undefined) return hit;
+    const c = this.tracker.corpus;
+    const n = c.wordSurah.length;
+    const ph = (w: number) => (w >= 0 && w < n ? c.wordPhonemes(w) : "");
+    const [before, exp, next, after] = [ph(globalWord - 1), ph(globalWord), ph(globalWord + 1), ph(globalWord + 2)];
+    const at = before.length;
+    const word = encodePhonemeSpan(before + exp + next, at, at + exp.length);
+    const once = encodePhonemeSpan(before + exp + next + after, at, at + exp.length + next.length);
+    const twice = encodePhonemeSpan(before + exp + exp + next + after, at, at + 2 * exp.length + next.length);
+    const got = word && once && twice && next ? { wordTokens: word.length, once, twice } : null;
+    this.pairCache.set(globalWord, got);
+    return got;
+  }
+
+  /** Token ids of the word's full and (if any) pausal phonemes. */
+  private wordIds(globalWord: number): Array<readonly number[]> {
+    let got = this.idsCache.get(globalWord);
+    if (got) return got;
+    const c = this.tracker.corpus;
+    const exp = c.wordPhonemes(globalWord);
+    const atAyahEnd = c.wordInAyah[globalWord]! === c.ayahWordCount(c.wordSurah[globalWord]!, c.wordAyah[globalWord]!) - 1;
+    const pausal = pausalPhonemes(exp, c.plain[globalWord]!, atAyahEnd);
+    const before = globalWord > 0 ? c.wordPhonemes(globalWord - 1) : "";
+    const after = globalWord + 1 < c.wordSurah.length ? c.wordPhonemes(globalWord + 1) : "";
+    const inContext = encodePhonemeSpan(before + exp + after, before.length, before.length + exp.length);
+    got = [inContext, encodePhonemes(exp), pausal ? encodePhonemes(pausal) : null]
+      .filter((ids): ids is number[] => !!ids && ids.length > 0);
+    this.idsCache.set(globalWord, got);
+    return got;
   }
 
   private segment(trail: number[]): Segment[] {

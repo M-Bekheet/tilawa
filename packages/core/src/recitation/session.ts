@@ -52,6 +52,7 @@ import {
 import DEFAULT_IO from "./zipformer-io.json" with { type: "json" };
 
 import { CorrectionController, type CorrectionAction, type RecitationMode } from "./correction.js";
+import { FramePosteriors } from "./posteriors.js";
 
 const TAIL_SECONDS = 2.0;
 /** Mean heard ratio over an unmatched ayah's words at or above which the gap
@@ -194,6 +195,7 @@ export class ZipformerSession {
   private readonly onEvent: ((msg: WorkerOutbound) => void) | null;
   private fbank = new KaldiFbank();
   private decoder = new GreedyCtcDecoder(TOKENS, BLANK_ID);
+  private readonly posteriors: FramePosteriors;
   private engine: RecitationEngine;
   private accumulated = new Map<string, AyahTally>();
   private emitted = new Set<string>();
@@ -227,6 +229,7 @@ export class ZipformerSession {
     this.gapMaxWords = opts.gapMaxWords ?? GAP_MAX_WORDS;
     this.onEvent = opts.onEvent ?? null;
     this.debugEnabled = opts.debug ?? false;
+    this.posteriors = new FramePosteriors(runner.io.vocabSize);
     this.corpus = new QuranCorpus(corpusJson);
     this.index = new QuranIndex(this.corpus, this.cfg);
     for (const s of this.corpus.surahs) {
@@ -332,6 +335,8 @@ export class ZipformerSession {
   setMode(mode: RecitationMode): WorkerOutbound[] {
     const out = this.correction.state.phase !== 'idle' ? this.correct('close') : [];
     this.correction.setMode(mode);
+    this.attachPosteriors(this.engine);
+    if (this.practiceEngine) this.attachPosteriors(this.practiceEngine);
     return out;
   }
 
@@ -342,6 +347,7 @@ export class ZipformerSession {
     if (state.phase === 'retrying') {
       this.practiceEngine = new RecitationEngine(this.corpus, this.index, this.cfg);
       this.practiceEngine.setStayOnSurah(true);
+      this.attachPosteriors(this.practiceEngine);
       this.practiceEngine.track(state.issue!.surah, state.issue!.ayah, 0);
     } else {
       this.practiceEngine = null;
@@ -446,13 +452,20 @@ export class ZipformerSession {
     engine.setStayOnSurah(this.stayOnSurah);
     engine.startSearch();
     engine.onBeforeRelocate = () => this.dumpTallies();
+    this.attachPosteriors(engine);
     return engine;
+  }
+
+  /** GOP scoring costs a few CTC Viterbi passes per word; only correction mode reads it. */
+  private attachPosteriors(engine: RecitationEngine): void {
+    engine.setPosteriors(this.correction.mode === "correction" ? this.posteriors : null);
   }
 
   private resetDecoder(): void {
     this.fbank.reset();
     this.decoder.reset();
     this.runner.reset();
+    this.posteriors.clear(0);
   }
 
   wordCount = (surah: number, ayah: number): number =>
@@ -485,6 +498,7 @@ export class ZipformerSession {
     if (!frames.length) return [];
     const { logProbs, frames: out } = await this.runner.accept(frames);
     if (out === 0) return [];
+    this.posteriors.push(logProbs, out, this.decoder.framesDecoded);
     const tokens = this.decoder.consume(logProbs, out, this.runner.io.vocabSize);
     return this.consumeTokens(tokens);
   }
