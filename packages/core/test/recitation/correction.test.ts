@@ -31,6 +31,28 @@ describe('conservative word correction', () => {
     // Still needs clear anchors on both sides.
     expect(possibleWordIssues([word(0, { margin: .2 }), partial[1]!, word(2)])).toEqual([]);
   });
+  it('GOP rule: a disputed word that fits badly, between words that fit', () => {
+    // Neighbours are not `clear` (low margin) but fit acoustically (GOP ~0).
+    const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
+    const bad = { state: 'wrong' as const, distance: .45, margin: .4, heardRatio: .8, gop: -6, gopNone: -9 };
+    expect(possibleWordIssues([fit(0), word(1, bad), fit(2)])[0]).toMatchObject({ word: 1, kind: 'possible_substitution' });
+    // Silence explains the window better than the expected word: omission.
+    expect(possibleWordIssues([fit(0), word(1, { ...bad, gopNone: -1 }), fit(2)])[0]).toMatchObject({ kind: 'possible_omission' });
+    expect(possibleWordIssues([fit(0), word(1, { ...bad, state: 'skipped', heardRatio: .2 }), fit(2)])[0]).toMatchObject({ kind: 'possible_omission' });
+    // GOP alone never flags a word the aligner accepts or is unsure about.
+    for (const state of ['ok', 'unsure', 'pending'] as const) {
+      expect(possibleWordIssues([fit(0), word(1, { ...bad, state, gop: -15 }), fit(2)])).toEqual([]);
+    }
+    // Not low enough, not the local minimum, or a neighbour that does not fit.
+    expect(possibleWordIssues([fit(0), word(1, { ...bad, gop: -2.5 }), fit(2)])).toEqual([]);
+    expect(possibleWordIssues([fit(0), word(1, bad), word(2, { margin: .3, gop: -8 })])).toEqual([]);
+    expect(possibleWordIssues([fit(0), word(1, bad), word(2, { margin: .3, gop: -2.5 })])).toEqual([]);
+    expect(possibleWordIssues([fit(0), word(1, bad), word(2, { margin: .3 })])).toEqual([]);
+    // Other ayah, disabled, or no GOP: the margin/distance rules only.
+    expect(possibleWordIssues([fit(0), word(1, bad), fit(2), word(3, { ayah: 4, word: 0 })].slice(0, 2))).toEqual([]);
+    expect(possibleWordIssues([fit(0), word(1, bad), fit(2)], { vowelMargin: .05, vowelWordMargin: .5, gopFlag: -Infinity })).toEqual([]);
+    expect(possibleWordIssues([word(0), word(1, { ...bad, gop: undefined }), word(2)])).toEqual([]);
+  });
   it('detects a confident harakah error on an otherwise matching word', () => {
     expect(possibleWordIssues(vowel)[0]).toMatchObject({ word: 1, kind: 'possible_vowel' });
     // Same skeleton, but the decoder was unsure which vowel it heard, or the word itself was weak.

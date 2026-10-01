@@ -25,9 +25,15 @@ export interface CorrectionThresholds {
    * words with nothing aligned. A `skipped` word is always below the engine's
    * `minHeardFraction`, so 1 accepts every partial omission. */
   omissionMaxHeard?: number;
+  /** GOP rule, for verdicts carrying `gop` (correction mode): a `wrong` or
+   * `skipped` word whose GOP (nats/token) is at or below this. `-Infinity`
+   * disables it. */
+  gopFlag?: number;
+  /** A neighbour anchors a GOP flag when it is clear, or fits with GOP at or above this. */
+  gopAnchor?: number;
 }
 export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
-  vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1,
+  vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1, gopFlag: -3, gopAnchor: -2,
 };
 const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>
   ({ ...DEFAULT_CORRECTION_THRESHOLDS, ...th }) as Required<CorrectionThresholds>;
@@ -48,6 +54,25 @@ function clearWord(v: WordVerdict | undefined): boolean {
     && Number.isFinite(v.heardRatio) && v.heardRatio >= 0.75 && v.heardRatio <= 1.3;
 }
 
+const hasGop = (v: WordVerdict | undefined): v is WordVerdict & { gop: number } =>
+  !!v && v.state !== 'pending' && typeof v.gop === 'number' && Number.isFinite(v.gop);
+
+/** GOP rule: string alignment and acoustic fit must agree. The aligner calls
+ * the word `wrong` or `skipped`, and forcing the expected word over its window
+ * costs much more than the free decode. Real clean takes show GOP this low on
+ * `ok` and `unsure` words too (window misallocation, elongation), so those are
+ * never flagged by GOP alone. Neighbours must fit and the word must be the
+ * worst fit locally, or the low score belongs to a boundary smear. */
+function gopIssue(v: WordVerdict, before: WordVerdict, after: WordVerdict, th: Required<CorrectionThresholds>): CorrectionIssue['kind'] | null {
+  if (!hasGop(v) || v.gop > th.gopFlag || (v.state !== 'wrong' && v.state !== 'skipped')) return null;
+  const anchored = (n: WordVerdict) => clearWord(n) || (hasGop(n) && n.gop >= th.gopAnchor && n.state !== 'skipped');
+  if (!anchored(before) || !anchored(after)) return null;
+  if ((hasGop(before) && before.gop < v.gop) || (hasGop(after) && after.gop < v.gop)) return null;
+  // Silence fits the window better than the expected word does.
+  const none = v.gopNone ?? -Infinity;
+  return v.state === 'skipped' || (none - v.gop >= 2 && none >= -3) ? 'possible_omission' : 'possible_substitution';
+}
+
 export function possibleWordIssues(
   verdicts: readonly WordVerdict[],
   thresholds: Partial<CorrectionThresholds> = DEFAULT_CORRECTION_THRESHOLDS,
@@ -58,8 +83,12 @@ export function possibleWordIssues(
     const before = byIndex.get(v.wordIndex - 1);
     const after = byIndex.get(v.wordIndex + 1);
     // Do not infer leading/trailing omissions, uncertain audio, or skipped ayahs.
-    if (!clearWord(before) || !clearWord(after) || before!.surah !== v.surah
-      || after!.surah !== v.surah || before!.ayah !== v.ayah || after!.ayah !== v.ayah) return [];
+    if (!before || !after || before.surah !== v.surah || after.surah !== v.surah
+      || before.ayah !== v.ayah || after.ayah !== v.ayah) return [];
+    const gop = gopIssue(v, before, after, th);
+    if (!clearWord(before) || !clearWord(after)) {
+      return gop ? [{ surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind: gop }] : [];
+    }
     // A partly heard word (the aligner lent it a few chars of its neighbours,
     // or the reciter said only its onset) is still an omission.
     const omission = v.state === 'skipped' && (v.heardRatio === 0 || v.heardRatio <= th.omissionMaxHeard);
@@ -73,7 +102,7 @@ export function possibleWordIssues(
       && Number.isFinite(v.margin) && v.margin >= th.vowelWordMargin
       && v.heardRatio >= 0.75 && v.heardRatio <= 1.3;
     const kind = omission ? 'possible_omission' as const : substitution ? 'possible_substitution' as const
-      : vowel ? 'possible_vowel' as const : null;
+      : vowel ? 'possible_vowel' as const : gop;
     return kind ? [{ surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind }] : [];
   });
 }
