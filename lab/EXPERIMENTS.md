@@ -513,6 +513,16 @@ One change per arm, same recipe as A0 (v3 init, lr 0.001, warmup 1000, H100:4), 
 
 **Current best: a0w-ep1-a0.5** (waqf-2 labels + ×3 multi-ayah windows, epoch 1, 50/50 with v3; `/vol/exports/a0w-ep1-a0.5`): headline 3.60 vs v3 4.45 (−0.86 [−1.12, −0.60]), madd-free 2.93 vs 3.76, 0 dropped ayahs, insertions 9.29 / 22.16, tracker 56/58 + v1 53/53, correction 0.255 / 1.0 / 0. Not promoted to the shipped model (no browser/int8/latency row yet).
 
+**int8 + browser (2026-10-01).** Dynamic-int8 exports, same eval:
+
+| model | headline | madd-free | drops | ins holdout / tlog-dev | gates vs v3 | tracker held-out, v1 | browser `test:browser` |
+|---|---|---|---|---|---|---|---|
+| a0w-ep1-a0.5 int8 | 3.59 | 2.92 | 0 | 9.37 / 22.10 | pass | 56/58, 53/53 | 6/6, RTF 0.100, ready 1112 ms |
+| v3 int8 | 4.47 | 3.79 | 0 | 10.46 / 22.05 | headline (4.468 vs 4.452) | 56/58, 52/53 | — |
+| shipped interp-gentle-a0.5 int8 | 4.16 | 2.95 | 0 | 5.70 / 15.91 | **both insertion gates** | — | 6/6, RTF 0.100, ready 1437 ms |
+
+a0w int8 − fp32: headline −0.01, madd-free −0.01, insertions +0.08 / −0.05, tracker unchanged. a0w int8 also passes vs v3 int8. The currently shipped model fails the insertion floor (it suppresses deviant speech). Browser latency is end-to-end over the 6 default clips (134 s audio, ~13.5 s wall); identical for both models.
+
 Full 6-variant rows per arm (raw ep1/ep2 + α 0.5/0.7) are in the per-arm reports. Pattern across every arm: α 0.7 and raw epochs score lower headline but fail the insertion floor (they learn to not transcribe deviations); α 0.5 at epoch 1 is the only setting that passes everything each time. Correction recall does not move (≈0.25, driven by skipped-ayah flags) — acoustic FT does not fix a rules problem.
 
 ## Per-experiment notes
