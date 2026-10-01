@@ -623,6 +623,121 @@ The word rules in `packages/core/src/recitation/correction.ts` are written for a
 2. **Omission and substitution require a gross hole, not a partial edit.** Omission fires only for `state === 'skipped'` and `heardRatio === 0`. Substitution fires only for `wrong` with distance ≥ 0.6, margin ≥ 0.65, and heardRatio in [0.5, 1.5]. On the shipped model, partial omissions were 0/259 and whole-word omissions 2/768; kind-correct substitutions were 0/400. Of the 49 issues on the shipped candidate run, 41 are `possible_vowel`, which needs the consonant skeleton to already match (distance ≤ 0.15) plus a sure vowel error. A partial substitution the aligner marks is often inside that vowel gate and outside the substitution gate, so it can count as a catch and still miss kind-correct.
 3. **Nothing in `possibleWordIssues` represents a repeat or a restart, and a candidate must hold for 12 frames.** Repeated and restarted slips are kind-correct only if some other word kind or `unclear_ayah` happens to land on them. `unclear_ayah` is an ayah-level kind: the session raises it when ayah N+2 is matched immediately after N, which a restart inside one ayah does not do. Shipped recall is 1/74 repeated and 0/18 restarted. `CorrectionController.observe` also waits until the same kind has persisted for 12 frames before it raises, then a dismiss suppresses that `wordIndex` for the rest of the clip. Median latency on the catches that exist is 2–5 s after the slip span start.
 
+## Correction rules v2 (real recordings)
+
+2026-10-01. Four rule changes in `packages/core/src/recitation/correction.ts`, made one at a time, each ablated, then frozen and scored once on held-out data. Same data, scorer and no-synthetic-mistakes rule as the baseline above. Aggregates only; per-clip rows stay in `/tmp/correction_eval/`.
+
+**Split.** Tuning: help clean `split=dev` (105 clips, 19.82 min), TLOG clean dev (267, 33.68 min), and the TLOG candidate half with an even sha1 of the clip id (699 slips: 476 omitted, 31 repeated, 7 restarted, 185 substituted). Held-out: help clean `split=test` (161, 28.98 min), help slips (all 10 located slips are in test, so tuning had no help recall data), the odd TLOG half (820 slips: 551 / 43 / 11 / 215), and v1 (53, 16.95 min). TLOG clean dev has no split and is reported in both.
+
+**Two measurements.**
+- *Live*: `correction_eval.py run`, the same harness as the baseline (issues dismissed on sight). This is the headline.
+- *Paired replay*: `run --trace` records every controller input (verdicts, cursor, frame, settle snapshots) with a controller that never flags. Then `replay_correction.ts` re-runs any rule set offline over the same trace, so two rule sets are compared on identical engine output. All ablations use it.
+
+Two things make the measurements differ.
+- *Inference noise.* onnxruntime CPU inference is not bit-identical between runs with 4 intra-op threads; it is with 1. Margins move in the third decimal, and that can flip a word state. Any single live run, the baseline included, carries per-clip noise of a catch or two. Paired replay removes it.
+- *Dismiss on sight.* After a dismiss the session resets the streaming encoder and re-tracks from the resume cursor, behind the reciter. The next 1–2 s decode poorly (words come back unsure or wrong, and the tracker briefly loses lock), so a second slip in the same clip is rarely flagged live. In the app, audio is dropped while the dialog is open, so this harness artifact affects baseline and v2 alike. Replay does not dismiss, so it reads higher (shipped tuning: 13 live-equivalent catches in replay versus 9 live).
+
+Cells below are caught / kind-correct / exact-word / median latency. FF is false flags per clean minute (issues).
+
+### Changes
+
+1. **Partial omission** (`omissionMaxHeard`, default 1). A `skipped` word (heard ratio < 0.34) with clear neighbours is an omission even when part of it was heard. Before, only heard ratio 0 counted.
+2. **GOP rule** (`gopFlag` −3, `gopAnchor` −2). Correction mode now attaches CTC posteriors, and interior verdicts carry goodness-of-pronunciation scores: `gop`, the per-token log ratio of forcing the expected word against the free best path over its window, plus `gopNone`, `gopTwice`, `repGain` and `pairGop`. A word the aligner already marks `wrong` or `skipped` is flagged when its GOP is ≤ −3, it is the local minimum, and both same-ayah neighbours fit (clear, or GOP ≥ −2 and not skipped). The neighbours do not have to be `clear`. Kind: omission if the word is skipped or silence fits the window clearly better (`gopNone − gop ≥ 2` and `gopNone ≥ −3`), else substitution. `ok`, `unsure` and `pending` words are never flagged by GOP.
+3. **Settle** (`settle`). When the tracker is dropped (stop, surah completed, silent idle), the session runs `CorrectionController.settle()` once on settled verdicts, covering only the words `observe()` never judged with both neighbours and the word after settled. No persistence is needed, because settled verdicts do not change. Vowel flags stay observe-only.
+4. **`possible_repetition`** (`repetitionGain` 5). A word that fits once (GOP ≥ −2) but gains ≥ 5 nats per token from forcing a second copy, with a clear left neighbour. A neighbour that also repeats vetoes it, since a phrase restart (waqf then ibtida') is accepted practice. A retry that repeats the word again is not accepted.
+
+New kind and thresholds are optional fields with defaults, so older thresholds objects and switch statements keep working. The web demo has a label for the new kind.
+
+### Ablations (tuning part, paired replay)
+
+Each row replays the final code with later rules switched off (cumulative) or one rule switched off (leave-one-out). TLOG columns are the 699 tuning-half slips (omitted 476, repeated 31, restarted 7, substituted 185).
+
+| rules | model | FF help clean dev | FF TLOG clean dev | omitted | repeated | restarted | substituted | all |
+|---|---|---|---|---|---|---|---|---|
+| baseline | shipped | 0.000 (0) | 0.119 (4) | 1/1/1/5.16s | 1/1/0/2.20s | 0/0/0/— | 1/0/0/4.48s | 3/2/1/4.48s |
+| baseline | a0w | 0.000 (0) | 0.089 (3) | 2/1/2/4.02s | 2/2/1/3.00s | 0/0/0/— | 4/2/1/2.62s | 8/5/4/2.76s |
+| +partial omission | shipped | 0.000 (0) | 0.119 (4) | 2/2/2/3.94s | 1/1/0/2.20s | 0/0/0/— | 2/0/1/3.16s | 5/3/3/2.72s |
+| +partial omission | a0w | 0.000 (0) | 0.089 (3) | 4/3/3/2.80s | 2/2/1/3.00s | 0/0/0/— | 6/2/2/2.62s | 12/7/6/2.68s |
+| +GOP | shipped | 0.000 (0) | 0.119 (4) | 3/3/2/2.72s | 2/2/0/7.34s | 0/0/0/— | 7/4/3/4.48s | 12/9/5/3.60s |
+| +GOP | a0w | 0.000 (0) | 0.089 (3) | 4/3/3/2.80s | 2/2/1/3.00s | 0/0/0/— | 13/9/5/3.44s | 19/14/9/2.88s |
+| +settle | shipped | 0.000 (0) | 0.119 (4) | 3/3/2/2.72s | 2/2/0/7.34s | 0/0/0/— | 7/4/3/4.48s | 12/9/5/3.60s |
+| +settle | a0w | 0.000 (0) | 0.089 (3) | 5/4/4/2.88s | 2/2/1/3.00s | 0/0/0/— | 13/9/5/3.44s | 20/15/10/3.16s |
+| +repetition (final) | shipped | 0.000 (0) | 0.119 (4) | 3/3/2/2.72s | 2/2/0/7.34s | 1/1/1/3.16s | 7/4/3/4.48s | 13/10/6/3.16s |
+| +repetition (final) | a0w | 0.000 (0) | 0.089 (3) | 5/4/4/2.88s | 2/2/1/3.00s | 1/1/1/3.16s | 13/9/5/3.44s | 21/16/11/3.16s |
+| final − partial omission | shipped | 0.000 (0) | 0.119 (4) | 3/3/2/2.72s | 2/2/0/7.34s | 1/1/1/3.16s | 7/4/3/4.48s | 13/10/6/3.16s |
+| final − partial omission | a0w | 0.000 (0) | 0.089 (3) | 5/4/4/2.88s | 2/2/1/3.00s | 1/1/1/3.16s | 13/9/5/3.44s | 21/16/11/3.16s |
+| final − GOP | shipped | 0.000 (0) | 0.119 (4) | 2/2/2/3.94s | 1/1/0/2.20s | 1/1/1/3.16s | 2/0/1/3.16s | 6/4/4/2.94s |
+| final − GOP | a0w | 0.000 (0) | 0.089 (3) | 4/3/3/2.80s | 2/2/1/3.00s | 1/1/1/3.16s | 6/2/2/2.62s | 13/8/7/2.72s |
+| final − settle | shipped | 0.000 (0) | 0.119 (4) | 3/3/2/2.72s | 2/2/0/7.34s | 1/1/1/3.16s | 7/4/3/4.48s | 13/10/6/3.16s |
+| final − settle | a0w | 0.000 (0) | 0.089 (3) | 4/3/3/2.80s | 2/2/1/3.00s | 1/1/1/3.16s | 13/9/5/3.44s | 20/15/10/3.02s |
+| final − repetition | shipped | 0.000 (0) | 0.119 (4) | 3/3/2/2.72s | 2/2/0/7.34s | 0/0/0/— | 7/4/3/4.48s | 12/9/5/3.60s |
+| final − repetition | a0w | 0.000 (0) | 0.089 (3) | 5/4/4/2.88s | 2/2/1/3.00s | 0/0/0/— | 13/9/5/3.44s | 20/15/10/3.16s |
+
+- GOP carries most of the gain: shipped 5 → 12, a0w 12 → 19, mostly substitutions, which gain kind-correct catches (shipped 0 → 4).
+- Partial omission is subsumed once GOP is on (removing it from the final rules changes nothing). It is kept because it holds without GOP scores (tracking-mode verdicts, custom hosts).
+- Settle and repetition add one catch each, at no FF cost.
+- FF did not move in any row. Every catch is an interior slip (span more than 0.3 s from either clip edge).
+
+Live on the tuning part, final rules: shipped 9/699 (kind-correct 8, exact 3, 4.48 s) versus 3/699 at baseline. a0w 18/699 (12, 8, 3.02 s) versus 8/699. FF: help clean dev 0 / 0, TLOG clean dev 4 / 3, identical to baseline.
+
+### Rejected (raised FF, or recall that was an artifact)
+
+| change | why rejected |
+|---|---|
+| GOP alone (any word state) at −3 / −5 / −8 | Shipped TLOG clean dev 4 → 5 at every threshold |
+| GOP on `unsure` words too | Shipped TLOG clean dev 4 → 5; a0w help clean dev 0 → 4, TLOG clean dev 3 → 6 |
+| `gopFlag` −2 / −2.5 | Help clean dev 0 → 1–2 |
+| Stricter anchors or heard-ratio gates on the GOP rule | Raised FF on one of the clean sets, no recall gain |
+| Neighbours from the adjacent ayah | +1 help clean FF on both models, no recall gain |
+| First/last word with only the inner neighbour | +4 / +6 catches, all at clip boundaries (segmentation cuts), 0 interior |
+| `repetitionGain` 2 / 3 | +1 help clean FF on shipped. 4 was clean but sits next to that cliff, so 5 was kept |
+| Repetition from backward tracker jumps | 8 same-ayah backward jumps per clean set on clean takes |
+| `persistFrames` 0 (raise on first sight) | Recall unchanged on shipped, latency 3.6 → 3.1 s. Removes the guard against revised hypotheses |
+| `persistFrames` 18 / 24 | Latency only. 6 and 8 behave like 12 at the 480 ms chunk size |
+
+A GOP veto for the three shipped `possible_vowel` flags on TLOG clean dev was not attempted: those words have GOP near 0, and so do real single-vowel errors.
+
+### Held-out (scored once, rules frozen)
+
+Live, same harness as the baseline:
+
+| set | shipped baseline | shipped v2 | a0w baseline | a0w v2 |
+|---|---|---|---|---|
+| FF help clean test | 0.035 (1) | 0.035 (1) | 0.104 (3) | 0.104 (3) |
+| FF TLOG clean dev | 0.119 (4) | 0.119 (4) | 0.089 (3) | 0.089 (3) |
+| FF v1 | 0 | 0 | 0 | 0 |
+| Help slips (10) | 1/0/1/5.12s | 1/1/1/4.16s | 1/0/1/5.12s | 1/0/1/5.12s |
+| TLOG omitted (551) | 1/1/1/1.80s | 7/6/7/2.76s | 1/1/1/1.80s | 7/6/7/2.72s |
+| TLOG repeated (43) | 0/0/0/— | 1/1/1/2.10s | 0/0/0/— | 1/1/1/8.36s |
+| TLOG restarted (11) | 0/0/0/— | 0/0/0/— | 1/1/0/3.92s | 2/2/0/3.84s |
+| TLOG substituted (215) | 3/0/2/5.71s | 9/2/6/2.88s | 2/1/1/2.72s | 11/9/6/2.56s |
+| TLOG all (820) | 4/1/3/4.13s | 17/9/14/2.76s | 4/3/2/2.72s | 21/18/14/2.76s |
+| TLOG interior (323) | 4/1/3 | 16/8/13 | 4/3/2 | 21/18/14 |
+
+Paired replay on held-out traces (baseline rules versus final rules on identical engine output; TLOG clean dev reuses its tuning trace):
+
+| set | shipped baseline | shipped v2 | a0w baseline | a0w v2 |
+|---|---|---|---|---|
+| FF help clean test | 0.035 (1) | 0.035 (1) | 0.104 (3) | 0.104 (3) |
+| FF TLOG clean dev | 0.119 (4) | 0.119 (4) | 0.089 (3) | 0.089 (3) |
+| FF v1 | 0 | 0 | 0 | 0 |
+| Help slips (10) | 1/0/1/5.12s | 1/0/1/5.12s | 1/0/1/5.12s | 1/0/1/5.12s |
+| TLOG omitted (551) | 1/1/1/1.80s | 7/6/7/2.76s | 1/1/1/1.80s | 7/6/7/2.72s |
+| TLOG repeated (43) | 0/0/0/— | 2/2/2/5.23s | 0/0/0/— | 1/1/1/8.36s |
+| TLOG restarted (11) | 0/0/0/— | 0/0/0/— | 1/1/0/3.92s | 2/2/0/3.84s |
+| TLOG substituted (215) | 3/0/2/5.71s | 10/3/7/2.92s | 2/1/1/2.72s | 12/10/7/2.70s |
+| TLOG all (820) | 4/1/3/4.13s | 19/11/16/2.88s | 4/3/2/2.72s | 22/19/15/2.80s |
+| TLOG interior (323) | 4/1/3 | 18/10/15 | 4/3/2 | 22/19/15 |
+
+**FF did not rise.** On every clean set and both models, v2 raises exactly the same issues on the same clips as the baseline.
+- Help clean, dev+test: shipped 0.020 (1 issue in 48.79 min, the `unclear_ayah`), a0w 0.061 (3).
+- TLOG clean dev: shipped 0.119 (4), a0w 0.089 (3).
+- v1: 0 on both.
+
+Help slips did not move: 1/10 on both models, the same word as the baseline. It is `possible_vowel` in the paired replay; the live v2 run labels it `possible_substitution`, which is inference noise, not a rule effect. Nine of the ten located help slips are substitutions.
+
+**What is still missed.** 438 of the 820 held-out slips sit within 0.3 s of a clip edge. Most of those are probably segmentation cuts rather than slips, and leading or trailing words have no live rule because a reciter may start or stop anywhere. On the 323 interior slips, recall is 5% (shipped) and 7% (a0w). On the tuning half, 78 of the 103 interior substitutions shipped still misses end as `ok` (44) or `unsure` (34) in the aligner (wrong 8, skipped 2, not aligned 15). Letting GOP flag those states raised FF in every variant tried.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
