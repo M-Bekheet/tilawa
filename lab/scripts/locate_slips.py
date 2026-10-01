@@ -554,7 +554,11 @@ def confidence_score(
         score += 0.10
     if neighbours_clean:
         score += 0.15
-    return round(min(score, 1.0), 2)
+    # A block much longer than the word was not segmented into a repeat or
+    # restart; it got glued onto one word. That is not "a large edit on one word".
+    if word_tokens > 0 and edit_tokens > max(8, word_tokens * 2):
+        score -= 0.35
+    return round(min(max(score, 0.35), 1.0), 2)
 
 
 def is_review_slip(slip: WordSlip) -> bool:
@@ -956,7 +960,17 @@ def run_models(args: argparse.Namespace) -> dict:
                     "confidence": row["confidence"],
                 }
             )
-    ranked.sort(key=lambda r: (-r["confidence"], -max(v["n_edits"] for v in r["evidence"].values()), r["id"], r["word_index"]))
+    def _rank_key(row: dict) -> tuple:
+        edits = max(v["n_edits"] for v in row["evidence"].values())
+        return (
+            -row["confidence"],
+            0 if row["extent"] == EXTENT_WHOLE else 1,
+            -min(edits, 8),
+            row["id"],
+            row["word_index"],
+        )
+
+    ranked.sort(key=_rank_key)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

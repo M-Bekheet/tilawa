@@ -140,6 +140,12 @@ def test_confidence_ranks_a_clean_whole_word_edit_highest():
     assert high >= loc.HIGH_CONFIDENCE
     assert small < loc.HIGH_CONFIDENCE
     assert high > small
+    # A long unmatched insertion glued onto a short word is not one-word evidence.
+    glued = loc.confidence_score(
+        kind_agree=True, extent="partial", edit_tokens=40, word_tokens=4, neighbours_clean=True
+    )
+    assert glued < loc.HIGH_CONFIDENCE
+    assert glued < high
 
 
 def test_agreement_requires_the_same_word_index():
