@@ -836,7 +836,7 @@ def run_models(args: argparse.Namespace) -> dict:
 
     # Downloads are network-bound. Inference stays one model, 4 threads.
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(_one_fetch, row): row["id"] for row in short}
+        futures = {pool.submit(_one_fetch, row): row["id"] for row, _slips in short}
         done = 0
         for fut in as_completed(futures):
             done += 1
