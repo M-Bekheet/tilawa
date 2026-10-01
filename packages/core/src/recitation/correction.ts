@@ -8,8 +8,10 @@ export interface CorrectionIssue extends RecitationPosition {
   /** Word-level kinds come from {@link possibleWordIssues}. The two ayah-level
    * kinds are raised by the session when ayah N+2 is matched right after ayah N
    * and N+1 never was: `possible_skipped_ayah` when nothing of N+1 was heard,
-   * `unclear_ayah` when audio was heard but the model could not follow it. */
-  kind: 'possible_omission' | 'possible_substitution' | 'possible_vowel' | 'possible_skipped_ayah' | 'unclear_ayah';
+   * `unclear_ayah` when audio was heard but the model could not follow it.
+   * `possible_repetition` needs GOP scores (correction mode). */
+  kind: 'possible_omission' | 'possible_substitution' | 'possible_vowel' | 'possible_repetition'
+    | 'possible_skipped_ayah' | 'unclear_ayah';
   /** Words the issue covers, starting at `word`. Default 1; ayah-level kinds
    * set it to the ayah length so a retry must clear the whole ayah. */
   words?: number;
@@ -34,9 +36,14 @@ export interface CorrectionThresholds {
   /** Check words `observe()` never judged in full context when the tracker is
    * dropped (stop, surah completed, silent idle). */
   settle?: boolean;
+  /** Repetition: a word that fits once (GOP >= `gopAnchor`) but gains at least
+   * this (nats/token) from forcing a second copy before the next word.
+   * `Infinity` disables it. */
+  repetitionGain?: number;
 }
 export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
   vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1, gopFlag: -3, gopAnchor: -2, settle: true,
+  repetitionGain: 5,
 };
 const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>
   ({ ...DEFAULT_CORRECTION_THRESHOLDS, ...th }) as Required<CorrectionThresholds>;
@@ -76,6 +83,14 @@ function gopIssue(v: WordVerdict, before: WordVerdict, after: WordVerdict, th: R
   return v.state === 'skipped' || (none - v.gop >= 2 && none >= -3) ? 'possible_omission' : 'possible_substitution';
 }
 
+/** One word said twice. Going back over several words in a row is a phrase
+ * restart (waqf then ibtida'), which is accepted practice, so a neighbour that
+ * also repeats vetoes the flag. */
+function repetitionIssue(v: WordVerdict, before: WordVerdict, after: WordVerdict, th: Required<CorrectionThresholds>): boolean {
+  const repeats = (n: WordVerdict) => typeof n.repGain === 'number' && n.repGain >= th.repetitionGain;
+  return hasGop(v) && v.gop >= th.gopAnchor && repeats(v) && clearWord(before) && !repeats(before) && !repeats(after);
+}
+
 export function possibleWordIssues(
   verdicts: readonly WordVerdict[],
   thresholds: Partial<CorrectionThresholds> = DEFAULT_CORRECTION_THRESHOLDS,
@@ -88,7 +103,8 @@ export function possibleWordIssues(
     // Do not infer leading/trailing omissions, uncertain audio, or skipped ayahs.
     if (!before || !after || before.surah !== v.surah || after.surah !== v.surah
       || before.ayah !== v.ayah || after.ayah !== v.ayah) return [];
-    const gop = gopIssue(v, before, after, th);
+    const gop = gopIssue(v, before, after, th)
+      ?? (repetitionIssue(v, before, after, th) ? 'possible_repetition' as const : null);
     if (!clearWord(before) || !clearWord(after)) {
       return gop ? [{ surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind: gop }] : [];
     }
@@ -142,10 +158,12 @@ export class CorrectionController {
       // flagged word; a verse match or cursor advance alone cannot succeed.
       const through = issue.word + Math.max(1, issue.words ?? 1) - 1;
       const prefix = verdicts.filter(v => v.surah === issue.surah && v.ayah === issue.ayah && v.word <= through);
-      // A retry that repeats a confident vowel error is not a correction.
+      // A retry that repeats a confident vowel error, or says a word twice
+      // again, is not a correction.
       const good = Array.from({ length: through + 1 }, (_, word) =>
         prefix.find(v => v.word === word)).every(v => clearWord(v)
-          && ((v!.vowelErrors ?? 0) === 0 || v!.vowelMargin < th.vowelMargin));
+          && ((v!.vowelErrors ?? 0) === 0 || v!.vowelMargin < th.vowelMargin)
+          && !((v!.repGain ?? -Infinity) >= th.repetitionGain));
       if (!good) { this.retryFrame = null; return false; }
       if (this.retryFrame === null || frame < this.retryFrame) this.retryFrame = frame;
       if (frame - this.retryFrame < 12) return false;

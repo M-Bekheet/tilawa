@@ -53,6 +53,31 @@ describe('conservative word correction', () => {
     expect(possibleWordIssues([fit(0), word(1, bad), fit(2)], { vowelMargin: .05, vowelWordMargin: .5, gopFlag: -Infinity })).toEqual([]);
     expect(possibleWordIssues([word(0), word(1, { ...bad, gop: undefined }), word(2)])).toEqual([]);
   });
+  it('repetition: a word that fits once but gains from a second copy', () => {
+    const rep = word(1, { gop: -.3, gopNone: -9, repGain: 7 });
+    const ctx = (r = rep, b = word(0), a = word(2)) => [b, r, a];
+    expect(possibleWordIssues(ctx())[0]).toMatchObject({ word: 1, kind: 'possible_repetition' });
+    // Fires without a clear right neighbour as long as the left one is clear.
+    expect(possibleWordIssues(ctx(rep, word(0), word(2, { margin: .3 })))[0]).toMatchObject({ kind: 'possible_repetition' });
+    // Phrase restart: a neighbour that also repeats vetoes it.
+    expect(possibleWordIssues(ctx(rep, word(0, { repGain: 6 })))).toEqual([]);
+    expect(possibleWordIssues(ctx(rep, word(0), word(2, { repGain: 6 })))).toEqual([]);
+    // Small gain, a word that does not fit, an unclear left neighbour, disabled, or no GOP.
+    expect(possibleWordIssues(ctx({ ...rep, repGain: 4 }))).toEqual([]);
+    expect(possibleWordIssues(ctx({ ...rep, gop: -2.5 }))).toEqual([]);
+    expect(possibleWordIssues(ctx(rep, word(0, { margin: .3 })))).toEqual([]);
+    expect(possibleWordIssues(ctx(), { vowelMargin: .05, vowelWordMargin: .5, repetitionGain: Infinity })).toEqual([]);
+    expect(possibleWordIssues(ctx({ ...rep, gop: undefined }))).toEqual([]);
+  });
+  it('does not accept a retry that repeats the word again', () => {
+    const rep = [word(0), word(1, { gop: -.3, repGain: 7 }), word(2), word(3)];
+    const c = new CorrectionController(); c.setMode('correction');
+    c.observe(rep, cursor, 30); expect(c.observe(rep, cursor, 42)).toBe(true);
+    expect(c.state.issue).toMatchObject({ kind: 'possible_repetition', word: 1 });
+    c.act('retry');
+    c.observe(rep, cursor, 100); c.observe(rep, cursor, 120); expect(c.state.phase).toBe('retrying');
+    c.observe(correct, cursor, 130); c.observe(correct, cursor, 142); expect(c.state.phase).toBe('corrected');
+  });
   it('detects a confident harakah error on an otherwise matching word', () => {
     expect(possibleWordIssues(vowel)[0]).toMatchObject({ word: 1, kind: 'possible_vowel' });
     // Same skeleton, but the decoder was unsure which vowel it heard, or the word itself was weak.
