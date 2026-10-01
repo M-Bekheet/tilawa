@@ -513,6 +513,8 @@ One change per arm, same recipe as A0 (v3 init, lr 0.001, warmup 1000, H100:4), 
 
 **Current best: a0w-ep1-a0.5** (waqf-2 labels + ×3 multi-ayah windows, epoch 1, 50/50 with v3; `/vol/exports/a0w-ep1-a0.5`): headline 3.60 vs v3 4.45 (−0.86 [−1.12, −0.60]), madd-free 2.93 vs 3.76, 0 dropped ayahs, insertions 9.29 / 22.16, tracker 56/58 + v1 53/53, correction 0.255 / 1.0 / 0. Not promoted to the shipped model (no browser/int8/latency row yet).
 
+- **A0w50 — windows at ~50% of epoch hours** (`ap-H1WZ2wrjkdk0WDzm2Fe6xC`, `everyayah_multi_rx_w2x7`, 735,693 cuts; otherwise identical to A0w; leak-check 0 flags; valid 0.0116 / 0.0048). No gain: best gate-passing variant ep1-α0.5 = 3.66 vs a0w-ep1-a0.5 3.60, CI +0.06 [−0.02, +0.15]; ep2-α0.5 3.78, +0.18 [+0.08, +0.28] (worse). α 0.7 variants score 3.40–3.43 but fail the insertion floor, as in every arm. ep1-α0.5: tracker 56/58, correction 0.255 / 1.0 / 0. Raw drops 2 / 1, same as ×3. **Killed** — 30% windows stay; 70% not run. Spend ~$31.8.
+
 **int8 + browser (2026-10-01).** Dynamic-int8 exports, same eval:
 
 | model | headline | madd-free | drops | ins holdout / tlog-dev | gates vs v3 | tracker held-out, v1 | browser `test:browser` |
