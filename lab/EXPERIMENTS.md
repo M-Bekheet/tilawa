@@ -431,6 +431,102 @@ Blind + A/B informed listen of the 22 v3.1/interp-gentle misses (21 v3+qlab + `r
 
 The 21 clips still missed by the v3.1 base and/or interp-gentle-a0.5 were independently transcribed with `gemini-3.1-pro-preview` (raw transcripts scored against `quran.json`; see `artifacts/gemini_oracle/`). 14 of 16 confusable pairs are verbatim-identical text — 55:53/55:30/55:40↔55:13, 81:19↔69:40, 37:82↔26:66, 26:122↔26:9, 37:43↔56:12, 21:38↔10:48, 83:13↔68:15, 37:176↔26:204, 70:29↔23:5, 77:45↔77:15, 38:73↔15:30, 38:79↔15:36 — so the ID is undecidable from audio alone. Two `test_corpus_v3` labels are wrong: `tlog_m043_010_043` and `tlog_m044_010_043` are 10:42 (the model's prediction); `tlog_m008_107_001` is 106:4 followed by 107:1 (label incomplete); `qul_alnufais__8_51` uses بظلام (3:182 wording) — a probable label/recitation variant. Zero genuine model errors remain on distinguishable unique text, so the effective ceiling is **251/256** on v3 (not 249) and **≈573–574/583** on q-lab without context priors. Remaining SeqAcc has to come from previous-ayah / surah continuity, which the tracker's `hint` mechanism already supports. Manifests are unchanged; gold issues are in `benchmark/test_corpus_v3/KNOWN_LABEL_ISSUES.md`.
 
+### Phase 0 (Beyond-QLab v3): leak audit, TLOG filter, v3 control (2026-09-30)
+
+**Held-out reciters were in the FT mix.** `greentechapps/everyayah_curated_1s_20s` was re-split after q-lab was cut (q-lab wavs are `test-000NN-of-00013`; the repo now has 31 test shards whose reciters are Husary_128kbps / Saood_ash-Shuraym / Ahmed_Neana / Mohammad_al_Tablaway). The three `everyayah_heldout` reciters (Sahl_Yassin, Akram_AlAlaqimy, Muhsin_Al_Qasim — 12/12 sampled clips matched by duration on everyayah.com) now sit in train/validation, which staging ingested. `everyayah_cuts_fbank`: 44,376 cuts / 120 h (×3 perturb) from them; `everyayah_multi`: 66.7 h more; 11/12 sampled benchmark clips are the same recording in training (Δdur ≤ 0.05 s). **Every FT/interp EA-slice number above (ft-v31, ft-gentle, interp-*, E1, E4) is leaked.** Also: 101/127 `test_corpus_v3` Alafasy ayahs are in the FT mix, so v3-corpus EA/multi tracker counts are on seen audio for FT runs. Fix: `shared/leak_guard.py`, `*_rx_cuts_fbank` manifests (re-verified at 0 flags), staging drops the reciters at ingest, `train()` refuses leaky manifests. Audit: `scripts/phase0_modal.py --action leak-audit` (apps `ap-O2XdOsOiehSl4JOODDYYxp`, `ap-eGr0HK4nfcPaOHG43dG88N`).
+
+**q-lab PER, ONNX streaming greedy fp32, two golds** (`scripts/qlab_per_eval.py` + `qlab_per_report.py`). `ordered` = `ordered_quran_phonemes[surah:ayah]` (all prior numbers); `text` = Quran-Lab gold `quran_text2phoneme[norm(reference_text)]` with v1.1 references (misses 82 tlog / 11 nufais / 4 EA clips — their `quran_per_eval.py` drops misses). The golds disagree at ayah-final madd (4 vs 2 harakat) on 259/486 shared clips; `madd-free` collapses madd runs. The 11 v1.1 nufais clips recite the ayah twice, so `ordered` scores correct transcription as insertions (v3 nufais I 7.16 on 200 vs 3.31 on 189).
+
+| model | ordered ALL / EA / nufais / tlog (583) | madd-free ALL / tlog | text ALL / tlog (486 / 117) |
+|---|---|---|---|
+| **v3 (control)** | 6.27 / 4.24 / 7.91 / 6.90 | 5.26 / 5.42 | 4.15 / 5.89 |
+| v3 int8 | 6.27 / 4.23 / 7.97 / 6.83 | — | 4.12 / 5.75 |
+| v3.1 | 5.56 / 2.39 / 7.78 / 7.06 | 4.96 / 5.93 | 4.19 / 7.24 |
+| ft-gentle † | 4.32 / 1.47 / 4.55 / 8.39 (D 6.27) | 4.17 / 8.17 | 4.00 / 8.62 |
+| interp α=0.1 † | 5.14 / 1.96 / 7.55 / 6.36 | 4.73 / 5.54 | 4.16 / 7.24 |
+| interp α=0.3 † | 4.49 / 1.53 / 7.22 / 4.89 | 4.33 / 4.66 | 4.15 / 7.24 |
+| interp-gentle α=0.5 † | 4.09 / 1.48 / 6.57 / 4.35 | 4.00 / 4.22 | 4.06 / 6.85 |
+| interp α=0.7 † | 3.73 / 1.44 / 5.70 / 4.25 | 3.63 / 4.11 | 3.87 / 6.35 |
+| interp α=0.9 † | 3.67 / 1.35 / 4.82 / 5.50 (D 3.21) | 3.55 / 5.32 | 3.77 / 6.85 |
+
+† EA leaked (above). Interp = v3.1 ⊕ ft-gentle epoch-1 (α on FT); exports `/vol/exports/interp-gentle-a{0.1,0.3,0.7,0.9}`.
+
+**Interp artifact check.** The tlog gain is a smooth interior minimum of the α curve (madd-free 5.93 → 5.54 → 4.66 → 4.22 → 4.11 → 5.32 → 8.17), not an artifact: FT deletions only take off at α ≥ 0.9. It is gold-dependent — under the 2-harakat text gold every blend is worse than v3 on tlog (best 6.35 vs 5.89) because FT labels put 4-harakat madd at waqf. **FT learns to not hear deviations:** tlog insertions fall monotonically with α (2.24 → 0.57); on the 46 v3-non-clean holdout clips (repeats / restarts) insertions go v3 10.4 → interp 5.5 → ft-gentle 2.7; on the 11 doubled-recitation nufais clips hyp/ref (single-ayah gold) goes v3 2.00 (10/11 transcribe both) → ft-gentle 1.37 (3/11). Part of every FT "gain" on tlog/nufais is suppressing real speech the labels omit.
+
+**Held-out multi-ayah windows** (`benchmark/build_heldout_multi.py`, 58 windows of 2–4 ayahs from the three q-lab reciters, 0.5 s gaps, 30 with a ≤4-word bridge ayah; audio + manifest off-repo). v3 PER 2.33, 0/157 ayahs dropped (≥50% deleted); v3.1 1.60, 0; interp α=0.3 / 0.5 / 0.7 † 0.70 / 0.63 / 0.70, 0; α=0.9 † 12.48, 17 dropped; **ft-gentle † 27.16 (D 26.90), 48/157 ayahs dropped (26/72 short), 36/58 windows** — on audio it trained on.
+
+**TLOG filter** (`phase0_modal.py --action tlog-filter --model v3`, app `ap-V5UTfjexs1ZWUT89ZCy68M`, 64 × 2-CPU shards, 0 errors; per-clip scores at `/vol/phase0/tlog_filter/v3/`). All 41,083 staged TLOG clips vs their training label: **clean (PER ≤ 0.10) 14,521 / 31.6 h; suspect 5,882 / 13.0 h; > 0.35 20,680 / 55.4 h**; median PER 0.36. Forced-score medians per token: −0.06 / −0.90 / −10.8. 3,732 non-clean clips (10.3 h) decode within PER 0.10 of a *different* ayah — 2,568 of them the previous ayah (label = audio + 1); across all clips with ayah ≥ 2, 6,904 match the previous ayah better than the label (not a basmala-numbering shift: 0 ayah-1 clips are the basmala). The FT mix trained on all 100 h. `tlog_clean_v3_cuts_fbank` = 14,354 cuts (clean ∩ `tlog_rx`). q-lab `tlog_holdout` under the same filter: 154 clean / 39 suspect / 7 > 0.35, and 0/46 non-clean decode closer to another ayah (only identical-text pairs) — the holdout was curated, its residual error is reciter deviation, not wrong labels. tlog PER on the v3-clean 154 (selection favours v3): v3 3.11, v3.1 3.36, ft-gentle 5.86, interp-gentle-a0.5 1.67.
+
+### Phase 0 completion + A0 (2026-09-30, afternoon)
+
+**Dev split (reciter-disjoint).** Six everyayah.com Hafs reciters that sit outside the curated 35-reciter set *and* outside every training manifest (EA 28 dirs + 34 QUA mushaf names): Ghamadi_40kbps, Ali_Jaber_64kbps, Fares_Abbad_64kbps, khalefa_al_tunaiji_64kbps, Karim_Mansoori_40kbps, Parhizgar_48kbps. 569 single ayahs + 48 2–4-ayah windows, 1.91 h (`benchmark/build_heldout_multi.py --reciters dev`, off-repo; on the volume at `/vol/phase0/corpora/dev_everyayah`). Quran-Lab says v3 saw "36 EveryAyah reciters"; the curated set is 35, so these six are *probably* not in v3's EA tier, but could be in its 1,161-reciter archive tier (unknowable). Phone-domain dev: 267 clean TLOG clips hash-held out of `tlog_clean_v3` (clip-disjoint only) + 300 non-clean TLOG clips (never trained on) for the insertion gate. All three q-lab reciters stay test-only. Excluded as dev: Ibrahim Akhdar, Mahmoud Ali Al-Banna, Mustafa Ismail, Saud Al-Shuraim (QUA mushafs), Ahmed_Neana / Mohammad_al_Tablaway (likely in v3's EA tier).
+
+**QUA fingerprint.** 399 QUA clips are (surah, ayah, ±60 ms) twins of held-out EA / nufais clips. Best-lag fbank cosine: twins max 0.377, same-ayah other-recording controls max 0.371, same-recording positive control (q-lab wav vs everyayah.com mp3) 0.80–0.87 → 0 copies of held-out recordings in QUA.
+
+**Perturbed-copy bug.** fbank manifests hold `_sp0.9` / `_sp1.1` copies under their own ids; the first `tlog_clean_v3` kept only the 1.0× cut (14,090 of 42,270). Fixed (flags follow the base id) before A0; `tlog_clean_v3` = 42,270 cuts.
+
+**Headline PER** (promotion metric) = Quran-Lab v1.1 references over all 600 clips: their `quran_text2phoneme` gold where the table has the reference (503), else ordered phonemes × repeats with waqf madd at 2 harakat (97). Madd-free = secondary. **v3 control: headline 4.45 (EA 3.10 / nufais 4.64 / tlog 6.35), madd-free 3.76.**
+
+**Correction eval (synthetic).** `benchmark/build_correction_synth.py`: omission / substitution / repetition / skipped-ayah edits spliced into clean ayahs at CTC-Viterbi word boundaries (30 ms crossfade); test = three q-lab reciters (255 clips: 58 clean, 51 omission, 49 substitution, 52 repetition, 45 skip-ayah), dev = six dev reciters (206). v3 test: omission recall 0.039, substitution 0.020, skip-ayah 0.733, repetition 0 (no rule), overall recall 0.248 / precision 0.947, 0 false flags on 58 clean clips (dev: 0.286 / 0.944 / 0). The shipped rules almost never fire on word-level edits.
+
+**A0** (`ap-yqax5YcK7boRkMdpshQumQ`, H100:4, init v3 `.pt`, `everyayah_rx,qua_rx,iqra_rx,retasy_rx,tlog_clean_v3`, 2 ep, lr 0.001, warmup 1000; leak-check 0 flags on all five sources; valid 0.0292 ep1 / 0.0110 mid-ep2; `/vol/exp/a0-v3-clean`). Exports `/vol/exports/a0-ep{1,2}[-a0.5|-a0.7]` (α on FT, init v3). Eval: `scripts/eval_modal.py` + `promotion_gates.py`.
+
+| metric | v3 | ep1 | ep1 α0.5 | ep1 α0.7 | ep2 | ep2 α0.5 | ep2 α0.7 |
+|---|---|---|---|---|---|---|---|
+| headline | 4.45 | 4.42 | 4.37 | 4.26 | 4.46 | **4.17** | 4.26 |
+| madd-free headline | 3.76 | 3.11 | 3.15 | 2.99 | 3.23 | **2.96** | 3.03 |
+| madd-free EA / nufais / tlog | 2.89 / 3.62 / 5.41 | 1.54 / 4.22 / 3.91 | 2.06 / 3.45 / 4.42 | 1.76 / 3.52 / 4.13 | 1.47 / 4.66 / 3.83 | 1.80 / 3.42 / 4.09 | 1.63 / 4.02 / 3.73 |
+| held-out multi: ayahs dropped (PER) | 0 (2.34) | 11 (7.37) | 0 (1.14) | 0 (1.36) | 40 (22.25) | 0 (1.02) | 0 (1.19) |
+| non-clean ins: holdout / tlog dev (floor 0.85×v3) | 10.38 / 22.01 | 5.62 / 16.56 | 9.29 / 22.12 | 7.57 / 20.61 | 5.78 / 15.29 | 8.67 / 21.51 | 7.03 / 19.48 |
+| dev single ordered / madd-free | 2.89 / 1.00 | 0.79 / 0.73 | 1.66 / 1.53 | 1.28 / 1.20 | 0.63 / 0.60 | 1.14 / 1.03 | 0.83 / 0.78 |
+| dev multi drops | 0 | 12 | 0 | 0 | 28 | 0 | 0 |
+| tlog dev | 3.76 | 1.94 | 1.97 | 1.76 | 1.92 | 1.74 | 1.73 |
+| tracker held-out multi / v1 | 56/58, 52/53 | | 56/58, 52/53 | | | 56/58, 53/53 | |
+| correction test recall / precision / clean FF/min | 0.248 / 0.947 / 0 | | 0.262 / 1.000 / 0 | | | 0.248 / 1.000 / 0 | |
+| **gates** | | 3 fail | **all pass** | ins | all fail | ins (8.67 < 8.83) | ins |
+
+Paired bootstrap (2,000 resamples, clip level) of the headline delta vs v3: ep1-α0.5 [−0.36, +0.17] (not significant), ep1-α0.7 [−0.54, +0.17], ep2-α0.5 [−0.56, −0.01]. Raw FT again deletes whole ayahs in multi-ayah audio (ep2: 40/157 held-out, 28 dev) even trained leak-free from v3, and suppresses insertions on deviant speech; the blends repair both. Headline − madd-free is 0.69 for v3 and ~1.2 for FT/blends: our training labels put waqf madd at 4 harakat while the v1.1 gold uses 2, costing FT ≈ 0.5 pp of headline. **Verdict: ep1-α0.5 passes every gate but its headline gain is inside noise; ep2-α0.5 has the only significant gain and misses the insertion floor by 0.16 pp. Not promoted.** Next single-change arms: waqf-madd label convention (2 harakat at ayah end), multi-ayah windows (A0w).
+
+### Arms after A0 (2026-09-30, evening): A0e, A0w, A0t, A1
+
+One change per arm, same recipe as A0 (v3 init, lr 0.001, warmup 1000, H100:4), same eval + gates; CIs are paired clip-level bootstraps of the headline delta (2,000 resamples, 95%). Best control logged: **a0-ep1-a0.5** (4.37, passes all gates, CI vs v3 [−0.35, +0.18]).
+
+- **A0e — waqf-2 labels** (`ap-WQyAQPHJXwB01o9ZoMLrRB`, sources `*_w2`). Ayah-final 4-beat madd (optionally before ≤2 closing chars) → 2 beats; matches the v1.1 gold on 406/487 shared clips (was 228); 51–82% of cuts per source change, rebuilt labels = originals on every cut. Headline drops ~0.6 pp at every variant (CI vs A0 all negative, e.g. ep1-α0.5 −0.60 [−0.76, −0.43]); madd-free vs A0 ≈ 0 for blends (it is a label-convention fix, not acoustics). **a0e-ep1-a0.5: 3.77, all gates pass, CI vs v3 [−0.96, −0.43].**
+- **A0w — multi-ayah windows** on A0e (`ap-86NAkX4OJwTIkzMaBNcE7j`, + `everyayah_multi_rx_w2x3` = the leak-free window set repeated ×3 → 30% of epoch hours; lhotse `CutSet.mux` does not stop early, so mux weights alone never changed exposure — E4's "2.5× weight" was a no-op on totals). Raw FT ayah drops 11/25 → 2/1 (ep1/ep2). **a0w-ep1-a0.5: 3.60, all gates, CI vs A0e counterpart −0.17 [−0.27, −0.07]** — new best. a0w-ep2-a0.5 also passes (3.60, best insertion 9.60) but vs A0e it is +0.05 [−0.04, +0.16].
+- **A0t — relabelled TLOG** on A0w (+ `tlog_relab_v3_w2_rx`: 3,690 non-clean clips whose decode is within PER 0.10 of a different ayah, relabelled; 1 clip dropped as a holdout twin after relabel — the train-time leak check refused the first launch). No gain vs A0w: ep1-α0.5 +0.01 [−0.07, +0.10], ep2-α0.5 +0.11 [+0.02, +0.20]. **Killed** (plan rule: no gain); A0w stays the base.
+
+| variant | headline | madd-free | drops | ins holdout / tlog-dev | tracker held-out, v1 | correction R / P / FF | gates failed | CI vs v3 | CI vs previous arm |
+|---|---|---|---|---|---|---|---|---|---|
+| v3 | 4.45 | 3.76 | 0 | 10.38 / 22.01 (floors 8.83 / 18.71) | 56/58, 52/53 | 0.248 / 0.947 / 0 | — | — | — |
+| a0-ep1-a0.5 | 4.37 | 3.15 | 0 | 9.29 / 22.12 | 56, 52 | 0.262 / 1.0 / 0 | — | −0.09 [−0.35, 0.18] | — |
+| a0e-ep1-a0.5 | 3.77 | 3.09 | 0 | 8.98 / 21.90 | 56, 53 | 0.262 / 1.0 / 0 | — | −0.69 [−0.96, −0.43] | vs A0 −0.60 [−0.76, −0.43] |
+| a0e-ep2-a0.7 | 3.46 | 2.77 | 0 | 6.48 / 19.37 | 56, 53 | 0.248 / 1.0 / 0 | ins holdout | −1.00 [−1.38, −0.64] | vs A0 −0.81 [−1.12, −0.55] |
+| **a0w-ep1-a0.5** | **3.60** | 2.93 | 0 | 9.29 / 22.16 | 56, 53 | 0.255 / 1.0 / 0 | — | −0.86 [−1.12, −0.60] | vs A0e −0.17 [−0.27, −0.07] |
+| a0w-ep2-a0.5 | 3.60 | 2.93 | 0 | 9.60 / 22.16 | — | — | — | −0.86 [−1.10, −0.62] | vs A0e +0.05 [−0.04, 0.16] |
+| a0w-ep2-a0.7 | 3.41 | 2.74 | 0 | 7.81 / 20.75 | 56, 53 | 0.255 / 1.0 / 0 | ins holdout | −1.04 [−1.37, −0.72] | vs A0e −0.04 [−0.19, 0.11] |
+| a0t-ep1-a0.5 | 3.61 | 2.95 | 0 | 9.45 / 22.07 | 56, — | 0.262 / 1.0 / 0 | — | −0.84 [−1.10, −0.60] | vs A0w +0.01 [−0.07, 0.10] |
+| a0t-ep2-a0.7 | 3.37 | 2.68 | 0 | 7.03 / 20.42 | 56, — | 0.255 / 1.0 / 0 | ins holdout | −1.09 [−1.45, −0.74] | vs A0w −0.05 [−0.18, 0.08] |
+| a1-ep1-a0.5 | 3.95 | 3.25 | 0 | 10.23 / 22.75 | 56, 53 | 0.255 / 1.0 / 0 | — | −0.51 [−0.77, −0.25] | vs A0w +0.35 [+0.23, +0.48] |
+| a1-ep1-a0.7 | 3.49 | 2.81 | 0 | 7.57 / 20.78 | 56, 53 | 0.262 / 1.0 / 0 | ins holdout | −0.97 [−1.28, −0.67] | vs A0w −0.05 [−0.24, 0.12] |
+
+- **A1 — CR-CTC** on A0w (`--use-cr-ctc 1 --enable-spec-aug 0 --cr-loss-scale 0.2 --time-mask-ratio 2.5`, `--max-duration 600` per the recipe, 1 epoch — every best variant so far is epoch 1 and Eden's schedule does not depend on total epochs). Worse at α 0.5 (+0.35 [+0.23, +0.48] vs a0w-ep1-a0.5; raw ep1 +0.21 [0.00, +0.43]); α 0.7 ties (−0.05, CI crosses 0) and fails the insertion floor. It does keep more insertions (10.23 at α 0.5, above v3's floor comfortably). **Killed** (no PER gain vs A0w). Confound: halved max-duration at the same LR means 2× optimizer steps of half-size batches.
+
+**Current best: a0w-ep1-a0.5** (waqf-2 labels + ×3 multi-ayah windows, epoch 1, 50/50 with v3; `/vol/exports/a0w-ep1-a0.5`): headline 3.60 vs v3 4.45 (−0.86 [−1.12, −0.60]), madd-free 2.93 vs 3.76, 0 dropped ayahs, insertions 9.29 / 22.16, tracker 56/58 + v1 53/53, correction 0.255 / 1.0 / 0. Not promoted to the shipped model (no browser/int8/latency row yet).
+
+- **A0w50 — windows at ~50% of epoch hours** (`ap-H1WZ2wrjkdk0WDzm2Fe6xC`, `everyayah_multi_rx_w2x7`, 735,693 cuts; otherwise identical to A0w; leak-check 0 flags; valid 0.0116 / 0.0048). No gain: best gate-passing variant ep1-α0.5 = 3.66 vs a0w-ep1-a0.5 3.60, CI +0.06 [−0.02, +0.15]; ep2-α0.5 3.78, +0.18 [+0.08, +0.28] (worse). α 0.7 variants score 3.40–3.43 but fail the insertion floor, as in every arm. ep1-α0.5: tracker 56/58, correction 0.255 / 1.0 / 0. Raw drops 2 / 1, same as ×3. **Killed** — 30% windows stay; 70% not run. Spend ~$31.8.
+
+**int8 + browser (2026-10-01).** Dynamic-int8 exports, same eval:
+
+| model | headline | madd-free | drops | ins holdout / tlog-dev | gates vs v3 | tracker held-out, v1 | browser `test:browser` |
+|---|---|---|---|---|---|---|---|
+| a0w-ep1-a0.5 int8 | 3.59 | 2.92 | 0 | 9.37 / 22.10 | pass | 56/58, 53/53 | 6/6, RTF 0.100, ready 1112 ms |
+| v3 int8 | 4.47 | 3.79 | 0 | 10.46 / 22.05 | headline (4.468 vs 4.452) | 56/58, 52/53 | — |
+| shipped interp-gentle-a0.5 int8 | 4.16 | 2.95 | 0 | 5.70 / 15.91 | **both insertion gates** | — | 6/6, RTF 0.100, ready 1437 ms |
+
+a0w int8 − fp32: headline −0.01, madd-free −0.01, insertions +0.08 / −0.05, tracker unchanged. a0w int8 also passes vs v3 int8. The currently shipped model fails the insertion floor (it suppresses deviant speech). Browser latency is end-to-end over the 6 default clips (134 s audio, ~13.5 s wall); identical for both models.
+
+Full 6-variant rows per arm (raw ep1/ep2 + α 0.5/0.7) are in the per-arm reports. Pattern across every arm: α 0.7 and raw epochs score lower headline but fail the insertion floor (they learn to not transcribe deviations); α 0.5 at epoch 1 is the only setting that passes everything each time. Correction recall does not move (≈0.25, driven by skipped-ayah flags) — acoustic FT does not fix a rules problem.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
