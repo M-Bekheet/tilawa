@@ -21,8 +21,16 @@ export interface CorrectionThresholds {
   vowelMargin: number;
   /** Min mean word margin for a vowel flag (the whole word must be confidently heard). */
   vowelWordMargin: number;
+  /** Max heard ratio of a `skipped` word that counts as an omission. 0 = only
+   * words with nothing aligned. A `skipped` word is always below the engine's
+   * `minHeardFraction`, so 1 accepts every partial omission. */
+  omissionMaxHeard?: number;
 }
-export const DEFAULT_CORRECTION_THRESHOLDS: CorrectionThresholds = { vowelMargin: 0.05, vowelWordMargin: 0.5 };
+export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
+  vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1,
+};
+const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>
+  ({ ...DEFAULT_CORRECTION_THRESHOLDS, ...th }) as Required<CorrectionThresholds>;
 export interface CorrectionState {
   phase: 'idle' | 'error' | 'retrying' | 'corrected';
   issue: CorrectionIssue | null;
@@ -42,8 +50,9 @@ function clearWord(v: WordVerdict | undefined): boolean {
 
 export function possibleWordIssues(
   verdicts: readonly WordVerdict[],
-  th: CorrectionThresholds = DEFAULT_CORRECTION_THRESHOLDS,
+  thresholds: Partial<CorrectionThresholds> = DEFAULT_CORRECTION_THRESHOLDS,
 ): CorrectionIssue[] {
+  const th = withDefaults(thresholds);
   const byIndex = new Map(verdicts.map(v => [v.wordIndex, v]));
   return verdicts.flatMap(v => {
     const before = byIndex.get(v.wordIndex - 1);
@@ -51,7 +60,9 @@ export function possibleWordIssues(
     // Do not infer leading/trailing omissions, uncertain audio, or skipped ayahs.
     if (!clearWord(before) || !clearWord(after) || before!.surah !== v.surah
       || after!.surah !== v.surah || before!.ayah !== v.ayah || after!.ayah !== v.ayah) return [];
-    const omission = v.state === 'skipped' && v.heardRatio === 0;
+    // A partly heard word (the aligner lent it a few chars of its neighbours,
+    // or the reciter said only its onset) is still an omission.
+    const omission = v.state === 'skipped' && (v.heardRatio === 0 || v.heardRatio <= th.omissionMaxHeard);
     const substitution = v.state === 'wrong' && Number.isFinite(v.distance) && v.distance >= 0.6
       && Number.isFinite(v.margin) && v.margin >= 0.65
       && v.heardRatio >= 0.5 && v.heardRatio <= 1.5;
@@ -88,6 +99,7 @@ export class CorrectionController {
 
   observe(verdicts: readonly WordVerdict[], cursor: RecitationPosition, frame: number, attempt = this.state.attempt): boolean {
     if (this.mode !== 'correction' || !Number.isFinite(frame) || attempt !== this.state.attempt) return false;
+    const th = withDefaults(this.thresholds);
     if (this.state.phase === 'retrying') {
       const issue = this.state.issue!;
       // Require a fresh, clear prefix from the start of this ayah through the
@@ -97,7 +109,7 @@ export class CorrectionController {
       // A retry that repeats a confident vowel error is not a correction.
       const good = Array.from({ length: through + 1 }, (_, word) =>
         prefix.find(v => v.word === word)).every(v => clearWord(v)
-          && ((v!.vowelErrors ?? 0) === 0 || v!.vowelMargin < this.thresholds.vowelMargin));
+          && ((v!.vowelErrors ?? 0) === 0 || v!.vowelMargin < th.vowelMargin));
       if (!good) { this.retryFrame = null; return false; }
       if (this.retryFrame === null || frame < this.retryFrame) this.retryFrame = frame;
       if (frame - this.retryFrame < 12) return false;
@@ -105,7 +117,7 @@ export class CorrectionController {
       return true;
     }
     if (this.state.phase !== 'idle') return false;
-    const issues = possibleWordIssues(verdicts, this.thresholds).filter(v => !this.suppressed.has(v.wordIndex));
+    const issues = possibleWordIssues(verdicts, th).filter(v => !this.suppressed.has(v.wordIndex));
     const live = new Set(issues.map(v => v.wordIndex));
     for (const key of this.candidates.keys()) if (!live.has(key)) this.candidates.delete(key);
     for (const issue of issues) {

@@ -21,6 +21,16 @@ describe('conservative word correction', () => {
     expect(possibleWordIssues(omission)[0]).toMatchObject({ word: 1, kind: 'possible_omission' });
     expect(possibleWordIssues(substitution)[0]).toMatchObject({ word: 1, kind: 'possible_substitution' });
   });
+  it('treats a partly heard skipped word as an omission (omissionMaxHeard)', () => {
+    const partial = [word(0), word(1, { state: 'skipped', distance: 1, heardRatio: .25, margin: 0 }), word(2)];
+    expect(possibleWordIssues(partial)[0]).toMatchObject({ word: 1, kind: 'possible_omission' });
+    expect(possibleWordIssues(partial, { vowelMargin: .05, vowelWordMargin: .5, omissionMaxHeard: 0 })).toEqual([]);
+    expect(possibleWordIssues(partial, { vowelMargin: .05, vowelWordMargin: .5, omissionMaxHeard: .2 })).toEqual([]);
+    // Thresholds objects from before the field existed keep working.
+    expect(possibleWordIssues(partial, { vowelMargin: .05, vowelWordMargin: .5 })).toHaveLength(1);
+    // Still needs clear anchors on both sides.
+    expect(possibleWordIssues([word(0, { margin: .2 }), partial[1]!, word(2)])).toEqual([]);
+  });
   it('detects a confident harakah error on an otherwise matching word', () => {
     expect(possibleWordIssues(vowel)[0]).toMatchObject({ word: 1, kind: 'possible_vowel' });
     // Same skeleton, but the decoder was unsure which vowel it heard, or the word itself was weak.
