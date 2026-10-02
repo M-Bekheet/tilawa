@@ -11,6 +11,9 @@ Correction-mode recall on real slips, at the same false-flag rate on clean recit
 - **`CorrectionController.settle(verdicts, cursor)`.** When the tracker is dropped (`stop()`, surah completed, silent idle), the session checks the words `observe()` never saw with settled context once. Vowel flags stay observe-only. `settle: false` turns it off.
 - **`CorrectionThresholds`.** New optional `omissionMaxHeard`, `gopFlag`, `gopAnchor`, `settle`, `repetitionGain`. Missing fields take the defaults, so existing thresholds objects keep working.
 - Verified on real recordings only (no synthetic or acted mistakes). False flags per clean minute did not rise on any clean set. Numbers are in `lab/EXPERIMENTS.md`, "Correction rules v2 (real recordings)".
+- **Defaults re-tuned on acted recitation mistakes** (private set, speaker-disjoint dev/test; numbers in `lab/EXPERIMENTS.md`, "Correction rules on acted help mistakes"). The GOP rule is **off** by default (`gopFlag: -Infinity`): on clean takes it still raised false flags that no other rule did, and it added no recall on the shipped model. Opt in with `gopFlag: -5`. Its default gating is now wrong words only (`gopOnSkipped: false`), substitutions only (`gopOmission: false`), not inside `settle()` (`settleGop: false`), and `gopAnchor: -1`. `vowelWordMargin` goes from 0.5 to 0.8. On the shipped model, test F1 went from 0.150 to 0.259, with clean false flags no higher on any set.
+- **New GOP knobs:** `gopOnWrong`, `gopOnSkipped`, `gopOmission`, `gopSubstitution`, `gopNoneMargin`, `gopNoneMin`, `gopLocalMin`, `gopPersistFrames`, `settleGop`.
+- **`repetitionMode: 'off' | 'note' | 'flag'`** (default `note`). A single repeated word is a soft note: the session emits `{ type: "correction_note", issue }` (new `WorkerOutbound` member) and recitation is not interrupted. `CorrectionController.takeNotes()` drains them. `flag` keeps the old interrupting behaviour.
 
 ## 0.3.1
 

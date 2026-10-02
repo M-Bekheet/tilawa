@@ -738,6 +738,77 @@ Help slips did not move: 1/10 on both models, the same word as the baseline. It 
 
 **What is still missed.** 438 of the 820 held-out slips sit within 0.3 s of a clip edge. Most of those are probably segmentation cuts rather than slips, and leading or trailing words have no live rule because a reciter may start or stop anywhere. On the 323 interior slips, recall is 5% (shipped) and 7% (a0w). On the tuning half, 78 of the 103 interior substitutions shipped still misses end as `ok` (44) or `unsure` (34) in the aligner (wrong 8, skipped 2, not aligned 15). Letting GOP flag those states raised FF in every variant tried.
 
+## Correction rules on acted help mistakes (re-tune)
+
+2026-10-02. Acted takes from tilawa.dev/help (`kind != "none"`) used privately as a labelled correction set. Never published: audio, ids, labels and per-clip outputs stay on the Modal volume (`/help/`, manifest `use="acted"`) and in `/tmp`. Only these aggregates are committed.
+
+**Export (743 rows).** `kind`: none 305 (12 with `extra_mistake`), skip_word 95, substitution 85, vowel 76, skip_ayah 70, repeat 63, tajweed 49. Every acted row has exactly one `mistakes` entry with `ayah` and a 1-based `word` (none for skip_ayah) plus `expected`. Substitutions also carry `said` / `said_from`, vowels `letter` / `from` / `to`, tajweed `rule`. `mechanism` (14 values) and `scenario` (33) are set on 339 rows.
+
+**Split.** Speaker-disjoint. The 74 speakers in the earlier clean-only manifest keep their split (0 moved). The 46 new speakers are split by the same hash order. Dev: 56 speakers; clean 110 (20.7 min), acted 204 (29.9 min). Test: 64 speakers; clean 183 (32.6 min), acted 234 (34.2 min). Acted per kind, dev/test: skip_word 39/56, substitution 39/46, vowel 37/39, skip_ayah 34/36, repeat 33/30, tajweed 22/27. TLOG clean dev (267, 33.7 min) and v1 (53, 17.0 min) have no split and guard both halves.
+
+**Localisation** (`correction_eval.py locate-acted`). Label to phoneme-corpus word: 437/438 (0.998 [0.987, 1.000]). Forced-alignment span: 435. An edit at or next to that word in the free decode of either model: 348/438 (0.795 [0.754, 0.830]); both models 320; exact word 321. Confirmed by kind: skip_word 95/95, repeat 62/63, skip_ayah 67/70, substitution 73/85, vowel 38/76, tajweed 13/49.
+
+**Scoring** (`acted_eval.py`). A flag hits a label on the same ayah within ±1 word (skip_ayah: anywhere in the ayah). Recall covers the five in-scope kinds. Tajweed is reported but left out, because the engine does not grade tajweed. Precision counts every error flag on the split's acted and clean help takes, and a flag that hits no label is a false alarm. Repetition notes are counted separately. CIs: Wilson for P and R, speaker-cluster bootstrap for F1 and paired deltas.
+
+**Tuning (dev only, paired trace replay, 1 thread).** Hard constraint: clean false flags on help clean dev, TLOG clean dev and v1 no higher than the shipped engine (shipped model, old rules). The GOP grid had 2017 rule sets, crossing flag, anchor, states, kinds, persistence, settle and local-min. The other-rules grid had 864, crossing partial omission, settle, repetition mode and gain, and the vowel margins. Findings:
+- GOP adds at most +1 dev catch on shipped and +3 on a0w over GOP off. FF is unchanged at `gopFlag` −5 when GOP is gated to wrong words and substitutions only, and kept out of settle. v2's −3 adds a help clean dev flag on a0w.
+- Settle adds most of v2's gain (shipped dev 20 → 27 catches). Its 4 dev false alarms are all on a short ayah outside the take, from a lock onto a similar ayah. They look the same as its hits in every verdict field.
+- Partial omission doubles skip_word catches (7 → 14 on dev).
+- `vowelWordMargin` 0.5 → 0.8 halves TLOG clean dev FF (shipped 4 → 2, a0w 3 → 2) and costs one shipped dev vowel catch.
+- Repetition as a note: at gain 5, 5 of 6 dev notes hit a label (shipped) and 6 of 8 (a0w). There are 0 notes on clean sets.
+- Structural misses that no threshold reaches. On dev, 26 of 39 substitution and 15 of 39 skip_word labelled words never appear in any verdict snapshot: the tracker follows the reciter into the similar passage or loses lock. Every skip_ayah take skips the middle of 3 ayahs, and the tracker then aligns ayah N+2's audio onto N+1, so N+2 is never matched and the ayah-gap rule fires on 2 of 34.
+
+Frozen re-tuned set: `gopFlag −5, gopAnchor −1, gopOnSkipped false, gopOmission false, settleGop false, vowelWordMargin 0.8, repetitionMode note, repetitionGain 5`. Everything else is as in v2.
+
+**Test (scored once).** Replay on identical traces. Cells are P / R / F1 over 207 in-scope labels, then flags, then clean FF per minute (issues).
+
+| model · rules | P | R | F1 | flags | help clean | TLOG clean dev | v1 |
+|---|---|---|---|---|---|---|---|
+| shipped · old | 0.895 [0.69, 0.97] | 0.082 | 0.150 [0.08, 0.22] | 19 | 0.031 (1) | 0.119 (4) | 0 |
+| shipped · v2 | 0.884 | 0.184 | 0.304 | 43 | 0.092 (3) | 0.119 (4) | 0 |
+| shipped · v2 GOP off | 0.944 | 0.164 | 0.280 | 36 | 0.031 (1) | 0.119 (4) | 0 |
+| shipped · re-tuned | 0.944 | 0.164 | 0.280 | 36 | 0.061 (2) | 0.059 (2) | 0 |
+| shipped · re-tuned GOP off | 0.970 | 0.155 | 0.267 | 33 | 0.031 (1) | 0.059 (2) | 0 |
+| a0w · old | 0.885 | 0.111 | 0.197 | 26 | 0.092 (3) | 0.089 (3) | 0 |
+| a0w · v2 | 0.920 | 0.217 | 0.352 | 50 | 0.123 (4) | 0.089 (3) | 0 |
+| a0w · v2 GOP off | 0.930 | 0.188 | 0.313 | 43 | 0.092 (3) | 0.089 (3) | 0 |
+| a0w · re-tuned | 0.953 | 0.198 | 0.328 | 43 | 0.061 (2) | 0.059 (2) | 0 |
+| a0w · re-tuned GOP off | 0.950 | 0.184 | 0.308 | 40 | 0.061 (2) | 0.059 (2) | 0 |
+
+Paired F1 vs shipped · old: v2 +0.154 [+0.098, +0.201]; v2 GOP off +0.129 [+0.071, +0.174]; re-tuned +0.129 [+0.063, +0.182]; re-tuned GOP off +0.116 [+0.049, +0.165]. GOP's own contribution: re-tuned vs v2 GOP off on shipped is +0.000 [−0.030, +0.033], and a0w re-tuned vs a0w v2 GOP off is +0.015 [−0.012, +0.046]. The extra shipped help clean flag in re-tuned is a GOP `possible_substitution`, the same flag v2 raises.
+
+Live, same harness as the baseline (1 thread, issues dismissed on sight):
+
+| model · rules | P | R | F1 | exact | median latency | help clean | TLOG clean dev | v1 | RTF |
+|---|---|---|---|---|---|---|---|---|---|
+| shipped · old | 0.895 [0.69, 0.97] | 0.082 [0.05, 0.13] | 0.150 [0.08, 0.22] | 17 | 3.48 s | 0.031 (1) | 0.089 (3) | 0.059 (1) | 0.060 |
+| shipped · new defaults | 0.969 [0.84, 0.99] | 0.150 [0.11, 0.20] | 0.259 [0.16, 0.35] | 30 | 2.96 s | 0.031 (1) | 0.059 (2) | 0 | 0.060 |
+| a0w · new defaults | 0.949 [0.83, 0.99] | 0.179 [0.13, 0.24] | 0.301 [0.21, 0.39] | 35 | 3.28 s | 0.061 (2) | 0.059 (2) | 0 | 0.093 |
+
+Paired vs shipped · old (live): shipped new defaults have ΔF1 +0.109 [+0.040, +0.160], ΔR +0.068 [+0.023, +0.104], ΔP +0.074 [0.000, +0.233]. a0w new defaults have ΔF1 +0.150 [+0.088, +0.203].
+
+Per kind on test, shipped new defaults (live), as kind-correct R / F1, then caught any kind / n: skip_word 0.38 / 0.55, 21/56; substitution 0.11 / 0.20, 5/46; vowel 0.03 / 0.05, 1/39; skip_ayah 0.08 / 0.15, 3/36; repeat 0 (1/30 caught by an error flag; the live harness does not record notes, and the replay has 0/30 notes); tajweed 0/27. The baseline was skip_word 9/56, substitution 3/46, vowel 1/39, skip_ayah 3/36, repeat 1/30. Every flag that hits is on the exact word except one repeat. Precision per kind is 1.00 except skip_ayah at 0.75.
+
+Replay versus live: the trace rounds margins to 3 decimals, so a borderline vowel or substitution flag can flip (shipped old TLOG clean dev 4 replay vs 3 live, v1 0 vs 1).
+
+**Listening-check queue A (by-ear tags, re-traced with 1 thread, paired replay).** Precision of the flags on the 29 tagged slips, lenient / strict:
+
+| model · rules | flagged | lenient | strict |
+|---|---|---|---|
+| shipped · old | 4 | 3/4 | 2/4 |
+| shipped · v2 | 18 | 11/17 | 7/17 |
+| shipped · v2 GOP off | 6 | 5/6 | 3/6 |
+| shipped · re-tuned | 4 | 4/4 [0.51, 1.0] | 3/4 |
+| shipped · re-tuned GOP off | 3 | 3/3 [0.44, 1.0] | 3/3 |
+| a0w · re-tuned | 11 | 8/10 | 4/10 |
+| a0w · re-tuned GOP off | 8 | 6/7 | 4/7 |
+
+Queue B (100): no rule set flags a real slip (0/40). v2 flags 3 not_slip, and the new defaults flag 0 on shipped.
+
+**Call.** Ship v2 with GOP off, `vowelWordMargin` 0.8 and repetition as a soft note. These are the new SDK defaults, and they pass every gate on the shipped model. GOP stays opt-in with the re-tuned gating as its default shape: it now passes the by-ear check, but it adds no test F1 on shipped and adds one help clean false flag. The GOP-off variant of the re-tuned set was named after the test run. GOP off was the pre-declared fallback from the listening check, and every other field was fixed on dev.
+
+Not done: a synthetic set. The dev acted half already has 181 in-scope labels, and the limits above are structural (tracker lock), which splicing cannot probe.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
