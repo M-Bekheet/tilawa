@@ -809,6 +809,84 @@ Queue B (100): no rule set flags a real slip (0/40). v2 flags 3 not_slip, and th
 
 Not done: a synthetic set. The dev acted half already has 181 in-scope labels, and the limits above are structural (tracker lock), which splicing cannot probe.
 
+## Tracker in correction mode (acted mistakes)
+
+2026-10-02. Same private acted set, split, labels and scorer as the section above. Aggregates only. Shipped model, correction rules at the current defaults throughout; only the tracker changes. Tracking mode is untouched: every new knob acts only in correction mode, and with all knobs at 0 and no passage the engine reproduces the previous issues and verses on all 634 dev clips.
+
+**Method.** `harness.ts` can record each clip's model log_probs (`ZIPFORMER_LP_CACHE`, `ZIPFORMER_LP_MODE=record`) and replay them with no ONNX. That lets engine variants run on identical acoustic output: a paired replay. Both modes keep the encoder running across idle / dismiss resets, which the live session restarts. `scripts/tracker_correction_eval.py` runs the sets in 4 parallel harnesses (1 thread each). `scripts/tracker_diag.py` classifies each missed label from the per-word verdict states and the tracker timeline. Live runs are not reproducible run to run: two identical full live passes differ on 3 of 183 help clean clips and 1 acted clip, verses included, even at 1 intra-op thread. Paired replay is the headline here, and live is reported for reference.
+
+**Dev diagnosis (replay, current defaults).** "Untracked" means the labelled word never reached a controller snapshot.
+- substitution (39): 26 untracked, of which 16 locked only onto another ayah and 10 never locked (fallback only). Of the 11 tracked, 9 read `ok`, 1 `unsure`, 1 `wrong`. 2 caught.
+- skip_word (39): 15 untracked (8 no lock, 6 other ayah, 1 late lock), 9 tracked but not flagged, 15 caught.
+- The other ayah is usually a near-identical copy (refrains 55:13…, 37:80 / 37:131, 7:111 / 26:36, 79:39 / 79:41). On a 4–7 s single-ayah take nothing in the audio separates them, so this is a missing-information problem, not a threshold one.
+- skip_ayah (34): N matched, then N+1 unmatched and N+2 unmatched in 15, N+1 matched (N+2's audio bent onto it) in 10, caught 2. N+2 typically completes only while `stop()` flushes the tail, where the ayah-gap rule did not run.
+- The tracked skip_word misses include 6 on an ayah's second-to-last word with no verdict on the last word. The take ended, the open segment stopped at the cursor inside word n−2, and the last word's audio was aligned onto n−2.
+
+**Changes** (correction mode only):
+1. `ZipformerSession.setExpected(passage)`. Lock at the passage start after any isti'adha / basmala, search only inside it, no relocation, optional `outsideJumpCost`. The harness passes the manifest passage per clip (`--expected`); TLOG clean dev has none.
+2. Skipped-ayah check. Heard chars on interior ayah A that fit A+1 (semi-global distance ≤ 0.35, ≥ 0.25 better than A, ≥ 10 chars, A+1 reading starts within the first 10% of them) raise `possible_skipped_ayah`. With a passage, the ayah-gap rule also runs at stop.
+3. `anchorAyahEnd` 2. Settled verdicts realign through the ayah end when the cursor stopped within 2 words of it.
+4. No passage: stop-time alignment of a take that never locked (`stopAlignDistance` 0.35, a detached tracer that never feeds tallies), with a mid-ayah lock started at the ayah's first word (`backfillRatio` 1.5).
+
+**Dev tuning (replay; FF = help clean dev / TLOG clean dev / v1 issues).**
+
+| step | P | R | F1 | FF |
+|---|---|---|---|---|
+| current defaults | 0.844 | 0.149 | 0.254 | 0 / 2 / 0 |
+| + passage lock | 1.000 | 0.215 | 0.355 | 0 / 2 / 0 |
+| + gap rule at stop | 1.000 | 0.221 | 0.362 | 0 / 2 / 0 |
+| + skipped-ayah check | 1.000 | 0.249 | 0.398 | 0 / 2 / 0 |
+| + anchorAyahEnd 2 (final, passage) | 1.000 | 0.276 | 0.433 | 0 / 2 / 0 |
+| final, no passage | 0.829 | 0.188 | 0.306 | 0 / 2 / 0 |
+
+Rejected or neutral on dev:
+- `skipMaxHead` 0.25: +1 help clean FF. A free-ended A+1 match hides inside "badly decoded A, then A+1".
+- Prefix-anchored skip fit: no gain at FF-safe thresholds.
+- `substitutionDistance` 0.5: +4 catches, +1 help clean FF. 0.55 gave +1 catch next to that cliff, so 0.6 stays.
+- `outsideJumpCost` 12: no change; the takes are too short for in-surah jumps.
+- `anchorAyahEnd` 3: same as 2.
+- `backfillRatio` alone: no change.
+- The skip thresholds sit on a plateau: R 0.260–0.282 over maxDistance 0.3–0.45, margin 0.15–0.3, head 0.05–0.15, all at 0 FF.
+
+**Dev after (final, passage).** substitution untracked 26 → 5. The remaining 24 tracked misses read `ok` 9, `unsure` 8, `wrong` 7; 5 of the `wrong` ones have clear neighbours and distance 0.54–0.59, and the substitution rule needs 0.6. skip_word untracked 15 → 7. skip_ayah caught 2 → 8.
+
+**Test (scored once; paired replay).** CIs: Wilson for P and R, speaker bootstrap for F1.
+
+| config | P | R | F1 | exact | median latency | help clean FF | TLOG clean dev FF | v1 FF |
+|---|---|---|---|---|---|---|---|---|
+| shipped engine (old rules) | 0.895 [0.69, 0.97] | 0.082 [0.05, 0.13] | 0.150 [0.08, 0.22] | 17 | 3.52 s | 0.031 (1) | 0.119 (4) | 0 |
+| current defaults | 0.970 [0.85, 0.99] | 0.155 [0.11, 0.21] | 0.267 [0.18, 0.35] | 30 | 3.01 s | 0.031 (1) | 0.059 (2) | 0 |
+| new tracker, no passage | 0.955 [0.85, 0.99] | 0.203 [0.15, 0.26] | 0.335 [0.25, 0.42] | 40 | 2.88 s | 0 | 0.059 (2) | 0 |
+| **new tracker + passage** | **0.983 [0.91, 1.00]** | **0.280 [0.22, 0.34]** | **0.436 [0.33, 0.52]** | 56 | 2.95 s | 0.031 (1) | 0.059 (2) | 0 |
+
+- Paired ΔF1 against the current defaults: +0.169 [+0.116, +0.227] with a passage, +0.068 [+0.035, +0.107] without. ΔR: +0.126 [+0.084, +0.174] and +0.048 [+0.025, +0.075].
+- Against the shipped engine: +0.286 [+0.195, +0.370] and +0.184 [+0.113, +0.243].
+- Every hit is on the exact word.
+
+Per kind, test, new tracker + passage. Kind-correct R / F1, then caught / n (current defaults in brackets):
+- skip_word: 0.61 / 0.76, 35/56 (21)
+- substitution: 0.20 / 0.33, 9/46 (5)
+- skip_ayah: 0.31 / 0.46, 11/36 (3), P 0.92
+- vowel: 1/39 (1)
+- repeat: 0 kind-correct, 2/30 caught by an error flag (2)
+- tajweed: 0/27
+
+Live, one pass each (1 thread, issues dismissed on sight), as P / R / F1, then help / TLOG clean dev / v1 issues:
+- shipped engine: 0.895 / 0.082 / 0.150; 1 / 4 / 2
+- current defaults (two passes): 0.912 / 0.150 / 0.257 and 0.941 / 0.155 / 0.266; 3 / 2 / 0 and 2 / 2 / 0
+- new, no passage: 0.955 / 0.203 / 0.335; 0 / 2 / 0
+- new + passage: 0.967 / 0.285 / 0.440; 2 / 2 / 0
+- The two live help clean flags with a passage are both `possible_skipped_ayah`. In one (83:35), the transcript runs from the end of 83:34 straight into 83:36 with nothing of 83:35, which looks like a real skip in a take labelled clean (not verified by ear). The other (23:40) is false: 40 was partly heard, and the check fired after a dismiss reset. Replay, which has no reset, raises neither.
+- RTF 0.059–0.068 for every config.
+
+**Gates.** Clean FF is no worse than the shipped engine on any set in replay. In live, help clean is 2 against the shipped engine's 1, with one of the 2 a likely real skip; TLOG clean dev and v1 are better. Tracking mode: v1 SeqAcc 53/53 and held-out multi 56/58, unchanged. vitest: 125 passed, plus 1 failure that is pre-existing on this machine (the int8 `runner.node` margin is 2.5e-4 off the dump, tolerance 1e-4, and fails the same with the change stashed). `test:browser` 6/6, `test:correction` 0 flags on 8 runs plus silence, demo build ok.
+
+**Headline.** The main app does not know the passage in correction mode, so its path is "new tracker, no passage": test F1 goes from 0.267 to 0.335 and recall from 0.155 to 0.203, with clean false flags no higher than the shipped engine. `setExpected` is opt-in for hosts that know the passage (0.436).
+
+**Next ideas.** Auto-infer the expected passage from the first confident lock (the session calls `setExpected` on itself after N seconds), to recover most of the passage gain for free recitation.
+
+Bug found while checking order independence on test: the session kept its skipped-ayah candidate across `reset()`. Fixed (a reset bug, not a re-tune), and all test numbers above are after the fix.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.

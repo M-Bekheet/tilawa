@@ -39,10 +39,11 @@ import { KaldiFbank } from "./fbank.js";
 import { QuranCorpus } from "./corpus.js";
 import { QuranIndex, stripPreambles } from "./search.js";
 import { RecitationEngine } from "./engine.js";
+import type { Tracker } from "./tracker.js";
 import { BLANK_ID, TOKENS } from "./tokens.js";
 import { costTable } from "./phonemeCost.js";
 import { normalizedDistance } from "./alignment.js";
-import type { EngineEvent, FallbackHit, WordVerdict } from "./types.js";
+import type { EngineEvent, ExpectedPassage, FallbackHit, WordVerdict } from "./types.js";
 import {
   ZipformerRunner,
   type OrtLike,
@@ -58,6 +59,7 @@ const TAIL_SECONDS = 2.0;
 /** Mean heard ratio over an unmatched ayah's words at or above which the gap
  * counts as heard-but-unfollowed (`unclear_ayah`) rather than skipped. */
 export const AYAH_HEARD_FRACTION = 0.5;
+const SKIP_PERSIST_FRAMES = 12;
 
 /** I/O manifest of the shipped `zipformer_interp_gentle_a05.int8.onnx`. */
 export const DEFAULT_ZIPFORMER_IO = DEFAULT_IO as ZipformerIo;
@@ -207,6 +209,8 @@ export class ZipformerSession {
   private ayahIssuesRaised = new Set<string>();
   readonly correction = new CorrectionController();
   private practiceEngine: RecitationEngine | null = null;
+  private expected: ExpectedPassage | null = null;
+  private skipCandidate: { key: string; frame: number } | null = null;
   private stopping = false;
   lastFallback: FallbackHit | null = null;
   debugEnabled = false;
@@ -320,6 +324,7 @@ export class ZipformerSession {
     this.lastCursor = null;
     this.lastMatch = null;
     this.ayahIssuesRaised = new Set();
+    this.skipCandidate = null;
     this.lastFallback = null;
     this.resetDecoder();
     this.engine = this.makeEngine();
@@ -330,6 +335,17 @@ export class ZipformerSession {
   async feed(samples: Float32Array): Promise<WorkerOutbound[]> {
     if (this.correction.state.phase === "error" || this.correction.state.phase === "corrected") return [];
     return this.dispatch(await this.feedSamples(samples));
+  }
+
+  /**
+   * Correction mode: the passage the reciter is about to read (e.g. the ayahs
+   * on screen). The tracker then locks onto it at once, stays inside it, and
+   * cannot be pulled into a similar passage. Ignored in tracking mode. Kept
+   * across {@link reset}; pass null to clear.
+   */
+  setExpected(passage: ExpectedPassage | null): void {
+    this.expected = passage ? { ...passage } : null;
+    this.engine.setExpected(this.expected);
   }
 
   setMode(mode: RecitationMode): WorkerOutbound[] {
@@ -400,6 +416,7 @@ export class ZipformerSession {
       this.emitted.add(ayahKey(t));
       out.push(this.toVerseMatch(t));
     }
+    for (const t of live) out.push(...this.checkAyahGap(t));
 
     let fallback: FallbackHit | null = null;
     if (this.enableFallback && shouldRunFallback([...this.emitted])) {
@@ -454,12 +471,14 @@ export class ZipformerSession {
     engine.startSearch();
     engine.onBeforeRelocate = () => this.dumpTallies();
     this.attachPosteriors(engine);
+    engine.setExpected(this.expected);
     return engine;
   }
 
   /** GOP scoring costs a few CTC Viterbi passes per word; only correction mode reads it. */
   private attachPosteriors(engine: RecitationEngine): void {
     engine.setPosteriors(this.correction.mode === "correction" ? this.posteriors : null);
+    engine.setCorrection(this.correction.mode === "correction");
   }
 
   private resetDecoder(): void {
@@ -536,8 +555,11 @@ export class ZipformerSession {
         // Retain main-session coverage before a practice exit replaces its tracker.
         this.dumpTallies();
         out.push(this.correctionMessage());
-      }
-    } else this.correction.clearEvidence();
+      } else out.push(...this.checkSkippedAyah(false));
+    } else {
+      this.correction.clearEvidence();
+      this.skipCandidate = null;
+    }
     if (tokens.length) {
       out.push({
         type: "raw_transcript",
@@ -620,13 +642,62 @@ export class ZipformerSession {
 
   /** Correction mode: last word-level check before the main tracker is dropped. */
   private settleCorrection(): WorkerOutbound[] {
+    if (this.practiceEngine) return [];
     const tracker = this.engine.tracer && this.engine.tracker;
-    if (this.practiceEngine || !tracker || tracker.lost || !this.lastCursor) return [];
-    const raised = this.correction.settle(this.engine.tracer!.verdicts(true), this.lastCursor);
+    let verdicts: WordVerdict[];
+    let cursor = this.lastCursor;
+    let tracer = this.engine.tracer;
+    if (!tracker) {
+      tracer = this.engine.alignBuffer();
+      if (!tracer) return [];
+      verdicts = tracer.verdicts(true);
+      const w = tracer.cursorWordIndex;
+      cursor = { surah: this.corpus.wordSurah[w]!, ayah: this.corpus.wordAyah[w]!, word: this.corpus.wordInAyah[w]! };
+    } else {
+      if (tracker.lost || !cursor) return [];
+      verdicts = tracer!.verdicts(true);
+    }
+    const raised = this.correction.settle(verdicts, cursor);
     const notes = this.noteMessages();
-    if (!raised) return notes;
+    if (!raised) return [...notes, ...this.checkSkippedAyah(true, tracer!.tracker)];
     this.dumpTallies();
     return [...notes, this.correctionMessage()];
+  }
+
+  /**
+   * Correction mode with an expected passage: raise `possible_skipped_ayah`
+   * when the engine reads the audio on the current ayah as the next one. Live
+   * checks must hold for 12 frames; `atSettle` raises at once.
+   */
+  private checkSkippedAyah(atSettle: boolean, tracker?: Tracker): WorkerOutbound[] {
+    if (this.correction.mode !== "correction" || !this.expected || !this.lastCursor && !atSettle) return [];
+    const hit = this.engine.skippedAyah(tracker ?? this.engine.tracker);
+    const key = hit ? ayahKey(hit) : null;
+    const frame = this.decoder.framesDecoded;
+    if (!hit || !key || this.ayahIssuesRaised.has(key)) {
+      this.skipCandidate = null;
+      return [];
+    }
+    if (!atSettle) {
+      if (!this.skipCandidate || this.skipCandidate.key !== key || frame < this.skipCandidate.frame) {
+        this.skipCandidate = { key, frame };
+        return [];
+      }
+      if (frame - this.skipCandidate.frame < SKIP_PERSIST_FRAMES) return [];
+    }
+    this.skipCandidate = null;
+    const words = this.wordCount(hit.surah, hit.ayah);
+    const issue = {
+      surah: hit.surah, ayah: hit.ayah, word: 0,
+      wordIndex: this.corpus.ayahFirstWord(hit.surah, hit.ayah),
+      kind: "possible_skipped_ayah" as const,
+      words,
+    };
+    const cursor = this.lastCursor ?? { surah: hit.surah, ayah: hit.ayah, word: 0 };
+    if (!this.correction.raise(issue, cursor)) return [];
+    this.ayahIssuesRaised.add(key);
+    this.dumpTallies();
+    return [this.correctionMessage()];
   }
 
   private noteMessages(): WorkerOutbound[] {
@@ -663,7 +734,7 @@ export class ZipformerSession {
   private checkAyahGap(t: AyahTally): WorkerOutbound[] {
     const prev = this.lastMatch;
     this.lastMatch = { surah: t.surah, ayah: t.ayah };
-    if (this.stopping || this.correction.mode !== "correction" || !prev || !this.lastCursor) return [];
+    if ((this.stopping && !this.expected) || this.correction.mode !== "correction" || !prev || !this.lastCursor) return [];
     if (prev.surah !== t.surah || t.ayah !== prev.ayah + 2) return [];
     const surah = t.surah;
     const ayah = t.ayah - 1;

@@ -45,6 +45,14 @@ export interface WordVerdict {
   pairGop?: number;
 }
 
+/** The passage the reciter is expected to read (correction mode), inclusive. */
+export interface ExpectedPassage {
+  surah: number;
+  ayah: number;
+  /** Last ayah, inclusive. Defaults to {@link ayah}. */
+  ayahEnd?: number;
+}
+
 export interface SearchHint {
   surah: number;
   ayah: number;

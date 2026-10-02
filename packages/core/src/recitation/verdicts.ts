@@ -77,7 +77,7 @@ interface CachedSeg {
 }
 
 export class VerdictTracer {
-  private readonly tracker: Tracker;
+  readonly tracker: Tracker;
   private readonly table: CostTable;
   private readonly cfg: EngineConfig;
   private cache = new Map<string, CachedSeg>();
@@ -85,6 +85,11 @@ export class VerdictTracer {
   private gopCache = new Map<string, WordGop | null>();
   private idsCache = new Map<number, Array<readonly number[]>>();
   private pairCache = new Map<number, { wordTokens: number; once: number[]; twice: number[] } | null>();
+  /** Correction mode: settled verdicts align the tracker's last stretch through
+   * the end of its ayah when the cursor stopped within this many words of it
+   * (0 = off), so a word dropped near the end does not pull the last word's
+   * audio onto itself and leave the last word unheard. */
+  anchorAyahEnd = 0;
   /** When set, non-pending interior words also get GOP scores (correction mode). */
   posteriors: FramePosteriors | null = null;
 
@@ -92,6 +97,10 @@ export class VerdictTracer {
     this.tracker = tracker;
     this.table = table;
     this.cfg = cfg;
+  }
+
+  get cursorWordIndex(): number {
+    return this.tracker.cursorWordIndex;
   }
 
   verdicts(settled = false): WordVerdict[] {
@@ -102,6 +111,11 @@ export class VerdictTracer {
       this.cacheRevision = t.revision;
     }
     const segs = this.segment(t.trail);
+    if (settled && this.anchorAyahEnd > 0 && segs.length) {
+      const last = segs[segs.length - 1]!;
+      const end = this.ayahEndCell(last.refTo);
+      if (end > last.refTo) last.refTo = end;
+    }
     const spans = new Map<number, Span>();
     for (let s = 0; s < segs.length; s++) {
       const seg = segs[s]!;
@@ -122,6 +136,19 @@ export class VerdictTracer {
     const out = this.judge(spans, settled);
     if (this.posteriors) this.score(out, spans);
     return out;
+  }
+
+  /** Ref cell just past the ayah holding `cell`, when `cell` lies within the
+   * last `anchorAyahEnd` words of that ayah; else `cell`. */
+  private ayahEndCell(cell: number): number {
+    const t = this.tracker;
+    if (cell <= 0 || cell >= t.len) return cell;
+    const w = t.localWordOfPos[cell - 1]!;
+    const ayah = t.ayahAtStart[w]!;
+    let end = w + 1;
+    while (end < t.wordStarts.length && t.ayahAtStart[end] === ayah) end++;
+    if (end - w > this.anchorAyahEnd) return cell;
+    return end < t.wordStarts.length ? t.wordStarts[end]! : t.len;
   }
 
   /** Attach GOP scores to settled words whose two neighbours were heard. The

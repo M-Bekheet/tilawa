@@ -56,6 +56,8 @@ export interface CorrectionThresholds {
   gopPersistFrames?: number;
   /** Let `settle()` raise GOP-only issues. */
   settleGop?: boolean;
+  /** Min aligner distance of a `wrong` word for a substitution flag. */
+  substitutionDistance?: number;
   /** `possible_repetition` handling. `note` never interrupts: the issue is
    * queued on {@link CorrectionController.takeNotes} (the session emits a
    * `correction_note`) and the reciter carries on. */
@@ -68,7 +70,7 @@ export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
   vowelMargin: 0.05, vowelWordMargin: 0.8, omissionMaxHeard: 1, gopFlag: -Infinity, gopAnchor: -1, settle: true,
   repetitionGain: 5, gopOnWrong: true, gopOnSkipped: false, gopOmission: false, gopSubstitution: true,
   gopNoneMargin: 2, gopNoneMin: -3, gopLocalMin: true, gopPersistFrames: 12, settleGop: false,
-  repetitionMode: 'note',
+  repetitionMode: 'note', substitutionDistance: 0.6,
 };
 const PERSIST_FRAMES = 12;
 const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>
@@ -147,7 +149,7 @@ function ruledWordIssues(verdicts: readonly WordVerdict[], th: Required<Correcti
     // A partly heard word (the aligner lent it a few chars of its neighbours,
     // or the reciter said only its onset) is still an omission.
     const omission = v.state === 'skipped' && (v.heardRatio === 0 || v.heardRatio <= th.omissionMaxHeard);
-    const substitution = v.state === 'wrong' && Number.isFinite(v.distance) && v.distance >= 0.6
+    const substitution = v.state === 'wrong' && Number.isFinite(v.distance) && v.distance >= th.substitutionDistance
       && Number.isFinite(v.margin) && v.margin >= 0.65
       && v.heardRatio >= 0.5 && v.heardRatio <= 1.5;
     // Harakah error: consonant skeleton matches (distance within `ok`), but at

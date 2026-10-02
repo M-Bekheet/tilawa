@@ -53,6 +53,7 @@ export type {
   SearchHit,
   SearchResult,
   SearchHint,
+  ExpectedPassage,
   FallbackHit,
   StripResult,
 } from "./types.js";

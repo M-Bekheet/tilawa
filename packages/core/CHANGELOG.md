@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Correction mode now tracks the words people get wrong. Tracking mode is unchanged.
+
+- **`ZipformerSession.setExpected({ surah, ayah, ayahEnd? } | null)`** (new type `ExpectedPassage`, opt-in). Pass the passage the reciter is about to read, for example the ayahs on screen. In correction mode the tracker then locks onto the passage's first word as soon as any isti'adha or basmala is past. Later searches only lock inside the passage, and the tracker never relocates to another surah. Without a passage, short takes of repeated or near-identical ayahs (55:13, 37:80, 26:36, …) locked onto the wrong copy or never locked, and the mistaken word was never judged. The passage is kept across `reset()`, and tracking mode ignores it.
+- **Skipped ayah, read directly.** With a passage, `possible_skipped_ayah` is also raised when the audio the tracker put on an interior ayah A reads as ayah A+1 (`skipMinChars` 10, `skipMaxDistance` 0.35, `skipMargin` 0.25, `skipMaxHead` 0.1). Before, the aligner bent A+1's audio onto A's text, so A+1 was never matched and the ayah-gap rule could not fire. With a passage, the ayah-gap rule also runs while `stop()` flushes the tail.
+- **End-of-ayah anchoring** (`anchorAyahEnd` 2). When the cursor stops within 2 words of an ayah end, settled verdicts realign the last stretch through that end. A word dropped just before the last word is now `skipped`, instead of taking the last word's audio and leaving the last word unheard.
+- **No passage:** a take that never locked is aligned to its best search hit (`stopAlignDistance` 0.35) for the final word check. A mid-ayah lock in that check starts at the ayah's first word (`backfillRatio` 1.5). Neither feeds verse tallies.
+- **New `EngineConfig` knobs** (correction mode only): `backfillRatio`, `stopAlignDistance`, `outsideJumpCost` (0, off), `skipMinChars`, `skipMaxDistance`, `skipMargin`, `skipMaxHead`, `anchorAyahEnd`. New `CorrectionThresholds.substitutionDistance` (default 0.6, unchanged behaviour).
+- Acted-mistake test half, shipped model, paired replay, default path (no passage, as in the main app): F1 goes from 0.267 to 0.335 and recall from 0.155 to 0.203. With `setExpected` (opt-in, for apps that know the passage), F1 is 0.436. Clean false flags are no higher than the shipped engine on any set. Numbers are in `lab/EXPERIMENTS.md`, "Tracker in correction mode".
+
 Correction-mode recall on real slips, at the same false-flag rate on clean recitation.
 
 - **`WordVerdict.gop` / `gopNone` / `gopTwice` / `repGain` / `pairGop`.** Goodness-of-pronunciation scores from the CTC posteriors (per-token log ratio of forcing the expected word against the unconstrained best path over its window). Correction mode only; set on interior words whose neighbours were heard. Optional, so tracking-mode verdicts are unchanged.
