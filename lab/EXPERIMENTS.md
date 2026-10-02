@@ -881,6 +881,10 @@ Live, one pass each (1 thread, issues dismissed on sight), as P / R / F1, then h
 
 **Gates.** Clean FF is no worse than the shipped engine on any set in replay. In live, help clean is 2 against the shipped engine's 1, with one of the 2 a likely real skip; TLOG clean dev and v1 are better. Tracking mode: v1 SeqAcc 53/53 and held-out multi 56/58, unchanged. vitest: 125 passed, plus 1 failure that is pre-existing on this machine (the int8 `runner.node` margin is 2.5e-4 off the dump, tolerance 1e-4, and fails the same with the change stashed). `test:browser` 6/6, `test:correction` 0 flags on 8 runs plus silence, demo build ok.
 
+**Headline.** The main app does not know the passage in correction mode, so its path is "new tracker, no passage": test F1 goes from 0.267 to 0.335 and recall from 0.155 to 0.203, with clean false flags no higher than the shipped engine. `setExpected` is opt-in for hosts that know the passage (0.436).
+
+**Next ideas.** Auto-infer the expected passage from the first confident lock (the session calls `setExpected` on itself after N seconds), to recover most of the passage gain for free recitation.
+
 Bug found while checking order independence on test: the session kept its skipped-ayah candidate across `reset()`. Fixed (a reset bug, not a re-tune), and all test numbers above are after the fix.
 
 ## Per-experiment notes
