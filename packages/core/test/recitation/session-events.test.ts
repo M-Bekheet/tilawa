@@ -388,3 +388,65 @@ describe('ayah-level gaps in correction mode', () => {
     expect(seen.filter(m => m.type === 'correction')).toEqual([]);
   });
 });
+
+describe('expected passage (correction mode)', () => {
+  async function run(script: string, mode: 'tracking' | 'correction', expected: { surah: number; ayah: number; ayahEnd?: number } | null) {
+    const ort = new ScriptedOrtSession(tokenIds(script));
+    const session = await ZipformerSession.create({ session: ort, Tensor: TensorCtor, corpus: corpusJson });
+    session.setMode(mode);
+    session.setExpected(expected);
+    const seen: WorkerOutbound[] = [];
+    for (let i = 0; i < Math.ceil(script.length * 2 / FRAMES_PER_RUN) + 6; i++) {
+      seen.push(...await session.feed(new Float32Array(CHUNK)));
+      if (session.correction.state.phase !== 'idle') session.correct('dismiss');
+    }
+    seen.push(...await session.stop());
+    const flags = seen.flatMap(m => m.type === 'correction' && m.state.phase === 'error' && m.state.issue ? [m.state.issue] : []);
+    const located = seen.flatMap(m => m.type === 'verse_candidate' ? [`${m.candidates[0]!.surah}:${m.candidates[0]!.ayah}`] : []);
+    return { seen, flags, located };
+  }
+
+  // 55:16 is one of the 31 copies of "fa-bi-ayyi ala'i rabbikuma tukadhdhiban".
+  const refrain = (ayah: number, swapWord: number | null) => {
+    const first = corpus.ayahFirstWord(55, ayah);
+    return Array.from({ length: corpus.ayahWordCount(55, ayah) }, (_, i) =>
+      i === swapWord ? corpus.wordPhonemes(corpus.wordIndex(109, 1, 2)) : corpus.wordPhonemes(first + i)).join('');
+  };
+
+  it('locks onto the expected copy of a repeated ayah and flags the word there', async () => {
+    const { flags, located } = await run(refrain(16, 1), 'correction', { surah: 55, ayah: 16 });
+    expect(located[0]).toBe('55:16');
+    expect(flags).toEqual([expect.objectContaining({ surah: 55, ayah: 16, word: 1, kind: 'possible_substitution' })]);
+    // Without it the take never locks and the word lands on the first copy.
+    const free = await run(refrain(16, 1), 'correction', null);
+    expect(free.located).toEqual([]);
+    expect(free.flags.some(f => f.ayah === 16)).toBe(false);
+  });
+
+  it('waits out an isti\'adha before locking at the passage start', async () => {
+    const istiadha = 'ءَعُۥۥذُبِللَااهِمِنَششَييطَاانِررَجِۦۦم';
+    const { flags, located, seen } = await run(istiadha + corpus.ayahPhonemes(112, 1) + corpus.ayahPhonemes(112, 2), 'correction', { surah: 112, ayah: 1, ayahEnd: 2 });
+    expect(located[0]).toBe('112:1');
+    expect(flags).toEqual([]);
+    expect(seen.filter(m => m.type === 'verse_match').map(m => m.type === 'verse_match' ? m.ayah : 0)).toEqual([1, 2]);
+  });
+
+  it('a clean passage raises nothing', async () => {
+    const text = [1, 2, 3].map(a => corpus.ayahPhonemes(104, a)).join('');
+    const { flags } = await run(text, 'correction', { surah: 104, ayah: 1, ayahEnd: 3 });
+    expect(flags).toEqual([]);
+  });
+
+  it('a skipped middle ayah is raised once', async () => {
+    const { flags } = await run(corpus.ayahPhonemes(104, 1) + corpus.ayahPhonemes(104, 3), 'correction', { surah: 104, ayah: 1, ayahEnd: 3 });
+    expect(flags).toEqual([expect.objectContaining({ surah: 104, ayah: 2, kind: 'possible_skipped_ayah' })]);
+  });
+
+  it('tracking mode ignores it: identical output with or without', async () => {
+    const text = corpus.ayahPhonemes(55, 15) + refrain(16, 1);
+    const a = await run(text, 'tracking', null);
+    const b = await run(text, 'tracking', { surah: 55, ayah: 15, ayahEnd: 16 });
+    expect(b.seen).toEqual(a.seen);
+    expect(b.flags).toEqual([]);
+  });
+});
