@@ -79,7 +79,7 @@ EDGE_S = 0.3
 SUB_SAMPLE = 400
 SUB_SEED = 0
 SLICE_FIELDS = ("device", "gender", "level", "ayah_span", "split")
-ISSUE_KEYS = ("kind", "surah", "ayah", "word", "wordIndex", "atSeconds", "words")
+ISSUE_KEYS = ("kind", "surah", "ayah", "word", "wordIndex", "atSeconds", "words", "source")
 
 DEFAULT_OUT = Path("/tmp/correction_eval")
 DEFAULT_CORPUS = Path(os.environ.get("ZIPFORMER_CORPUS", "/workspace/lab/data/zipformer/quran.json"))

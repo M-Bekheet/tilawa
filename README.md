@@ -188,6 +188,17 @@ Both engines emit the same `WorkerOutbound` union — via `onEvent` / `onOutput`
 
 Also: `transcript`, `tallies` / `verses`, `engineState`, `config`.
 
+#### Structural correction rules (off by default)
+
+Correction mode (`setMode("correction")`) can add two text-only rules over the free decode, validated with the a0w model. Pass `structural` at creation or call `await session.setStructural({...})`; the look-alike index (56 KB gzipped) loads on first use.
+
+| Rule | Raises | Needs `setExpected`? |
+|---|---|---|
+| `ayahOrder: true` (`"guarded"` for the shipped model) | `possible_skipped_ayah` — a whole ayah skipped between two read ones, found by matching pause-delimited segments to a local ayah window | No. Without a passage the window is the first located ayah −1 .. +4; with one it is the passage |
+| `similarVerse: true` | `possible_substitution` (a word from a look-alike ayah), `possible_omission` (a dropped word) | For substitutions, yes: without a passage a swapped-in look-alike word reads as the other ayah. Drops work either way |
+
+Issues they raise carry `source: "ayah_order" | "similar_verse"`. By default (`timing: "stop"`) they run once over the whole take at `stop()`, which is how they were validated; each `correct()` that closes an issue raises the next one. `timing: "pause"` also runs them at each pause so a flag can interrupt mid-recitation (more false flags). Similar-verse flags on or next to an ayah flagged as skipped are dropped.
+
 ### `createTilawaSession(runner, assets, options?)` → `TilawaSession`
 
 `assets`: `{ vocab, quranCtcTokens, quran, blankId? }`. `transcribe()` / `transcribeRaw()` / `feed()` / `reset()` / `setConfig()` / `getConfig()`. Streaming presets: `"conservative"` / `"balanced"` / `"aggressiveAdvance"`.

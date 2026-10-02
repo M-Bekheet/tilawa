@@ -222,6 +222,8 @@ def main(argv: list[str] | None = None) -> None:
                         row["lpKey"] = res["lpKey"]
                     if res.get("trackPost"):
                         row["trackPost"] = res["trackPost"]
+                    if res.get("tokens"):
+                        row["tokens"] = res["tokens"]
                     if not args.slim:
                         row["events"] = res.get("events") or []
                     if args.diag and not args.slim:

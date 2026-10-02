@@ -73,6 +73,7 @@ const r3 = (x: number | undefined): number | null => (x === undefined || !Number
 const packVerdict = (v: WordVerdict): unknown[] => [
   v.surah, v.ayah, v.word, v.wordIndex, STATES.indexOf(v.state), r3(v.distance), r3(v.heardRatio), r3(v.margin),
   v.vowelErrors, r3(v.vowelMargin), r3(v.gop), r3(v.gopTwice), r3(v.gopNone), r3(v.repGain), r3(v.pairGop),
+  v.slip === undefined || !Number.isFinite(v.slip) ? null : Math.round(v.slip * 1e6) / 1e6,
 ];
 
 // ZIPFORMER_LP_CACHE=<dir> + ZIPFORMER_LP_MODE=record|replay: record the
@@ -173,11 +174,22 @@ function loadLp(key: string): void {
   encReplay = Array.from({ length: en }, (_, i) => eraw.subarray(i * eper, (i + 1) * eper));
 }
 
+// ZIPFORMER_AYAH_ORDER=1|guarded, ZIPFORMER_SIMILAR_VERSE=1: SDK structural rules (correction
+// mode). ZIPFORMER_STRUCTURAL_TIMING=pause also runs them at pauses. ZIPFORMER_SV_NEAR_SKIP=0 keeps similar-verse flags next to a skipped ayah (lab behaviour).
+const AO_ENV = process.env.ZIPFORMER_AYAH_ORDER ?? "";
+const STRUCTURAL = {
+  ayahOrder: AO_ENV === "guarded" ? "guarded" as const : AO_ENV === "1",
+  similarVerse: process.env.ZIPFORMER_SIMILAR_VERSE === "1",
+  suppressNearSkip: process.env.ZIPFORMER_SV_NEAR_SKIP !== "0",
+  timing: process.env.ZIPFORMER_STRUCTURAL_TIMING === "pause" ? "pause" as const : "stop" as const,
+};
+
 async function createHost(): Promise<ZipformerSession> {
   const acoustic = LP_MODE === "replay"
     ? { session: replaySession(), Tensor: ort.Tensor }
     : { ort, model: new Uint8Array(readFileSync(MODEL)) };
   return ZipformerSession.create({
+    ...(STRUCTURAL.ayahOrder || STRUCTURAL.similarVerse ? { structural: STRUCTURAL } : {}),
     ...acoustic,
     io,
     corpus: corpusJson,
@@ -249,6 +261,32 @@ async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "trac
   const corrections: Array<Record<string, unknown>> = [];
   const notes: Array<Record<string, unknown>> = [];
   let offset = 0;
+  // ZIPFORMER_TOKENS=1: every free-decode token as [sym, absolute frame, clip
+  // seconds when it was emitted]; frames keep counting across decoder resets.
+  const tokens: Array<[string, number, number]> = [];
+  if (process.env.ZIPFORMER_TOKENS === "1") {
+    const dec = hostInternals.decoder as unknown as {
+      consume: (lp: ArrayLike<number>, n: number, c: number) => Array<{ sym: string; frame: number }>;
+      flush: () => Array<{ sym: string; frame: number }>;
+      framesDecoded: number;
+    };
+    let abs = 0;
+    const proto = Object.getPrototypeOf(dec) as typeof dec;
+    const own = dec as unknown as Record<string, unknown>;
+    own.consume = (lp: ArrayLike<number>, n: number, c: number) => {
+      const base = abs - dec.framesDecoded;
+      const out = proto.consume.call(dec, lp, n, c);
+      abs += n;
+      for (const t of out) tokens.push([t.sym, base + t.frame, offset / 16000]);
+      return out;
+    };
+    own.flush = () => {
+      const base = abs - dec.framesDecoded;
+      const out = proto.flush.call(dec);
+      for (const t of out) tokens.push([t.sym, base + t.frame, offset / 16000]);
+      return out;
+    };
+  }
   const trace: unknown[] = [];
   const ctl = host.correction;
   ctl.thresholds = { ...ctl.thresholds, ...(THRESHOLDS ?? {}) };
@@ -389,6 +427,7 @@ async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "trac
     ...(preStop ? { track: preStop } : {}),
     ...(postStop ? { trackPost: postStop } : {}),
     ...(key ? { lpKey: key } : {}),
+    ...(tokens.length ? { tokens } : {}),
     transcript: host.transcript,
     events,
     state: host.engineState,

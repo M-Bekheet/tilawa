@@ -95,6 +95,7 @@ export {
 } from "./session.js";
 export type {
   ZipformerSessionOptions,
+  StructuralOptions,
   ModelSource,
   CorpusSource,
   QuranSource,
@@ -117,3 +118,26 @@ export type { SlipHead, SlipSensitivity, SlipWeightJson, TrailWordSpan } from ".
 export { vowelMismatches } from "./verdicts.js";
 export { FramePosteriors, GOP_FLOOR, encodePhonemes, forcedLogLik, freeLogLik, pairScores, wordGop } from "./posteriors.js";
 export type { WordGop } from "./posteriors.js";
+export {
+  StructuralRules,
+  AYAH_ORDER_PARAMS,
+  AYAH_ORDER_RULE,
+  AYAH_ORDER_RULE_GUARDED,
+  SIMILAR_VERSE_RULE,
+  ayahOrderFlags,
+  similarVerseEligible,
+  similarVersePick,
+  segmentTokens,
+  pyRound,
+} from "./structural.js";
+export type {
+  TimedToken,
+  StructuralIndexJson,
+  AyahOrderParams,
+  AyahOrderRule,
+  AyahOrderCandidate,
+  AyahOrderJump,
+  SimilarVerseRule,
+  SimilarVerseCandidate,
+  StructuralFlag,
+} from "./structural.js";
