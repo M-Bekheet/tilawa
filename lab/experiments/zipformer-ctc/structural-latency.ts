@@ -50,6 +50,7 @@ const configs: Array<[string, StructuralOptions | undefined]> = [
   ["stop", { ayahOrder: true, similarVerse: true }],
   ["pause", { ayahOrder: true, similarVerse: true, timing: "pause" }],
 ];
+async function main(): Promise<void> {
 for (const [name, structural] of configs) {
   const host = await ZipformerSession.create({ ort, model, io, corpus, executionProviders: [backend === "wasm" ? "wasm" : "cpu"],
     ...(structural ? { structural } : {}) });
@@ -91,3 +92,6 @@ for (const [name, structural] of configs) {
     rule_eval_ms: evalMs.length ? { n: evalMs.length, p50: r1(q(evalMs, 0.5)), p95: r1(q(evalMs, 0.95)), max: r1(Math.max(...evalMs)) } : null,
   }));
 }
+}
+
+void main();
