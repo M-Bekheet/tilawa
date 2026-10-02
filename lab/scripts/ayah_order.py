@@ -48,15 +48,17 @@ PREAMBLES = (ISTIADHA, BASMALA, ISTIADHA + BASMALA)
 DEFAULTS = {
     "gap": 12,         # frames (0.48 s) of blank between tokens that cut a segment
     "min_chars": 3,    # shorter segments are merged into the previous one
-    "garbage": 0.6,    # cost per char of unexplained audio
+    "garbage": 0.5,    # cost per char of unexplained audio
     "wcost": 0.5,      # cost per skipped char inside the in-order chain
-    "restart": 1.0,    # cost of going back (restart / repeat)
-    "jump": 2.0,       # cost of a forward jump over a whole ayah
-    "margin": 8.0,     # free chain must beat in-order by this much
-    "fit": 0.35,       # cost per char of the segments on both sides of the jump
+    "restart": 2.0,    # cost of going back (restart / repeat)
+    "jump": 0.5,       # cost of a forward jump over a whole ayah
     "back": 1,         # window starts this many ayahs before the anchor (no passage)
     "ahead": 4,        # and ends this many after it
 }
+
+
+# Frozen on dev (acted dev skip_ayah + help clean dev + v1; TLOG not used).
+RULE = {"margin": 99.0, "rel": 0.04, "fit": 0.3, "between": 8, "min_post": 0}
 
 
 @njit(cache=True)

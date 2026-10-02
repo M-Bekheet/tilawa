@@ -13,9 +13,6 @@ sys.path.insert(0, str(LAB / "scripts"))
 corpus_path = LAB / "data" / "zipformer" / "quran.json"
 pytestmark = pytest.mark.skipif(not corpus_path.is_file(), reason="zipformer corpus not fetched")
 
-RULE = {"margin": 5, "rel": 0.1, "fit": 0.3, "between": 0, "min_post": 0}
-
-
 @pytest.fixture(scope="module")
 def ao():
     import ayah_order
@@ -46,7 +43,7 @@ def row_for(toks, expected=None, verses=None):
 
 
 def flags(ao, corpus, row, mode):
-    return ao.flags_of(ao.detect_take(corpus, row, mode, ao.DEFAULTS), RULE)
+    return ao.flags_of(ao.detect_take(corpus, row, mode, ao.DEFAULTS), ao.RULE)
 
 
 def test_segments_cut_at_pauses(ao):

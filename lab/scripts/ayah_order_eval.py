@@ -53,6 +53,25 @@ def merged(run: Path, cands: Path | None, rule: dict | None, extra: dict[str, di
     return out
 
 
+# Frozen similar-verse rule (docs: similar-verse check, test row).
+SV_RULE = {"families": ["lookalike", "drop"], "e": {"default": 3.5, "drop": 10.0}, "max_span": 1,
+           "loc": 0.25, "ayah_d": 0.5}
+
+
+def sv_extra(run: Path, cands: Path, no_passage: bool) -> dict[str, dict[str, list]]:
+    """Similar-verse flags per set and id, deduplicated against engine issues as in its own eval."""
+    from similar_verse_eval import merged_rows
+
+    rule = {**SV_RULE, "all": no_passage}
+    out = {}
+    for name in SETS:
+        rows = [r for r in load_jsonl(run / f"{name}.jsonl") if not r.get("error")]
+        cc = {str(c["id"]): c["cands"] for c in load_jsonl(cands / f"{name}.jsonl")}
+        rows, _ = merged_rows(rows, cc, rule)
+        out[name] = {str(r["id"]): [i for i in r["issues"] if i.get("source") == "similar_verse"] for r in rows}
+    return out
+
+
 def evaluate(sets: dict[str, list[dict]], labels: list[dict], split: str) -> dict:
     acted = {str(r["id"]): r for r in sets["help-acted"]}
     labs = test_labels(labels, split)
@@ -177,20 +196,31 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--runs", default="", help="tune: dir=passage_mode,... (passage_mode tracker|expected)")
     ap.add_argument("--split", choices=("dev", "test"), required=True)
     ap.add_argument("--labels", type=Path, default=Path("/tmp/correction_eval/acted_located.jsonl"))
-    ap.add_argument("--rule", help="JSON rule (score)")
+    ap.add_argument("--rule", help="JSON rule (score); default the frozen ayah_order.RULE")
     ap.add_argument("--out", type=Path, help="JSON aggregates (private)")
+    ap.add_argument("--sv-cands", type=Path, help="similar_verse.py detect dir: add its frozen flags first")
+    ap.add_argument("--sv-all", action="store_true", help="similar-verse with no passage (margin_all)")
     args = ap.parse_args(argv)
     labels = load_jsonl(args.labels)
     if args.cmd == "tune":
         runs = [(Path(d), m) for d, m in (s.split("=", 1) for s in args.runs.split(",") if s)]
         tune(runs, labels, args.out)
         return
+    extra = sv_extra(args.run, args.sv_cands, args.sv_all) if args.sv_cands else None
     base = evaluate(merged(args.run, None, None), labels, args.split)
     print("base:", line(base))
-    rules = [json.loads(args.rule)] if args.cmd == "score" else grid()
+    if extra is not None:
+        sv = evaluate(merged(args.run, None, None, extra), labels, args.split)
+        print("similar-verse:", line(sv))
+        print("similar-verse unseen per kind:", ", ".join(
+            f"{k} {sv['by']['unseen_c'].get(k, 0)}/{sv['by']['unseen_n'].get(k, 0)}" for k in IN_SCOPE))
+        base = sv
+    from ayah_order import RULE
+
+    rules = [json.loads(args.rule) if args.rule else RULE] if args.cmd == "score" else grid()
     results = []
     for rule in rules:
-        res = evaluate(merged(args.run, args.cands, rule), labels, args.split)
+        res = evaluate(merged(args.run, args.cands, rule, extra), labels, args.split)
         results.append({"rule": rule, **res})
         print(json.dumps(rule), line(res), flush=True)
         if args.cmd == "score":
