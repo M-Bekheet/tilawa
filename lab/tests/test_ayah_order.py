@@ -81,3 +81,18 @@ def test_skip_read_later_is_not_flagged(ao, corpus):
     exp = [(78, 13), (78, 14), (78, 15)]
     row = row_for(tokens_for(corpus, [(78, 13), (78, 15), (78, 14)]), expected=exp)
     assert flags(ao, corpus, row, "expected") == []
+
+
+def test_restart_and_garble_guards(ao):
+    base = {"surah": 89, "ayah": 12, "fit0": 0.1, "fit1": 0.1, "between": 0, "read_later": False, "at": 3.0,
+            "post_chars": 20, "pre_chars": 10, "pre_restart": False, "pre_on_skipped": 0.6, "skip_chars": 30}
+    rule = {**ao.RULE, "no_restart_pre": True, "restart_alt": 0.3, "between_rel": 0.2}
+
+    def n(**kw):
+        return len(ao.flags_of({"margin": 5.0, "jumps": [{**base, **kw}]}, rule))
+
+    assert n() == 1
+    assert n(pre_restart=True) == 1                       # restart that doesn't fit the skipped ayah's ending
+    assert n(pre_restart=True, pre_on_skipped=0.2) == 0   # rhyming restart: could be the skipped ayah's tail
+    assert n(between=6) == 1
+    assert n(between=8) == 0                              # 8 undecoded chars for a 30-char ayah

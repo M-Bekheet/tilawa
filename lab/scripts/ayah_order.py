@@ -59,6 +59,10 @@ DEFAULTS = {
 
 # Frozen on dev (acted dev skip_ayah + help clean dev + v1; TLOG not used).
 RULE = {"margin": 99.0, "rel": 0.04, "fit": 0.3, "between": 8, "min_post": 0}
+# Guards frozen on dev for the shipped emissions (cost 0 dev catches on either model):
+# no jump after a restart segment that also fits the skipped ayah's ending (rhyme), and
+# undecoded audio before the jump at most 0.2 x the skipped ayah's length (dev max 0.17).
+RULE_GUARDED = {**RULE, "no_restart_pre": True, "restart_alt": 0.3, "between_rel": 0.2}
 
 
 @njit(cache=True)
@@ -265,10 +269,12 @@ def detect_take(corpus: Corpus, row: dict, mode: str, p: dict) -> dict | None:
     if not path or not np.isfinite(c_free):
         return out
     matched = [(k, st) for k, st in enumerate(path) if isinstance(st, tuple)]
-    for (k0, (i0, e0)), (k1, (i1, e1)) in zip(matched, matched[1:]):
+    for n, ((k0, (i0, e0)), (k1, (i1, e1))) in enumerate(zip(matched, matched[1:])):
         full = skipped.get((e0, i1))
         if not full:
             continue
+        # the pre-jump segment went back onto words already read and ends an ayah: a restart
+        pre_restart = any(e_prev >= i0 for _k, (_i, e_prev) in matched[:n]) and e0 == ayah_last[words_ayah[e0]]
         between_garbage = sum(seg_len[k] for k in range(k0 + 1, k1))
         later = {words_ayah[w] for _k, (a, b) in matched if _k >= k1 for w in range(a, b + 1)}
         fit0 = costs[k0][i0, e0] / max(1, seg_len[k0])
@@ -279,6 +285,12 @@ def detect_take(corpus: Corpus, row: dict, mode: str, p: dict) -> dict | None:
                 "fit1": round(float(fit1), 3), "between": int(between_garbage),
                 "read_later": bool(x in later), "at": round(float(segs[k1]["t"]), 2),
                 "post_chars": int(seg_len[k1]), "pre_chars": int(seg_len[k0]),
+                "pre_restart": bool(pre_restart),
+                # best fit of the pre-jump segment as the ending of the skipped ayah (per char)
+                "pre_on_skipped": round(float(min(costs[k0][i, ayah_last[x]]
+                                                  for i in range(ayah_first[x], ayah_last[x] + 1))
+                                              / max(1, seg_len[k0])), 3),
+                "skip_chars": int(wlen_cum[ayah_last[x] + 1] - wlen_cum[ayah_first[x]]),
             })
     return out
 
@@ -296,6 +308,11 @@ def flags_of(cand: dict | None, rule: dict) -> list[dict]:
         if max(j["fit0"], j["fit1"]) > rule["fit"]:
             continue
         if j["post_chars"] < rule.get("min_post", 0):
+            continue
+        if rule.get("no_restart_pre") and j.get("pre_restart") \
+                and j.get("pre_on_skipped", 0) <= rule.get("restart_alt", 99):
+            continue
+        if "between_rel" in rule and j["between"] > rule["between_rel"] * j.get("skip_chars", 0):
             continue
         out.append({"kind": "possible_skipped_ayah", "surah": j["surah"], "ayah": j["ayah"], "word": 0,
                     "atSeconds": j["at"], "source": "ayah_order"})
