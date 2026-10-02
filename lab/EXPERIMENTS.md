@@ -908,6 +908,25 @@ Seen / unseen (a test label is unseen when no acted-dev label of its kind names 
 
 **Why the gate cannot move.** All 12 unseen test substitutions are ordinary word swaps on ayahs that have no look-alike anywhere in the Quran (index coverage 0/12). All 30 seen `similar_passage` substitutions borrow their word from an indexed look-alike. The help prompts that elicit look-alike slips repeat across speakers, so every such word is a dev label too. The rule has no learned parameters beyond five dev thresholds, so the seen gain is not lexical memorisation in the slip-head sense, but the thresholds were chosen on dev takes of the same verses, and this split cannot show transfer to new verse pairs. The unseen skip_word drops sit at margins 5–14; the frozen 10 takes two (one already an engine catch).
 
+## Ayah-order check (acted skip_ayah; KEEP on a0w, KILL on shipped emissions)
+
+2026-10-02. Same private acted set, split, labels and scorer; aggregates only. Main `04337ab` engine at defaults (rules only), live 1-thread runs recording the free-decode tokens. Lab-only (`scripts/ayah_order.py`, `scripts/ayah_order_eval.py`); no SDK or tracker change.
+
+**Rule.** Nothing is fit on labels. Cut the free-decode token stream at pauses (≥ 12 blank frames = 0.48 s). Align each segment to every contiguous word span of a window of ayahs (tracker's first verse −1 .. +4, or the expected passage), or call it isti'adha/basmala, or garbage at 0.5/char. Chain the segments twice: in order (restarts cost 2, forward gaps cost 0.5/char but may not contain a whole ayah) and free (whole-ayah jumps cost 0.5). Flag `possible_skipped_ayah` on the jumped ayah when the free chain wins by ≥ 0.04 per char of the post-jump segment, both flanking segments fit ≤ 0.3/char, ≤ 8 unexplained chars sit between them, and the ayah is not read later.
+
+**Pre-declared.** No-passage skip_ayah 8/36 → ≥ 16/36. Kill if < +3 or FF rises on help clean test or v1.
+
+**Test (scored once).** FF = clean issues help clean test / v1 / TLOG clean dev (TLOG provisional).
+
+| config | skip_ayah | all 207 | U_test 62 | new flags correct | FF base → new |
+|---|---|---|---|---|---|
+| a0w, no passage | 8 → 21/36 | 37 → 50 | 17 → 30 | 13/13 | 1/0/2 → 1/0/2 |
+| a0w + passage | 14 → 26/36 | 48 → 60 | 23 → 35 | 12/12 | 2/0/2 → 2/0/2 |
+| shipped, no passage | 3 → 9/36 | 42 → 48 | 12 → 18 | 6/6 | 0/0/2 → **2**/0/2 |
+| shipped + passage | 12 → 17/36 | 59 → 64 | 21 → 26 | 5/5 | 2/0/3 → **4**/0/3 |
+
+Other kinds are unchanged. New-hit latency is 3.3 s on a0w and 4.0 s on shipped after the label start. With the similar-verse check on as well, a0w + passage goes 48 → 91/207 and a0w without a passage 37 → 61/207, with help clean / v1 FF equal to rules-only. **Caveat:** 31/36 test skip_ayah labels sit on dev-labelled prompts, and every new catch is on those; the 5 prompt-disjoint labels gain 0 (4/5 already caught). The two shipped clean flags are decode-driven: a partial ayah read as a restart, and an ayah decoded as garbage before a cheap jump. a0w raises neither. Two textually identical neighbour pairs (94:5/6, 109:3/5) make 8/34 dev labels uncatchable by text.
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
