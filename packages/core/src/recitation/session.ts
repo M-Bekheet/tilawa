@@ -224,6 +224,15 @@ export interface StructuralOptions {
   /** Drop similar-verse flags on or next to an ayah flagged as skipped
    * (they land on the ayah beside the cut). Default true. */
   suppressNearSkip?: boolean;
+  /**
+   * When the rules run. `"stop"` (default): once over the whole take at
+   * {@link ZipformerSession.stop}, the setting the rules were validated in;
+   * the flags then come one per `correct()` call. `"pause"`: also each time a
+   * pause closes a segment, so a flag can interrupt mid-recitation. A
+   * similar-verse slot is judged only once a later ayah has been reached, and
+   * an ayah-order jump must hold over two pauses.
+   */
+  timing?: "stop" | "pause";
   /** The look-alike index. Defaults to the bundled `structural-index.json`,
    * loaded on first use. */
   index?: StructuralIndexJson;
@@ -282,6 +291,7 @@ export class ZipformerSession {
   private aoRule: AyahOrderRule | null = null;
   private svOn = false;
   private svNearSkip = true;
+  private structuralLive = false;
   private st = ZipformerSession.freshStructural();
   lastFallback: FallbackHit | null = null;
   debugEnabled = false;
@@ -372,6 +382,7 @@ export class ZipformerSession {
     this.aoRule = ao === "guarded" ? AYAH_ORDER_RULE_GUARDED : ao ? AYAH_ORDER_RULE : null;
     this.svOn = sv;
     this.svNearSkip = opts.suppressNearSkip ?? true;
+    this.structuralLive = opts.timing === "pause";
   }
 
   private static freshStructural() {
@@ -385,6 +396,8 @@ export class ZipformerSession {
       blockT0: 0,
       blockEmitted: new Set<string>(),
       aoSeen: new Set<string>(),
+      /** Ayah-order flags found by the previous evaluation (pause timing). */
+      aoLast: new Set<string>(),
       svSeen: new Set<string>(),
       skips: [] as Array<{ surah: number; ayah: number }>,
       pending: [] as StructuralFlag[],
@@ -753,12 +766,14 @@ export class ZipformerSession {
   private structuralTick(final: boolean): WorkerOutbound[] {
     if (this.correction.mode !== "correction") return [];
     const st = this.st;
-    if (st.tokens.length > st.evalAt) {
+    if (final) {
+      if (st.tokens.length) this.structuralEvaluate();
+    } else if (this.structuralLive && st.tokens.length > st.evalAt) {
       const last = st.tokens[st.tokens.length - 1]!;
       const gap = AYAH_ORDER_PARAMS.gap;
       const pending = this.decoder.pendingFrame;
       const base = st.absFrames - this.decoder.framesDecoded;
-      if (final || (st.absFrames - last.frame >= gap && (pending === null || base + pending - last.frame >= gap))) {
+      if (st.absFrames - last.frame >= gap && (pending === null || base + pending - last.frame >= gap)) {
         this.structuralEvaluate();
       }
     }
@@ -802,9 +817,12 @@ export class ZipformerSession {
       || st.pending.some((p) => sameAyah(p, f));
     if (this.aoRule) {
       const win = rules.ayahOrderWindow(expected, verses[0] ?? null);
-      for (const f of ayahOrderFlags(rules.ayahOrderCandidate(tokens, win), this.aoRule)) {
+      const found = ayahOrderFlags(rules.ayahOrderCandidate(tokens, win), this.aoRule);
+      const last = st.aoLast;
+      st.aoLast = new Set(found.map((f) => ayahKey(f)));
+      for (const f of found) {
         const key = ayahKey(f);
-        if (st.aoSeen.has(key)) continue;
+        if (st.aoSeen.has(key) || (!st.final && !last.has(key))) continue;
         st.aoSeen.add(key);
         if (blocked(f)) continue;
         st.skips.push({ surah: f.surah, ayah: f.ayah });
@@ -819,9 +837,13 @@ export class ZipformerSession {
       const durationS = st.samples / SAMPLE_RATE - st.blockT0;
       const cands = rules.similarVerseCandidates(tokens, passage, !!expected, durationS, (c) => similarVerseEligible(c));
       const skips = [...st.skips, ...st.issues.filter((i) => i.kind === "possible_skipped_ayah")];
+      // Pause timing: a slot is judged once the recitation has reached a later ayah.
+      const reached = (t: number): boolean => st.final || (expected
+        ? verses.some(([s, a]) => s === passage[t]![0] && a > passage[t]![1])
+        : t < passage.length - 1);
       for (const c of similarVersePick(cands, SIMILAR_VERSE_RULE)) {
         const key = ayahKey(c);
-        if (st.svSeen.has(key)) continue;
+        if (st.svSeen.has(key) || !reached(c.slot)) continue;
         if (st.issues.some((i) => !i.source && sameAyah(i, c) && Math.abs(i.word - c.word) <= 1)) continue;
         if (this.svNearSkip && skips.some((s) => s.surah === c.surah && Math.abs(s.ayah - c.ayah) <= 1)) continue;
         st.svSeen.add(key);
