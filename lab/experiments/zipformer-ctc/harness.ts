@@ -73,6 +73,7 @@ const r3 = (x: number | undefined): number | null => (x === undefined || !Number
 const packVerdict = (v: WordVerdict): unknown[] => [
   v.surah, v.ayah, v.word, v.wordIndex, STATES.indexOf(v.state), r3(v.distance), r3(v.heardRatio), r3(v.margin),
   v.vowelErrors, r3(v.vowelMargin), r3(v.gop), r3(v.gopTwice), r3(v.gopNone), r3(v.repGain), r3(v.pairGop),
+  v.slip === undefined || !Number.isFinite(v.slip) ? null : Math.round(v.slip * 1e6) / 1e6,
 ];
 
 // ZIPFORMER_LP_CACHE=<dir> + ZIPFORMER_LP_MODE=record|replay: record the
