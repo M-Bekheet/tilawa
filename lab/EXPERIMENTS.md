@@ -887,6 +887,27 @@ Live, one pass each (1 thread, issues dismissed on sight), as P / R / F1, then h
 
 Bug found while checking order independence on test: the session kept its skipped-ayah candidate across `reset()`. Fixed (a reset bug, not a re-tune), and all test numbers above are after the fix.
 
+## Similar-verse check (acted mistakes; KILLED on the unseen-word gate)
+
+2026-10-02. Same private acted set, split, labels and scorer as above; aggregates only. Main `04337ab` engine at defaults (slip head off = rules only), paired replay on recorded log_probs for a0w-ep1-a0.5 int8 and the shipped int8. Lab-only prototype (`scripts/similar_verse.py`, `scripts/similar_verse_eval.py`); no SDK change.
+
+**Rule.** Nothing is fit on labels. Index: for every ayah, up to 8 other ayahs sharing ≥3 words and ≥50% of its words in a word-level alignment (diacritic-free keys); 1,803 ayahs have look-alikes (5,067 pairs). Per take, the free-decode phonemes are aligned (reference-global, query ends skippable at 0.5/char, SDK phoneme cost table) to the passage, and to the passage with one region of one ayah swapped for a look-alike's wording ("lookalike"), with 1–2 interior words dropped ("drop"), or with an eye-skip between a repeated phrase ("eyeskip"). A variant that beats the canonical text by `margin` cost units, whose region plus one word each side aligns at ≤ `loc` cost per char and whose ayah aligns at ≤ 0.5, flags the region's first word (`possible_substitution` / `possible_omission`), at most one per ayah, and only when no engine issue sits within ±1 word. Without a passage the slot's alternatives are the tracker's verse and its look-alikes, and the variant must also beat every pure reading of that slot. The flag time is when the region plus one following word has been decoded.
+
+**Dev (tuning only).** Two guards came from dev clean false flags: takes whose audio is not the expected ayah (garbage alignment favours shorter variants) and skipped ayahs; the local-fit and ayah-fit checks remove both. Eyeskip never added a catch. a0w + passage, look-alike margin 3–4: substitution 11 → 20/39 with 9/9 new flags correct; drop margin 8–10 at loc ≤ 0.25: skip_word 19 → 25–26/39; FF unchanged (1 / 2 / 0). Without a passage, look-alike adds 0 (a swapped-in look-alike word on a single-ayah take reads as the other ayah) and drop adds skip_words only. Drop margin 8 cost shipped + passage one help clean dev flag, so 10 was fixed. Frozen before test: lookalike + drop, margin 3.5 / drop 10, one-word swaps, loc 0.25, ayah fit 0.5.
+
+**Test (scored once).** P / R / F1 over 207 in-scope labels; FF is clean issues on help clean test / TLOG clean dev / v1.
+
+| config | P | R | F1 | ΔF1 [95%] | substitution | skip_word | new flags correct | FF base → new |
+|---|---|---|---|---|---|---|---|---|
+| a0w + passage | 0.980 → 0.988 | 0.232 → 0.382 | 0.375 → 0.551 | +0.176 [+0.114, +0.231] | 9 → 28/46 | 23 → 35/56 | 31/31 | 1/2/0 → 1/2/0 |
+| a0w, no passage | 0.950 → 0.942 | 0.184 → 0.237 | 0.308 → 0.378 | +0.071 [+0.036, +0.108] | 5 → 5 | 22 → 33 | 11/12 | 1/2/0 → 1/2/0 |
+| shipped + passage | 0.967 → 0.975 | 0.285 → 0.382 | 0.440 → 0.549 | +0.108 [+0.067, +0.150] | 8 → 27 | 35 → 36 | 20/20 | 2/2/0 → 2/2/0 |
+| shipped, no passage | 0.955 → 0.957 | 0.203 → 0.217 | 0.335 → 0.354 | +0.020 [0.000, +0.040] | 4 → 4 | 31 → 34 | 3/3 | 0/2/0 → 0/2/0 |
+
+Seen / unseen (a test label is unseen when no acted-dev label of its kind names the same word). a0w + passage: substitution seen 4 → 23/34 (+19), unseen 5 → 5/12 (+0); skip_word seen 20 → 31/50 (+11), unseen 3 → 4/6 (+1). **Unseen extra = 1 of 18 < 3: kill.** shipped + passage: unseen +1 (skip_word). Median latency of the new hits 2.2 s (a0w) / 2.7 s (shipped) after the label's start, against 3.3 s / 2.9 s for engine hits.
+
+**Why the gate cannot move.** All 12 unseen test substitutions are ordinary word swaps on ayahs that have no look-alike anywhere in the Quran (index coverage 0/12). All 30 seen `similar_passage` substitutions borrow their word from an indexed look-alike. The help prompts that elicit look-alike slips repeat across speakers, so every such word is a dev label too. The rule has no learned parameters beyond five dev thresholds, so the seen gain is not lexical memorisation in the slip-head sense, but the thresholds were chosen on dev takes of the same verses, and this split cannot show transfer to new verse pairs. The unseen skip_word drops sit at margins 5–14; the frozen 10 takes two (one already an engine catch).
+
 ## Per-experiment notes
 
 **c2c-direct-mixed-tta** — Cyberistic's winning entry and current champion. It runs the mixed int4+int8 FastConformer ONNX once at 1.0x speed, skips augmentation for confident predictions, and only runs 0.9x/1.1x speed-perturbed passes on low-confidence samples. Reproduced locally over 3 runs at 100% recall, 100% precision, and 100% sequence accuracy on v1 (53 samples), with 0.84s average latency.
