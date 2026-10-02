@@ -324,6 +324,7 @@ export class ZipformerSession {
     this.lastCursor = null;
     this.lastMatch = null;
     this.ayahIssuesRaised = new Set();
+    this.skipCandidate = null;
     this.lastFallback = null;
     this.resetDecoder();
     this.engine = this.makeEngine();
