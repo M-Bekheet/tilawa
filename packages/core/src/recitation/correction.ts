@@ -40,11 +40,34 @@ export interface CorrectionThresholds {
    * this (nats/token) from forcing a second copy before the next word.
    * `Infinity` disables it. */
   repetitionGain?: number;
+  /** Aligner states the GOP rule may flag. */
+  gopOnWrong?: boolean;
+  gopOnSkipped?: boolean;
+  /** Kinds the GOP rule may raise. */
+  gopOmission?: boolean;
+  gopSubstitution?: boolean;
+  /** A GOP word is an omission when silence fits its window this much better
+   * (nats/token) than the expected word, and at least `gopNoneMin`. */
+  gopNoneMargin?: number;
+  gopNoneMin?: number;
+  /** The GOP word must be the worst fit of itself and its neighbours. */
+  gopLocalMin?: boolean;
+  /** Frames a GOP-only candidate must persist before it is raised (other rules use 12). */
+  gopPersistFrames?: number;
+  /** Let `settle()` raise GOP-only issues. */
+  settleGop?: boolean;
+  /** `possible_repetition` handling. `note` never interrupts: the issue is
+   * queued on {@link CorrectionController.takeNotes} (the session emits a
+   * `correction_note`) and the reciter carries on. */
+  repetitionMode?: 'off' | 'note' | 'flag';
 }
 export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
   vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1, gopFlag: -3, gopAnchor: -2, settle: true,
-  repetitionGain: 5,
+  repetitionGain: 5, gopOnWrong: true, gopOnSkipped: true, gopOmission: true, gopSubstitution: true,
+  gopNoneMargin: 2, gopNoneMin: -3, gopLocalMin: true, gopPersistFrames: 12, settleGop: true,
+  repetitionMode: 'flag',
 };
+const PERSIST_FRAMES = 12;
 const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>
   ({ ...DEFAULT_CORRECTION_THRESHOLDS, ...th }) as Required<CorrectionThresholds>;
 export interface CorrectionState {
@@ -74,14 +97,20 @@ const hasGop = (v: WordVerdict | undefined): v is WordVerdict & { gop: number } 
  * never flagged by GOP alone. Neighbours must fit and the word must be the
  * worst fit locally, or the low score belongs to a boundary smear. */
 function gopIssue(v: WordVerdict, before: WordVerdict, after: WordVerdict, th: Required<CorrectionThresholds>): CorrectionIssue['kind'] | null {
-  if (!hasGop(v) || v.gop > th.gopFlag || (v.state !== 'wrong' && v.state !== 'skipped')) return null;
+  if (!hasGop(v) || v.gop > th.gopFlag) return null;
+  if (!((v.state === 'wrong' && th.gopOnWrong) || (v.state === 'skipped' && th.gopOnSkipped))) return null;
   const anchored = (n: WordVerdict) => clearWord(n) || (hasGop(n) && n.gop >= th.gopAnchor && n.state !== 'skipped');
   if (!anchored(before) || !anchored(after)) return null;
-  if ((hasGop(before) && before.gop < v.gop) || (hasGop(after) && after.gop < v.gop)) return null;
+  if (th.gopLocalMin && ((hasGop(before) && before.gop < v.gop) || (hasGop(after) && after.gop < v.gop))) return null;
   // Silence fits the window better than the expected word does.
   const none = v.gopNone ?? -Infinity;
-  return v.state === 'skipped' || (none - v.gop >= 2 && none >= -3) ? 'possible_omission' : 'possible_substitution';
+  const omission = v.state === 'skipped' || (none - v.gop >= th.gopNoneMargin && none >= th.gopNoneMin);
+  if (omission) return th.gopOmission ? 'possible_omission' : null;
+  return th.gopSubstitution ? 'possible_substitution' : null;
 }
+
+type Rule = 'aligner' | 'gop' | 'repetition';
+interface RuledIssue { issue: CorrectionIssue; rule: Rule }
 
 /** One word said twice. Going back over several words in a row is a phrase
  * restart (waqf then ibtida'), which is accepted practice, so a neighbour that
@@ -95,19 +124,23 @@ export function possibleWordIssues(
   verdicts: readonly WordVerdict[],
   thresholds: Partial<CorrectionThresholds> = DEFAULT_CORRECTION_THRESHOLDS,
 ): CorrectionIssue[] {
-  const th = withDefaults(thresholds);
+  return ruledWordIssues(verdicts, withDefaults(thresholds)).map(r => r.issue);
+}
+
+function ruledWordIssues(verdicts: readonly WordVerdict[], th: Required<CorrectionThresholds>): RuledIssue[] {
   const byIndex = new Map(verdicts.map(v => [v.wordIndex, v]));
-  return verdicts.flatMap(v => {
+  return verdicts.flatMap((v): RuledIssue[] => {
     const before = byIndex.get(v.wordIndex - 1);
     const after = byIndex.get(v.wordIndex + 1);
     // Do not infer leading/trailing omissions, uncertain audio, or skipped ayahs.
     if (!before || !after || before.surah !== v.surah || after.surah !== v.surah
       || before.ayah !== v.ayah || after.ayah !== v.ayah) return [];
-    const gop = gopIssue(v, before, after, th)
-      ?? (repetitionIssue(v, before, after, th) ? 'possible_repetition' as const : null);
-    if (!clearWord(before) || !clearWord(after)) {
-      return gop ? [{ surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind: gop }] : [];
-    }
+    const at = (kind: CorrectionIssue['kind'], rule: Rule): RuledIssue[] =>
+      [{ issue: { surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind }, rule }];
+    const gopKind = gopIssue(v, before, after, th);
+    const rep = !gopKind && th.repetitionMode !== 'off' && repetitionIssue(v, before, after, th);
+    const extra = gopKind ? at(gopKind, 'gop') : rep ? at('possible_repetition', 'repetition') : [];
+    if (!clearWord(before) || !clearWord(after)) return extra;
     // A partly heard word (the aligner lent it a few chars of its neighbours,
     // or the reciter said only its onset) is still an omission.
     const omission = v.state === 'skipped' && (v.heardRatio === 0 || v.heardRatio <= th.omissionMaxHeard);
@@ -121,8 +154,8 @@ export function possibleWordIssues(
       && Number.isFinite(v.margin) && v.margin >= th.vowelWordMargin
       && v.heardRatio >= 0.75 && v.heardRatio <= 1.3;
     const kind = omission ? 'possible_omission' as const : substitution ? 'possible_substitution' as const
-      : vowel ? 'possible_vowel' as const : gop;
-    return kind ? [{ surah: v.surah, ayah: v.ayah, word: v.word, wordIndex: v.wordIndex, kind }] : [];
+      : vowel ? 'possible_vowel' as const : null;
+    return kind ? at(kind, 'aligner') : extra;
   });
 }
 
@@ -139,11 +172,13 @@ export class CorrectionController {
   /** Words observe() has judged with their context settled (both neighbours
    * and the word after next) since the last settle(). */
   private seenSettled = new Set<number>();
+  private notes: CorrectionIssue[] = [];
 
   reset(): void {
     this.state = { phase: 'idle', issue: null, resume: null, attempt: this.state.attempt + 1, outcome: null };
     this.suppressed.clear();
     this.seenSettled.clear();
+    this.notes = [];
     this.clearEvidence();
   }
   clearEvidence(): void { this.candidates.clear(); this.retryFrame = null; }
@@ -175,20 +210,38 @@ export class CorrectionController {
     for (const w of settledAt) {
       if (settledAt.has(w - 1) && settledAt.has(w + 1) && settledAt.has(w + 2)) this.seenSettled.add(w);
     }
-    const issues = possibleWordIssues(verdicts, th).filter(v => !this.suppressed.has(v.wordIndex));
-    const live = new Set(issues.map(v => v.wordIndex));
+    const issues = ruledWordIssues(verdicts, th).filter(r => !this.suppressed.has(r.issue.wordIndex));
+    const live = new Set(issues.map(r => r.issue.wordIndex));
     for (const key of this.candidates.keys()) if (!live.has(key)) this.candidates.delete(key);
-    for (const issue of issues) {
+    for (const { issue, rule } of issues) {
       const old = this.candidates.get(issue.wordIndex);
+      const persist = rule === 'gop' ? th.gopPersistFrames : PERSIST_FRAMES;
       if (!old || old.kind !== issue.kind || frame < old.frame) {
         this.candidates.set(issue.wordIndex, { kind: issue.kind, frame });
-      } else if (frame - old.frame >= 12) {
+      } else if (frame - old.frame >= persist) {
+        if (this.queueNote(issue, rule, th)) continue;
         this.state = { phase: 'error', issue, resume: { ...cursor }, attempt: this.state.attempt, outcome: null };
         this.clearEvidence();
         return true;
       }
     }
     return false;
+  }
+
+  /** Soft notes (repetition in `note` mode) raised since the last call. They
+   * never change {@link state}. */
+  takeNotes(): CorrectionIssue[] {
+    const out = this.notes;
+    this.notes = [];
+    return out;
+  }
+
+  private queueNote(issue: CorrectionIssue, rule: Rule, th: Required<CorrectionThresholds>): boolean {
+    if (rule !== 'repetition' || th.repetitionMode !== 'note') return false;
+    this.suppressed.add(issue.wordIndex);
+    this.candidates.delete(issue.wordIndex);
+    this.notes.push({ ...issue });
+    return true;
   }
 
   /** Final word-level check on settled verdicts when the tracker is about to
@@ -202,10 +255,13 @@ export class CorrectionController {
     const seen = this.seenSettled;
     this.seenSettled = new Set();
     if (this.mode !== 'correction' || this.state.phase !== 'idle' || !th.settle) return false;
-    const issue = possibleWordIssues(verdicts, th)
-      .filter(v => !this.suppressed.has(v.wordIndex) && !seen.has(v.wordIndex) && v.kind !== 'possible_vowel')
-      .sort((a, b) => a.wordIndex - b.wordIndex)[0];
-    if (!issue) return false;
+    const ruled = ruledWordIssues(verdicts, th)
+      .filter(r => !this.suppressed.has(r.issue.wordIndex) && !seen.has(r.issue.wordIndex)
+        && r.issue.kind !== 'possible_vowel' && (th.settleGop || r.rule !== 'gop'))
+      .sort((a, b) => a.issue.wordIndex - b.issue.wordIndex);
+    const first = ruled.find(r => !this.queueNote(r.issue, r.rule, th));
+    if (!first) return false;
+    const issue = first.issue;
     this.state = { phase: 'error', issue, resume: { ...cursor }, attempt: this.state.attempt, outcome: null };
     this.clearEvidence();
     return true;

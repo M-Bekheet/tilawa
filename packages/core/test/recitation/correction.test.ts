@@ -69,6 +69,52 @@ describe('conservative word correction', () => {
     expect(possibleWordIssues(ctx(), { vowelMargin: .05, vowelWordMargin: .5, repetitionGain: Infinity })).toEqual([]);
     expect(possibleWordIssues(ctx({ ...rep, gop: undefined }))).toEqual([]);
   });
+  it('GOP gating knobs: states, kinds, local minimum, omission margin', () => {
+    const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
+    const bad = { state: 'wrong' as const, distance: .45, margin: .4, heardRatio: .8, gop: -6, gopNone: -9 };
+    const base = { vowelMargin: .05, vowelWordMargin: .5, gopFlag: -3 };
+    const sub = [fit(0), word(1, bad), fit(2)];
+    const skip = [fit(0), word(1, { ...bad, state: 'skipped', heardRatio: .2 }), fit(2)];
+    expect(possibleWordIssues(sub, { ...base, gopOnWrong: false })).toEqual([]);
+    expect(possibleWordIssues(skip, { ...base, gopOnSkipped: false })).toEqual([]);
+    expect(possibleWordIssues(sub, { ...base, gopSubstitution: false })).toEqual([]);
+    expect(possibleWordIssues(skip, { ...base, gopOmission: false })).toEqual([]);
+    expect(possibleWordIssues(skip, { ...base, gopSubstitution: false })[0]).toMatchObject({ kind: 'possible_omission' });
+    const worseRight = [fit(0), word(1, bad), word(2, { margin: .3, gop: -1.5, gopNone: -9 }), fit(3)];
+    expect(possibleWordIssues(worseRight, base)[0]).toMatchObject({ word: 1 });
+    const silent = [fit(0), word(1, { ...bad, gopNone: -2 }), fit(2)];
+    expect(possibleWordIssues(silent, base)[0]).toMatchObject({ kind: 'possible_omission' });
+    expect(possibleWordIssues(silent, { ...base, gopNoneMargin: 5 })[0]).toMatchObject({ kind: 'possible_substitution' });
+    expect(possibleWordIssues(silent, { ...base, gopNoneMin: -1 })[0]).toMatchObject({ kind: 'possible_substitution' });
+  });
+  it('GOP-only flags can need longer persistence, and can be kept out of settle()', () => {
+    const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
+    const sub = [fit(0), word(1, { state: 'wrong', distance: .45, margin: .4, heardRatio: .8, gop: -6, gopNone: -9 }), fit(2), fit(3)];
+    const c = new CorrectionController(); c.setMode('correction');
+    c.thresholds = { ...c.thresholds, gopFlag: -3, gopPersistFrames: 24 };
+    c.observe(sub, cursor, 10); expect(c.observe(sub, cursor, 22)).toBe(false);
+    expect(c.observe(sub, cursor, 34)).toBe(true);
+    const s = new CorrectionController(); s.setMode('correction');
+    s.thresholds = { ...s.thresholds, gopFlag: -3, settleGop: false };
+    expect(s.settle(sub, cursor)).toBe(false);
+    s.thresholds = { ...s.thresholds, settleGop: true };
+    expect(s.settle(sub, cursor)).toBe(true);
+  });
+  it('repetition as a soft note never interrupts', () => {
+    const rep = [word(0), word(1, { gop: -.3, repGain: 7 }), word(2), word(3)];
+    const c = new CorrectionController(); c.setMode('correction');
+    c.thresholds = { ...c.thresholds, repetitionGain: 5, repetitionMode: 'note' };
+    c.observe(rep, cursor, 30); expect(c.observe(rep, cursor, 42)).toBe(false);
+    expect(c.state.phase).toBe('idle');
+    expect(c.takeNotes()).toEqual([expect.objectContaining({ kind: 'possible_repetition', word: 1 })]);
+    expect(c.takeNotes()).toEqual([]);
+    // Noted once: the same word is not noted again.
+    c.observe(rep, cursor, 60); c.observe(rep, cursor, 80); expect(c.takeNotes()).toEqual([]);
+    const off = new CorrectionController(); off.setMode('correction');
+    off.thresholds = { ...off.thresholds, repetitionGain: 5, repetitionMode: 'off' };
+    off.observe(rep, cursor, 30); off.observe(rep, cursor, 42);
+    expect(off.state.phase).toBe('idle'); expect(off.takeNotes()).toEqual([]);
+  });
   it('does not accept a retry that repeats the word again', () => {
     const rep = [word(0), word(1, { gop: -.3, repGain: 7 }), word(2), word(3)];
     const c = new CorrectionController(); c.setMode('correction');

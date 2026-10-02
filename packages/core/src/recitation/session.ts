@@ -513,8 +513,10 @@ export class ZipformerSession {
         ? this.decoder.framesDecoded - engine.tracker.heard[engine.tracker.heard.length - 1]!.frame >= this.cfg.settleFrames : false;
       if (engine.tracer && engine.tracker && !engine.tracker.lost
         && (engine.tracker.costRate(this.cfg.holdWindow) ?? 0) < this.cfg.holdRate) {
-        if (this.correction.observe(engine.tracer.verdicts(Boolean(settled)),
-          this.correction.state.resume!, this.decoder.framesDecoded)) out.push(this.correctionMessage());
+        const raised = this.correction.observe(engine.tracer.verdicts(Boolean(settled)),
+          this.correction.state.resume!, this.decoder.framesDecoded);
+        out.push(...this.noteMessages());
+        if (raised) out.push(this.correctionMessage());
       } else this.correction.clearEvidence();
       return out;
     }
@@ -528,7 +530,9 @@ export class ZipformerSession {
       && (tracker.costRate(this.cfg.holdWindow) ?? 0) < this.cfg.holdRate) {
       const last = tracker.heard[tracker.heard.length - 1];
       const settled = !!last && this.decoder.framesDecoded - last.frame >= this.cfg.settleFrames;
-      if (this.correction.observe(this.engine.tracer.verdicts(settled), this.lastCursor, this.decoder.framesDecoded)) {
+      const raised = this.correction.observe(this.engine.tracer.verdicts(settled), this.lastCursor, this.decoder.framesDecoded);
+      out.push(...this.noteMessages());
+      if (raised) {
         // Retain main-session coverage before a practice exit replaces its tracker.
         this.dumpTallies();
         out.push(this.correctionMessage());
@@ -618,9 +622,15 @@ export class ZipformerSession {
   private settleCorrection(): WorkerOutbound[] {
     const tracker = this.engine.tracer && this.engine.tracker;
     if (this.practiceEngine || !tracker || tracker.lost || !this.lastCursor) return [];
-    if (!this.correction.settle(this.engine.tracer!.verdicts(true), this.lastCursor)) return [];
+    const raised = this.correction.settle(this.engine.tracer!.verdicts(true), this.lastCursor);
+    const notes = this.noteMessages();
+    if (!raised) return notes;
     this.dumpTallies();
-    return [this.correctionMessage()];
+    return [...notes, this.correctionMessage()];
+  }
+
+  private noteMessages(): WorkerOutbound[] {
+    return this.correction.takeNotes().map(issue => ({ type: 'correction_note' as const, issue }));
   }
 
   private wordProgress(): WorkerOutbound {
