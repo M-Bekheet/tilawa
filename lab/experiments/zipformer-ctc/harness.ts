@@ -189,7 +189,7 @@ async function createHost(): Promise<ZipformerSession> {
     ? { session: replaySession(), Tensor: ort.Tensor }
     : { ort, model: new Uint8Array(readFileSync(MODEL)) };
   return ZipformerSession.create({
-    ...(STRUCTURAL.ayahOrder || STRUCTURAL.similarVerse ? { structural: STRUCTURAL } : {}),
+    structural: STRUCTURAL.ayahOrder || STRUCTURAL.similarVerse ? STRUCTURAL : false,
     ...acoustic,
     io,
     corpus: corpusJson,

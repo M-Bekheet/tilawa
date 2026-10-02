@@ -19,7 +19,7 @@ import { encodePhonemes } from "../../src/recitation/posteriors";
 import { BLANK_ID, VOCAB_SIZE } from "../../src/recitation/tokens";
 import type { OrtSessionLike, TensorLike } from "../../src/recitation/zipformerRunner";
 import type { WorkerOutbound } from "../../src/types";
-import { findModelIo, requireCorpus } from "./paths";
+import { findLegacyModelIo, findModelIo, requireCorpus } from "./paths";
 
 const SAMPLE_RATE = 16000;
 const CHUNK = 7680; // 480 ms — one Zipformer hop worth of fbank frames
@@ -134,7 +134,15 @@ describe("ZipformerSession", () => {
     expect(DEFAULT_ZIPFORMER_IO.vocabSize).toBe(VOCAB_SIZE);
     expect(DEFAULT_ZIPFORMER_IO.inputs[0]?.name).toBe("x");
 
-    const shipped = findModelIo();
+    // The default a0w export carries the encoder-frame output: the bundled manifest is its manifest.
+    const a0w = findModelIo();
+    if (a0w) {
+      const { model: _m, ...shippedA0w } = JSON.parse(readFileSync(a0w, "utf8"));
+      const { model: _b, ...bundledA0w } = structuredClone(DEFAULT_ZIPFORMER_IO) as unknown as Record<string, unknown>;
+      expect(bundledA0w).toEqual(shippedA0w);
+    }
+    // The previous default has no encoder-frame output; the optional output is dropped for it.
+    const shipped = findLegacyModelIo();
     if (shipped) {
       const bundled = structuredClone(DEFAULT_ZIPFORMER_IO) as {
         encoderFrames?: string;

@@ -55,7 +55,7 @@ function script(surah: number, ayahs: number[]): Array<number | null> {
 /** Run a take in correction mode, dismissing every issue on sight (as the lab harness does). */
 async function take(ids: Array<number | null>, structural?: StructuralOptions, expected?: { surah: number; ayah: number; ayahEnd: number }) {
   const ort = new ScriptedOrtSession(ids);
-  const session = await createZipformerSession({ session: ort, Tensor: TensorCtor, corpus: corpusJson, ...(structural ? { structural } : {}) });
+  const session = await createZipformerSession({ session: ort, Tensor: TensorCtor, corpus: corpusJson, structural: structural ?? false });
   session.setMode("correction");
   if (expected) session.setExpected(expected);
   const issues: CorrectionIssue[] = [];
@@ -76,6 +76,14 @@ async function take(ids: Array<number | null>, structural?: StructuralOptions, e
 }
 
 describe("ZipformerSession structural rules", () => {
+  it("is on by default, at stop timing", async () => {
+    const session = await createZipformerSession({ session: new ScriptedOrtSession([]), Tensor: TensorCtor, corpus: corpusJson });
+    const s = session as unknown as { aoRule: unknown; svOn: boolean; structuralLive: boolean };
+    expect(s.aoRule).not.toBeNull();
+    expect(s.svOn).toBe(true);
+    expect(s.structuralLive).toBe(false);
+  });
+
   it("leaves the message stream unchanged when off", async () => {
     const ids = script(87, [1, 2, 4, 5]);
     const a = await take(ids);
