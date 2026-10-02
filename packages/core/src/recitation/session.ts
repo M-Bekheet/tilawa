@@ -77,7 +77,8 @@ const TAIL_SECONDS = 2.0;
 export const AYAH_HEARD_FRACTION = 0.5;
 const SKIP_PERSIST_FRAMES = 12;
 
-/** I/O manifest of the shipped `zipformer_interp_gentle_a05.int8.onnx`. */
+/** I/O manifest of the default `zipformer_a0w_ep1_a05.int8.onnx` (its encoder-frame
+ * output is optional, so the same manifest drives `zipformer_interp_gentle_a05.int8.onnx`). */
 export const DEFAULT_ZIPFORMER_IO = DEFAULT_IO as ZipformerIo;
 
 /** Model bytes, or a loader that produces them (fetch, fs, asset bundle). */
@@ -199,13 +200,15 @@ export interface ZipformerSessionOptions {
    * If the model does not return encoder frames, the head stays off.
    */
   slipHead?: boolean | SlipSensitivity;
-  /** Structural correction rules (correction mode). Off by default. */
-  structural?: StructuralOptions;
+  /** Structural correction rules (correction mode). Default
+   * {@link DEFAULT_STRUCTURAL}: both rules on, run at `stop()`. `false` turns them off. */
+  structural?: StructuralOptions | false;
 }
 
 /**
  * Structural correction rules over the free decode, validated with the a0w
- * model. Correction mode only; both are off by default.
+ * model. Correction mode only; both are on by default ({@link DEFAULT_STRUCTURAL}),
+ * running once over the take at `stop()`.
  *
  * - `ayahOrder` raises `possible_skipped_ayah`. Works without
  *   {@link ZipformerSession.setExpected}: the window is the first located ayah
@@ -238,6 +241,9 @@ export interface StructuralOptions {
    * loaded on first use. */
   index?: StructuralIndexJson;
 }
+
+/** Both structural rules, run once over the take at `stop()`. */
+export const DEFAULT_STRUCTURAL: Readonly<StructuralOptions> = { ayahOrder: true, similarVerse: true, timing: "stop" };
 
 /** Audio after which the structural rules start a new block (bounds their cost). */
 const STRUCTURAL_BLOCK_SECONDS = 120;
@@ -359,7 +365,8 @@ export class ZipformerSession {
       );
     }
     const session = new ZipformerSession(runner, corpusJson, quranDb, opts);
-    if (opts.structural) await session.setStructural(opts.structural);
+    const structural = opts.structural === undefined ? DEFAULT_STRUCTURAL : opts.structural;
+    if (structural) await session.setStructural(structural);
     return session;
   }
 
@@ -1113,7 +1120,7 @@ export class ZipformerSession {
  * import * as ort from "onnxruntime-node";
  * const session = await createZipformerSession({
  *   ort,
- *   model: () => readFile("zipformer_interp_gentle_a05.int8.onnx"),
+ *   model: () => readFile("zipformer_a0w_ep1_a05.int8.onnx"),
  *   corpus: async () => JSON.parse(await readFile("zipformer_quran.json", "utf8")),
  *   quran: async () => JSON.parse(await readFile("quran.json", "utf8")),
  *   onEvent: (msg) => console.log(msg.type),

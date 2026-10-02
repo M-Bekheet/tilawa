@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+A better default model, and correction mode now catches skipped ayahs and look-alike-verse slips.
+
+- **Default model: `a0w-ep1-a0.5` int8** (`zipformer_a0w_ep1_a05.int8.onnx`, release [`zipformer-a0w-ep1-a0.5`](https://github.com/yazinsai/tilawa/releases/tag/zipformer-a0w-ep1-a0.5), NPL-1.2). It is a 50/50 blend of Quran-Lab v3 with a fine-tune on multi-ayah windows. Phoneme error rate on the 600-clip q-lab benchmark is 3.59% (Quran-Lab v3: 4.45%). Tracking is 53/53 on v1 and 56/58 on held-out multi-ayah windows. Same size (66 MB), same I/O. It also exposes encoder frames, so the opt-in slip head can run. `DEFAULT_ZIPFORMER_IO` is its manifest. The previous default, `zipformer_interp_gentle_a05.int8.onnx` (release v0.3.0), still works unchanged.
+- **Structural correction rules, on by default in correction mode** (`DEFAULT_STRUCTURAL`). Tracking mode never runs them, and `structural: false` turns them off.
+  - **Ayah order** raises `possible_skipped_ayah` when the reciter jumps over a whole ayah. It needs no expected passage.
+  - **Similar verse** raises `possible_substitution` when a word from a look-alike ayah is read, and `possible_omission` when a word is dropped. The substitutions need `setExpected`.
+  - Both run once over the take at `stop()` (`timing: "stop"`), and their issues come one per `correct()` call. `timing: "pause"` runs them at pauses too; it is opt-in.
+  - Issues they raise carry `source: "ayah_order" | "similar_verse"`. Similar-verse flags on or next to a skipped ayah are dropped.
+  - On a held-out synthetic set (EveryAyah dev reciters, passages unseen in tuning), skipped-ayah recall without a passage goes from 91/120 to 103/120. Sister-ayah substitution recall with a passage goes from 11/100 to 54/100.
+  - They add 0 flags on 220 uncut controls and on 211 clean minutes.
+  - They are text rules with no learned weights. They add nothing on letter-level mispronunciations.
+  - New API: `ZipformerSessionOptions.structural`, `ZipformerSession.setStructural()`, `StructuralOptions`, `DEFAULT_STRUCTURAL`, `CorrectionIssue.source`, and the rule internals (`StructuralRules`, `AYAH_ORDER_RULE`, `SIMILAR_VERSE_RULE`, …).
+  - The look-alike index (`structural-index.json`, 56 KB gzipped, word indices only) is a dynamic import, so bundlers put it in its own chunk; it loads when a session with the rules on is created.
+- **Slip head** (`slipHead: "strict" | "high"`, off by default) over the exposed encoder frames. Its recall gain was on memorised words, so it stays opt-in.
+
+### Also in 0.4.0
 
 Correction mode now tracks the words people get wrong. Tracking mode is unchanged.
 

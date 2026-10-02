@@ -92,6 +92,7 @@ export {
   displayQuranFromRaw,
   DEFAULT_ZIPFORMER_IO,
   AYAH_HEARD_FRACTION,
+  DEFAULT_STRUCTURAL,
 } from "./session.js";
 export type {
   ZipformerSessionOptions,
