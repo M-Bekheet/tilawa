@@ -58,7 +58,8 @@ DEFAULTS = {
 
 
 # Frozen on dev (acted dev skip_ayah + help clean dev + v1; TLOG not used).
-RULE = {"margin": 99.0, "rel": 0.04, "fit": 0.3, "between": 8, "min_post": 0}
+# ``no_ident``: never flag an ayah whose text equals a neighbour's (see ``ident_guarded``).
+RULE = {"margin": 99.0, "rel": 0.04, "fit": 0.3, "between": 8, "min_post": 0, "no_ident": True}
 # Guards frozen on dev for the shipped emissions (cost 0 dev catches on either model):
 # no jump after a restart segment that also fits the skipped ayah's ending (rhyme), and
 # undecoded audio before the jump at most 0.2 x the skipped ayah's length (dev max 0.17).
@@ -152,6 +153,23 @@ def segments(tokens: list, gap: int, min_chars: int) -> list[dict]:
         out[1]["f0"] = out[0]["f0"]
         out.pop(0)
     return out
+
+
+def _text_key(corpus: Corpus, k: tuple[int, int]) -> tuple[str, ...] | None:
+    ws = corpus.keys.get(k)
+    return tuple(ws) if ws else None
+
+
+def ident_guarded(corpus: Corpus, s: int, a: int) -> bool:
+    """Skipping this ayah leaves a take that reads as an in-order or repeated recitation: its text
+    equals an adjacent ayah's, or the ayahs on either side of it are equal (109:4 between 109:3 and
+    109:5). Exact diacritic-free word keys. Near-equal pairs such as 94:5/94:6 (``fa-``) stay
+    flaggable: dev skips of 94:5 and 109:3 are caught correctly."""
+    me = _text_key(corpus, (s, a))
+    prev, nxt = _text_key(corpus, (s, a - 1)), _text_key(corpus, (s, a + 1))
+    if me is not None and me in (prev, nxt):
+        return True
+    return prev is not None and prev == nxt
 
 
 def window_of(row: dict, corpus: Corpus, mode: str, back: int, ahead: int) -> list[tuple[int, int]]:
@@ -291,8 +309,19 @@ def detect_take(corpus: Corpus, row: dict, mode: str, p: dict) -> dict | None:
                                                   for i in range(ayah_first[x], ayah_last[x] + 1))
                                               / max(1, seg_len[k0])), 3),
                 "skip_chars": int(wlen_cum[ayah_last[x] + 1] - wlen_cum[ayah_first[x]]),
+                "ident": ident_guarded(corpus, win[x][0], win[x][1]),
             })
     return out
+
+
+_CORPUS: list[Corpus] = []
+
+
+def _ident(s: int, a: int) -> bool:
+    """Guard for candidate files written before ``ident`` was recorded."""
+    if not _CORPUS:
+        _CORPUS.append(Corpus())
+    return ident_guarded(_CORPUS[0], int(s), int(a))
 
 
 def flags_of(cand: dict | None, rule: dict) -> list[dict]:
@@ -313,6 +342,8 @@ def flags_of(cand: dict | None, rule: dict) -> list[dict]:
                 and j.get("pre_on_skipped", 0) <= rule.get("restart_alt", 99):
             continue
         if "between_rel" in rule and j["between"] > rule["between_rel"] * j.get("skip_chars", 0):
+            continue
+        if rule.get("no_ident") and (j["ident"] if "ident" in j else _ident(j["surah"], j["ayah"])):
             continue
         out.append({"kind": "possible_skipped_ayah", "surah": j["surah"], "ayah": j["ayah"], "word": 0,
                     "atSeconds": j["at"], "source": "ayah_order"})

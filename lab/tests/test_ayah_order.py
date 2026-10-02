@@ -96,3 +96,15 @@ def test_restart_and_garble_guards(ao):
     assert n(pre_restart=True, pre_on_skipped=0.2) == 0   # rhyming restart: could be the skipped ayah's tail
     assert n(between=6) == 1
     assert n(between=8) == 0                              # 8 undecoded chars for a 30-char ayah
+
+
+def test_identical_text_guard(ao, corpus):
+    assert ao.ident_guarded(corpus, 109, 4)
+    assert not ao.ident_guarded(corpus, 109, 3)
+    assert not ao.ident_guarded(corpus, 94, 5)
+    exp = [(109, 3), (109, 4), (109, 5)]
+    row = row_for(tokens_for(corpus, [(109, 3), (109, 5)]), expected=exp)
+    assert flags(ao, corpus, row, "expected") == []
+    exp = [(94, 4), (94, 5), (94, 6)]
+    row = row_for(tokens_for(corpus, [(94, 4), (94, 6)]), expected=exp)
+    assert [(f["surah"], f["ayah"]) for f in flags(ao, corpus, row, "expected")] == [(94, 5)]
