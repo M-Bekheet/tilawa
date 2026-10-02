@@ -52,9 +52,24 @@ import {
 } from "./zipformerRunner.js";
 import DEFAULT_IO from "./zipformer-io.json" with { type: "json" };
 
-import { CorrectionController, type CorrectionAction, type RecitationMode } from "./correction.js";
+import { CorrectionController, type CorrectionAction, type CorrectionIssue, type RecitationMode } from "./correction.js";
 import { FramePosteriors } from "./posteriors.js";
 import { A0W_SLIP_HEAD, EncoderFrames, slipThreshold, type SlipHead, type SlipSensitivity } from "./slipHead.js";
+import {
+  AYAH_ORDER_PARAMS,
+  AYAH_ORDER_RULE,
+  AYAH_ORDER_RULE_GUARDED,
+  SIMILAR_VERSE_RULE,
+  StructuralRules,
+  ayahOrderFlags,
+  similarVerseEligible,
+  similarVersePick,
+  type Ayah,
+  type AyahOrderRule,
+  type StructuralFlag,
+  type StructuralIndexJson,
+  type TimedToken,
+} from "./structural.js";
 
 const TAIL_SECONDS = 2.0;
 /** Mean heard ratio over an unmatched ayah's words at or above which the gap
@@ -184,6 +199,44 @@ export interface ZipformerSessionOptions {
    * If the model does not return encoder frames, the head stays off.
    */
   slipHead?: boolean | SlipSensitivity;
+  /** Structural correction rules (correction mode). Off by default. */
+  structural?: StructuralOptions;
+}
+
+/**
+ * Structural correction rules over the free decode, validated with the a0w
+ * model. Correction mode only; both are off by default.
+ *
+ * - `ayahOrder` raises `possible_skipped_ayah`. Works without
+ *   {@link ZipformerSession.setExpected}: the window is the first located ayah
+ *   −1 .. +4. With an expected passage the window is that passage.
+ * - `similarVerse` raises `possible_substitution` (a look-alike ayah's
+ *   wording) and `possible_omission` (one dropped word). Substitutions need
+ *   {@link ZipformerSession.setExpected}: without a passage a swapped-in
+ *   look-alike word usually reads as the other ayah, so only drops fire.
+ *   Flags on or next to an ayah flagged as skipped are suppressed.
+ */
+export interface StructuralOptions {
+  /** `true`: the a0w rule. `"guarded"`: adds the two guards frozen for the
+   * shipped model (restart onto the skipped ayah's ending, undecoded audio). */
+  ayahOrder?: boolean | "guarded";
+  similarVerse?: boolean;
+  /** Drop similar-verse flags on or next to an ayah flagged as skipped
+   * (they land on the ayah beside the cut). Default true. */
+  suppressNearSkip?: boolean;
+  /** The look-alike index. Defaults to the bundled `structural-index.json`,
+   * loaded on first use. */
+  index?: StructuralIndexJson;
+}
+
+/** Audio after which the structural rules start a new block (bounds their cost). */
+const STRUCTURAL_BLOCK_SECONDS = 120;
+const STRUCTURAL_ERROR_KINDS = new Set(["possible_omission", "possible_substitution", "possible_vowel",
+  "possible_skipped_ayah", "unclear_ayah"]);
+
+async function loadStructuralIndex(): Promise<StructuralIndexJson> {
+  const mod = await import("./structural-index.json", { with: { type: "json" } });
+  return mod.default as StructuralIndexJson;
 }
 
 export class ZipformerSession {
@@ -225,6 +278,11 @@ export class ZipformerSession {
   private expected: ExpectedPassage | null = null;
   private skipCandidate: { key: string; frame: number } | null = null;
   private stopping = false;
+  private structuralRules: StructuralRules | null = null;
+  private aoRule: AyahOrderRule | null = null;
+  private svOn = false;
+  private svNearSkip = true;
+  private st = ZipformerSession.freshStructural();
   lastFallback: FallbackHit | null = null;
   debugEnabled = false;
 
@@ -289,7 +347,50 @@ export class ZipformerSession {
         opts.executionProviders,
       );
     }
-    return new ZipformerSession(runner, corpusJson, quranDb, opts);
+    const session = new ZipformerSession(runner, corpusJson, quranDb, opts);
+    if (opts.structural) await session.setStructural(opts.structural);
+    return session;
+  }
+
+  /**
+   * Turn the structural rules on or off (see {@link StructuralOptions}).
+   * Loads the bundled look-alike index the first time a rule is turned on.
+   */
+  async setStructural(opts: StructuralOptions): Promise<void> {
+    const ao = opts.ayahOrder ?? false;
+    const sv = opts.similarVerse ?? false;
+    if (!ao && !sv) {
+      this.structuralRules = null;
+      this.aoRule = null;
+      this.svOn = false;
+      this.st = ZipformerSession.freshStructural();
+      return;
+    }
+    if (!this.structuralRules || opts.index) {
+      this.structuralRules = new StructuralRules(this.corpus, opts.index ?? await loadStructuralIndex());
+    }
+    this.aoRule = ao === "guarded" ? AYAH_ORDER_RULE_GUARDED : ao ? AYAH_ORDER_RULE : null;
+    this.svOn = sv;
+    this.svNearSkip = opts.suppressNearSkip ?? true;
+  }
+
+  private static freshStructural() {
+    return {
+      tokens: [] as TimedToken[],
+      absFrames: 0,
+      samples: 0,
+      /** Tokens already seen by the last evaluation. */
+      evalAt: 0,
+      blockTok: 0,
+      blockT0: 0,
+      blockEmitted: new Set<string>(),
+      aoSeen: new Set<string>(),
+      svSeen: new Set<string>(),
+      skips: [] as Array<{ surah: number; ayah: number }>,
+      pending: [] as StructuralFlag[],
+      issues: [] as CorrectionIssue[],
+      final: false,
+    };
   }
 
   /** Every ayah the tracker has scored so far, in the order it first saw them. */
@@ -341,6 +442,7 @@ export class ZipformerSession {
     this.ayahIssuesRaised = new Set();
     this.skipCandidate = null;
     this.lastFallback = null;
+    this.st = ZipformerSession.freshStructural();
     this.resetDecoder();
     this.engine = this.makeEngine();
     return [];
@@ -348,6 +450,7 @@ export class ZipformerSession {
 
   /** Push one chunk of mono 16 kHz float32 PCM. Any size; 480 ms works well. */
   async feed(samples: Float32Array): Promise<WorkerOutbound[]> {
+    if (this.structuralRules) this.st.samples += samples.length;
     if (this.correction.state.phase === "error" || this.correction.state.phase === "corrected") return [];
     return this.dispatch(await this.feedSamples(samples));
   }
@@ -401,7 +504,9 @@ export class ZipformerSession {
         this.lastCursor = { ...state.resume };
       }
     }
-    return this.dispatch([this.correctionMessage()]);
+    const out = [this.correctionMessage()];
+    if (this.structuralRules && state.phase === 'idle') out.push(...this.raiseStructural());
+    return this.dispatch(out);
   }
 
   private correctionMessage(): WorkerOutbound {
@@ -431,7 +536,7 @@ export class ZipformerSession {
     if (frames.length) {
       out.push(...await this.runFrames(frames));
     }
-    const flushed = this.decoder.flush();
+    const flushed = this.logTokens(this.decoder.flush(), this.st.absFrames - this.decoder.framesDecoded);
     if (flushed.length) {
       out.push(...this.consumeTokens(flushed));
     }
@@ -476,6 +581,11 @@ export class ZipformerSession {
           });
         }
       }
+    }
+
+    if (this.structuralRules) {
+      this.st.final = true;
+      out.push(...this.structuralTick(true));
     }
 
     const seq = buildFinalSequence([...this.accumulated.values()], fallback, this.minWordFraction);
@@ -542,6 +652,11 @@ export class ZipformerSession {
   }
 
   private dispatch(messages: WorkerOutbound[]): WorkerOutbound[] {
+    if (this.structuralRules) {
+      for (const msg of messages) {
+        if (msg.type === "correction" && msg.state.phase === "error" && msg.state.issue) this.st.issues.push(msg.state.issue);
+      }
+    }
     if (this.onEvent) for (const msg of messages) this.onEvent(msg);
     return messages;
   }
@@ -567,8 +682,20 @@ export class ZipformerSession {
         if (this.practiceEngine) this.attachPosteriors(this.practiceEngine);
       }
     }
+    const base = this.st.absFrames - this.decoder.framesDecoded;
     const tokens = this.decoder.consume(logProbs, out, this.runner.io.vocabSize);
+    if (this.structuralRules) {
+      this.st.absFrames += out;
+      this.logTokens(tokens, base);
+    }
     return this.consumeTokens(tokens);
+  }
+
+  private logTokens<T extends { sym: string; frame: number }>(tokens: T[], base: number): T[] {
+    if (!this.structuralRules) return tokens;
+    const t = this.st.samples / SAMPLE_RATE;
+    for (const tok of tokens) this.st.tokens.push({ sym: tok.sym, frame: base + tok.frame, t });
+    return tokens;
   }
 
   private consumeTokens(tokens: Array<{ sym: string; frame: number; margin: number }>): WorkerOutbound[] {
@@ -608,6 +735,7 @@ export class ZipformerSession {
       this.correction.clearEvidence();
       this.skipCandidate = null;
     }
+    if (this.structuralRules) out.push(...this.structuralTick(false));
     if (tokens.length) {
       out.push({
         type: "raw_transcript",
@@ -616,6 +744,119 @@ export class ZipformerSession {
       });
     }
     return out;
+  }
+
+  /**
+   * Run the structural rules once a pause closes a segment (and at the end of
+   * audio), then raise the next queued flag if the controller is idle.
+   */
+  private structuralTick(final: boolean): WorkerOutbound[] {
+    if (this.correction.mode !== "correction") return [];
+    const st = this.st;
+    if (st.tokens.length > st.evalAt) {
+      const last = st.tokens[st.tokens.length - 1]!;
+      const gap = AYAH_ORDER_PARAMS.gap;
+      const pending = this.decoder.pendingFrame;
+      const base = st.absFrames - this.decoder.framesDecoded;
+      if (final || (st.absFrames - last.frame >= gap && (pending === null || base + pending - last.frame >= gap))) {
+        this.structuralEvaluate();
+      }
+    }
+    return this.raiseStructural();
+  }
+
+  private structuralVerses(): Ayah[] {
+    const st = this.st;
+    let tallies: AyahTally[];
+    if (st.final) {
+      tallies = this.verses;
+      if (!tallies.length && this.lastFallback) return [[this.lastFallback.surah, this.lastFallback.ayah]];
+    } else {
+      tallies = [...mergeTallies(this.accumulated, this.currentSnapshot()).values()]
+        .filter((t) => ayahMeetsGate(t, this.minWordFraction))
+        .sort((a, b) => a.firstSeen - b.firstSeen);
+    }
+    const out: Ayah[] = [];
+    const seen = new Set<string>();
+    for (const t of tallies) {
+      const key = ayahKey(t);
+      if (seen.has(key) || st.blockEmitted.has(key)) continue;
+      seen.add(key);
+      out.push([t.surah, t.ayah]);
+    }
+    return out;
+  }
+
+  private structuralEvaluate(): void {
+    const rules = this.structuralRules!;
+    const st = this.st;
+    st.evalAt = st.tokens.length;
+    const tokens = st.blockTok ? st.tokens.slice(st.blockTok) : st.tokens;
+    const verses = this.structuralVerses();
+    const expected = this.expected;
+    const sameAyah = (a: { surah: number; ayah: number }, b: { surah: number; ayah: number }) =>
+      a.surah === b.surah && a.ayah === b.ayah;
+    const blocked = (f: { surah: number; ayah: number }) =>
+      this.ayahIssuesRaised.has(ayahKey(f))
+      || st.issues.some((i) => STRUCTURAL_ERROR_KINDS.has(i.kind) && sameAyah(i, f))
+      || st.pending.some((p) => sameAyah(p, f));
+    if (this.aoRule) {
+      const win = rules.ayahOrderWindow(expected, verses[0] ?? null);
+      for (const f of ayahOrderFlags(rules.ayahOrderCandidate(tokens, win), this.aoRule)) {
+        const key = ayahKey(f);
+        if (st.aoSeen.has(key)) continue;
+        st.aoSeen.add(key);
+        if (blocked(f)) continue;
+        st.skips.push({ surah: f.surah, ayah: f.ayah });
+        st.pending.push(f);
+      }
+    }
+    if (this.svOn) {
+      const passage: Ayah[] = [];
+      if (expected) {
+        for (let a = expected.ayah; a <= (expected.ayahEnd ?? expected.ayah); a++) passage.push([expected.surah, a]);
+      } else passage.push(...verses);
+      const durationS = st.samples / SAMPLE_RATE - st.blockT0;
+      const cands = rules.similarVerseCandidates(tokens, passage, !!expected, durationS, (c) => similarVerseEligible(c));
+      const skips = [...st.skips, ...st.issues.filter((i) => i.kind === "possible_skipped_ayah")];
+      for (const c of similarVersePick(cands, SIMILAR_VERSE_RULE)) {
+        const key = ayahKey(c);
+        if (st.svSeen.has(key)) continue;
+        if (st.issues.some((i) => !i.source && sameAyah(i, c) && Math.abs(i.word - c.word) <= 1)) continue;
+        if (this.svNearSkip && skips.some((s) => s.surah === c.surah && Math.abs(s.ayah - c.ayah) <= 1)) continue;
+        st.svSeen.add(key);
+        st.pending.push({ kind: c.kind, surah: c.surah, ayah: c.ayah, word: c.word, atSeconds: c.at ?? 0, source: "similar_verse" });
+      }
+    }
+    const now = st.samples / SAMPLE_RATE;
+    if (!st.final && now - st.blockT0 > STRUCTURAL_BLOCK_SECONDS) {
+      st.blockTok = st.tokens.length;
+      st.blockT0 = now;
+      for (const [s, a] of verses) st.blockEmitted.add(`${s}:${a}`);
+    }
+  }
+
+  private raiseStructural(): WorkerOutbound[] {
+    const st = this.st;
+    while (st.pending.length && this.correction.mode === "correction" && this.correction.state.phase === "idle") {
+      const f = st.pending.shift()!;
+      const key = ayahKey(f);
+      const ayahLevel = f.kind === "possible_skipped_ayah";
+      if (ayahLevel && this.ayahIssuesRaised.has(key)) continue;
+      const issue: CorrectionIssue = {
+        surah: f.surah, ayah: f.ayah, word: f.word,
+        wordIndex: this.corpus.ayahFirstWord(f.surah, f.ayah) + f.word,
+        kind: f.kind,
+        ...(ayahLevel ? { words: this.wordCount(f.surah, f.ayah) } : {}),
+        source: f.source,
+      };
+      const cursor = this.lastCursor ?? { surah: f.surah, ayah: f.ayah, word: f.word };
+      if (!this.correction.raise(issue, cursor)) continue;
+      if (ayahLevel) this.ayahIssuesRaised.add(key);
+      this.dumpTallies();
+      return [this.correctionMessage()];
+    }
+    return [];
   }
 
   private handle(ev: EngineEvent): WorkerOutbound[] {

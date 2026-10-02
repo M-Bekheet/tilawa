@@ -15,6 +15,8 @@ export interface CorrectionIssue extends RecitationPosition {
   /** Words the issue covers, starting at `word`. Default 1; ayah-level kinds
    * set it to the ayah length so a retry must clear the whole ayah. */
   words?: number;
+  /** Set when a structural rule (not the word-level rules) raised the issue. */
+  source?: 'ayah_order' | 'similar_verse';
 }
 export const AYAH_ISSUE_KINDS: ReadonlySet<CorrectionIssue['kind']> = new Set(['possible_skipped_ayah', 'unclear_ayah']);
 
