@@ -1,15 +1,23 @@
-"""Pull clean crowd recitations from tilawa.dev/help into private storage.
+"""Pull crowd recitations from tilawa.dev/help into private storage.
 
 Reads HELP_ADMIN_TOKEN from the environment. Rows with kind != "none" are
-acted mistakes: they are dropped as soon as each export line is parsed,
-counted only as one excluded total, and never downloaded or written.
+acted mistakes. By default they are dropped as soon as each export line is
+parsed and counted only as one excluded total. With --include-acted they are
+kept as use="acted" with their mistake label, for private correction eval and
+tuning only: acted audio, ids, labels and per-clip outputs are never
+published or committed.
 
 Audio and manifest.json go to --out (default /tmp/help, outside the repo)
 and, with --upload, to the Modal volume zipformer-ctc-training at /help/.
 One 16 kHz mono PCM16 wav per clip, plus the manifest. Nothing is committed.
 
+--prior-manifest keeps every speaker of an earlier manifest in its earlier
+split; only speakers new to the export are assigned, by the same hash order.
+
 Usage (cwd = lab/):
     ../.venv/bin/python scripts/pull_help_recordings.py --out /tmp/help --upload
+    ../.venv/bin/python scripts/pull_help_recordings.py --out /tmp/help --include-acted \
+        --prior-manifest /tmp/help_old/manifest.json --upload
 """
 
 from __future__ import annotations
@@ -210,6 +218,70 @@ def assign_speaker_splits(
     return out
 
 
+def merge_speaker_splits(
+    prior: Mapping[str, str],
+    speaker_seconds: Mapping[str, float],
+    dev_fraction: float = 0.4,
+) -> dict[str, str]:
+    """Keep each prior speaker's split; assign only new speakers.
+
+    New speakers are split among themselves toward dev_fraction of their own
+    seconds, so a speaker never moves between dev and test across pulls.
+    """
+    out = {sp: prior[sp] for sp in speaker_seconds if sp in prior}
+    new = {sp: s for sp, s in speaker_seconds.items() if sp not in prior}
+    out.update(assign_speaker_splits(new, dev_fraction) if new else {})
+    return out
+
+
+def load_prior_splits(path: Path) -> dict[str, str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    samples = data["samples"] if isinstance(data, dict) else data
+    splits: dict[str, str] = {}
+    for sample in samples:
+        speaker, split = sample.get("speaker"), sample.get("split")
+        if not isinstance(speaker, str) or split not in {"dev", "test"}:
+            continue
+        if splits.setdefault(speaker, split) != split:
+            raise ValueError("prior manifest puts one speaker in both splits")
+    return splits
+
+
+def acted_label(row: Mapping, verses: list[dict]) -> dict:
+    """The single labelled mistake of an acted row, as manifest fields.
+
+    ``word`` is the export's index into the ayah's words; ``skip_ayah`` has
+    none. The ayah must be one of the clip's expected verses.
+    """
+    kind = row.get("kind")
+    mistakes = row.get("mistakes")
+    if not isinstance(kind, str) or not isinstance(mistakes, list) or len(mistakes) != 1:
+        raise RowError("mistakes")
+    mistake = mistakes[0]
+    if not isinstance(mistake, Mapping) or mistake.get("kind") != kind:
+        raise RowError("mistake kind")
+    try:
+        (surah, ayah), end = parse_ref(str(mistake.get("ayah")))
+    except ValueError as exc:
+        raise RowError("mistake ayah") from exc
+    if end is not None or {"surah": surah, "ayah": ayah} not in verses:
+        raise RowError("mistake ayah not in clip")
+    word = mistake.get("word")
+    if kind == "skip_ayah":
+        word = None
+    elif isinstance(word, bool) or not isinstance(word, int) or word < 0:
+        raise RowError("mistake word")
+    keep = ("expected", "said", "said_uthmani", "said_from", "rule", "letter", "from", "to",
+            "from_letter", "to_letter", "continuous_reading")
+    return {
+        "kind": kind,
+        "surah": surah,
+        "ayah": ayah,
+        "word": word,
+        **{key: mistake[key] for key in keep if key in mistake},
+    }
+
+
 def _optional_str(row: Mapping, key: str) -> str | None:
     value = row.get(key)
     if value is None:
@@ -249,7 +321,12 @@ def ayah_end_for(verses: list[dict]) -> int | None:
 
 
 def prepare_row(row: Mapping, index: VerseIndex) -> dict:
-    """Validate a kind==none row into manifest fields. No network."""
+    """Validate a row into manifest fields. No network.
+
+    kind=="none" rows are clean takes (use "clean", or "slip" with
+    extra_mistake). Any other kind is an acted take (use "acted") and carries
+    its mistake label.
+    """
     sample_id = row.get("id")
     if not isinstance(sample_id, str) or not _SAFE_ID.match(sample_id):
         raise RowError("id")
@@ -275,6 +352,8 @@ def prepare_row(row: Mapping, index: VerseIndex) -> dict:
         raise RowError("passage does not match ayahs")
     if passage == "run" and n_ayahs < 2:
         raise RowError("passage does not match ayahs")
+    acted = row.get("kind") != "none"
+    mistake = acted_label(row, verses) if acted else None
     return {
         "id": sample_id,
         "file": f"{sample_id}.wav",
@@ -291,7 +370,10 @@ def prepare_row(row: Mapping, index: VerseIndex) -> dict:
         "passage": passage,
         "extra_mistake": extra,
         "source": "help",
-        "use": "slip" if extra else "clean",
+        "use": "acted" if acted else ("slip" if extra else "clean"),
+        "mistake": mistake,
+        "mechanism": _optional_str(row, "mechanism") if acted else None,
+        "elicitation": _optional_str(row, "elicitation") if acted else None,
         "_audio_name": name,
         "_mime": row.get("mime") if isinstance(row.get("mime"), str) else "unknown",
     }
@@ -346,8 +428,8 @@ def _read_bytes(url: str, token: str, timeout: int = 120) -> bytes:
     raise RuntimeError(f"download failed: {last_error}")
 
 
-def fetch_export(token: str) -> tuple[list[dict], int, int]:
-    """Stream /export. Drop kind != none before the row is retained."""
+def fetch_export(token: str, include_acted: bool = False) -> tuple[list[dict], int, int]:
+    """Stream /export. Unless include_acted, drop kind != none before the row is retained."""
     url = f"{API_BASE}/export"
     body = _read_bytes(url, token, timeout=180)
     kept: list[dict] = []
@@ -358,7 +440,8 @@ def fetch_export(token: str) -> tuple[list[dict], int, int]:
         if not line:
             continue
         total += 1
-        clean = take_clean_row(json.loads(line))
+        row = json.loads(line)
+        clean = dict(row) if include_acted else take_clean_row(row)
         if clean is None:
             excluded += 1
             continue
@@ -452,6 +535,11 @@ def _public_sample(spec: dict, split: str) -> dict:
         "source": "help",
         "split": split,
         "use": spec["use"],
+        **(
+            {"mistake": spec["mistake"], "mechanism": spec["mechanism"], "elicitation": spec["elicitation"]}
+            if spec["use"] == "acted"
+            else {}
+        ),
     }
 
 
@@ -512,11 +600,16 @@ def format_summary(
         f"failures {len(failures)}",
         "use_split",
     ]
-    for use in ("clean", "slip"):
+    for use in ("clean", "slip", "acted"):
         for split in ("dev", "test"):
             chosen = [s for s in samples if s["use"] == use and s["split"] == split]
             minutes = sum(float(s["duration_s"]) for s in chosen) / 60.0
             lines.append(f"  {use} {split}: {len(chosen)} clips, {minutes:.2f} min")
+    acted_kinds = Counter((s["mistake"]["kind"], s["split"]) for s in samples if s["use"] == "acted")
+    if acted_kinds:
+        lines.append("acted_kind_split")
+        for (kind, split), count in sorted(acted_kinds.items()):
+            lines.append(f"  {kind} {split}: {count}")
     stored_min = sum(float(s["duration_s"]) for s in samples) / 60.0
     lines.append(f"stored_min {stored_min:.2f}")
     for key in ("device", "gender", "level", "span"):
@@ -583,10 +676,11 @@ def _require_token() -> str:
     return token
 
 
-def run(out: Path, upload: bool) -> str:
+def run(out: Path, upload: bool, include_acted: bool = False, prior_manifest: Path | None = None) -> str:
     token = _require_token()
     out = ensure_private_out(out)
-    kept, total, excluded = fetch_export(token)
+    prior = load_prior_splits(prior_manifest) if prior_manifest else {}
+    kept, total, excluded = fetch_export(token, include_acted)
     index = VerseIndex.load()
     specs: list[dict] = []
     failures: list[tuple[str, str]] = []
@@ -629,7 +723,8 @@ def run(out: Path, upload: bool) -> str:
         speaker_seconds[spec["speaker"]] = speaker_seconds.get(spec["speaker"], 0.0) + float(
             spec["duration_s"]
         )
-    splits = assign_speaker_splits(speaker_seconds)
+    splits = merge_speaker_splits(prior, speaker_seconds)
+    print(f"speakers {len(splits)} prior_kept {sum(1 for sp in splits if sp in prior)}")
     samples = [_public_sample(spec, splits[spec["speaker"]]) for spec in ordered]
     formats = Counter(spec["_mime"] for spec in ordered)
     manifest = {"samples": samples}
@@ -661,8 +756,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=f"upload wavs and manifest.json to {VOLUME_NAME}:{VOLUME_DIR}/",
     )
+    parser.add_argument(
+        "--include-acted",
+        action="store_true",
+        help='keep kind != "none" rows as use="acted" (private eval only; never publish)',
+    )
+    parser.add_argument(
+        "--prior-manifest",
+        type=Path,
+        default=None,
+        help="earlier manifest.json whose speaker splits are kept",
+    )
     args = parser.parse_args(argv)
-    run(args.out, args.upload)
+    run(args.out, args.upload, args.include_acted, args.prior_manifest)
     return 0
 
 

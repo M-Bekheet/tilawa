@@ -134,3 +134,36 @@ def test_slip_use_is_not_clean():
     assert clean["n_ayahs"] == 2
     assert clean["ayah_end"] == 2
     assert clean["expected_verses"] == [{"surah": 2, "ayah": 1}, {"surah": 2, "ayah": 2}]
+
+
+def test_merge_keeps_prior_speakers_and_splits_new_ones():
+    prior = {"old_dev": "dev", "old_test": "test"}
+    seconds = {"old_dev": 10.0, "old_test": 10.0, **{f"n{i}": 5.0 for i in range(10)}}
+    merged = pull.merge_speaker_splits(prior, seconds)
+    assert merged["old_dev"] == "dev" and merged["old_test"] == "test"
+    assert set(merged) == set(seconds)
+    new_dev = [sp for sp, split in merged.items() if sp.startswith("n") and split == "dev"]
+    assert 0 < len(new_dev) < 10
+
+
+def test_acted_row_keeps_label_and_validates_ayah():
+    index = _index((2, 1), (2, 2))
+    base = {
+        "id": "clip_2",
+        "file": "audio/clip_2.wav",
+        "speaker": "b" * 20,
+        "prompt_version": 2,
+        "kind": "skip_word",
+        "ref": "2:1-2:2",
+        "extra_mistake": False,
+        "mistakes": [{"kind": "skip_word", "ayah": "2:2", "word": 3, "expected": "x"}],
+    }
+    spec = pull.prepare_row(base, index)
+    assert spec["use"] == "acted"
+    assert spec["mistake"] == {"kind": "skip_word", "surah": 2, "ayah": 2, "word": 3, "expected": "x"}
+    skip = pull.prepare_row({**base, "kind": "skip_ayah", "mistakes": [{"kind": "skip_ayah", "ayah": "2:1"}]}, index)
+    assert skip["mistake"]["word"] is None
+    with pytest.raises(pull.RowError):
+        pull.prepare_row({**base, "mistakes": [{"kind": "skip_word", "ayah": "3:1", "word": 0}]}, index)
+    clean = pull.prepare_row({**base, "kind": "none", "mistakes": []}, index)
+    assert clean["use"] == "clean" and clean["mistake"] is None
