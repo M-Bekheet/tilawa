@@ -14,6 +14,9 @@ const session = await ZipformerSession.create({ ort,
   model: new Uint8Array(readFileSync(resolve(frontend, 'public/models/zipformer_interp_gentle_a05.int8.onnx'))),
   corpus: JSON.parse(readFileSync(resolve(frontend, 'public/zipformer_quran.json'), 'utf8')),
   quran: JSON.parse(readFileSync(resolve(frontend, 'public/quran.json'), 'utf8')),
+  // TILAWA_STRUCTURAL=1 (or =pause): the same clean-take check with the structural rules on.
+  ...(process.env.TILAWA_STRUCTURAL ? { structural: { ayahOrder: true, similarVerse: true,
+    timing: process.env.TILAWA_STRUCTURAL === 'pause' ? 'pause' as const : 'stop' as const } } : {}),
 });
 const results: unknown[] = [];
 for (const [file, expected] of [['001002.mp3', '1:2'], ['112001.mp3', '112:1'], ['ikhlas_2_3.m4a', '112:3'], ['002255.mp3', '2:255']] as const) {
