@@ -249,6 +249,32 @@ async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "trac
   const corrections: Array<Record<string, unknown>> = [];
   const notes: Array<Record<string, unknown>> = [];
   let offset = 0;
+  // ZIPFORMER_TOKENS=1: every free-decode token as [sym, absolute frame, clip
+  // seconds when it was emitted]; frames keep counting across decoder resets.
+  const tokens: Array<[string, number, number]> = [];
+  if (process.env.ZIPFORMER_TOKENS === "1") {
+    const dec = hostInternals.decoder as unknown as {
+      consume: (lp: ArrayLike<number>, n: number, c: number) => Array<{ sym: string; frame: number }>;
+      flush: () => Array<{ sym: string; frame: number }>;
+      framesDecoded: number;
+    };
+    let abs = 0;
+    const proto = Object.getPrototypeOf(dec) as typeof dec;
+    const own = dec as unknown as Record<string, unknown>;
+    own.consume = (lp: ArrayLike<number>, n: number, c: number) => {
+      const base = abs - dec.framesDecoded;
+      const out = proto.consume.call(dec, lp, n, c);
+      abs += n;
+      for (const t of out) tokens.push([t.sym, base + t.frame, offset / 16000]);
+      return out;
+    };
+    own.flush = () => {
+      const base = abs - dec.framesDecoded;
+      const out = proto.flush.call(dec);
+      for (const t of out) tokens.push([t.sym, base + t.frame, offset / 16000]);
+      return out;
+    };
+  }
   const trace: unknown[] = [];
   const ctl = host.correction;
   ctl.thresholds = { ...ctl.thresholds, ...(THRESHOLDS ?? {}) };
@@ -389,6 +415,7 @@ async function recognize(host: ZipformerSession, pcm: Float32Array, mode = "trac
     ...(preStop ? { track: preStop } : {}),
     ...(postStop ? { trackPost: postStop } : {}),
     ...(key ? { lpKey: key } : {}),
+    ...(tokens.length ? { tokens } : {}),
     transcript: host.transcript,
     events,
     state: host.engineState,
