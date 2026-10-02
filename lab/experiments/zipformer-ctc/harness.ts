@@ -76,6 +76,13 @@ const packVerdict = (v: WordVerdict): unknown[] => [
 
 const require = createRequire(path.join(ORT_DIR, "/"));
 const ort = require("onnxruntime-node");
+// ZIPFORMER_INTRA_THREADS=1 makes CPU inference bit-reproducible (4 threads is not).
+const INTRA = Number(process.env.ZIPFORMER_INTRA_THREADS ?? 0);
+if (INTRA > 0) {
+  const create = ort.InferenceSession.create.bind(ort.InferenceSession);
+  ort.InferenceSession.create = (model: unknown, opts: Record<string, unknown> = {}) =>
+    create(model, { ...opts, intraOpNumThreads: INTRA, interOpNumThreads: 1 });
+}
 
 const io = JSON.parse(readFileSync(IO_PATH, "utf8")) as ZipformerIo;
 const corpusJson = JSON.parse(readFileSync(CORPUS, "utf8"));

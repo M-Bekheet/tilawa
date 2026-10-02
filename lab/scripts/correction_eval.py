@@ -65,7 +65,7 @@ def tlog_half(clip_id: str) -> str:
 def in_part(set_name: str, clip: dict, part: str) -> bool:
     if part == "all":
         return True
-    if set_name in ("help-clean", "help-slip"):
+    if set_name in ("help-clean", "help-slip", "help-acted"):
         return clip.get("split") == ("dev" if part == "tune" else "test")
     if set_name == "tlog-candidates":
         return tlog_half(clip["id"]) == part
@@ -628,6 +628,175 @@ def locate_help(manifest: Path, audio_dir: Path, v3_model: Path, a0w_model: Path
     return summary
 
 
+ACTED_KIND = {
+    "skip_word": "omitted",
+    "substitution": "substituted",
+    "vowel": "vowel",
+    "repeat": "repeated",
+    "skip_ayah": "skipped_ayah",
+    "tajweed": "tajweed",
+}
+_HARAKAT = "".join(chr(c) for c in list(range(0x064B, 0x0653)) + [0x0670, 0x0640] + list(range(0x06D6, 0x06EE)))
+
+
+def _bare(text: str) -> str:
+    import unicodedata
+
+    text = unicodedata.normalize("NFC", text).replace("ٱ", "ا")
+    return "".join(ch for ch in text if ch not in _HARAKAT)
+
+
+def acted_word_index(label_word: int, expected: str | None, text_words: list[str], n_phoneme_words: int) -> int | None:
+    """0-based phoneme-corpus word index of a 1-based export label, or None.
+
+    ``text_words`` is the ayah without basmala. The label must name the
+    expected word (diacritics ignored) and the text and phoneme word counts
+    must agree, else the word cannot be placed.
+    """
+    index = int(label_word) - 1
+    if len(text_words) != n_phoneme_words:
+        return None
+    if expected:
+        want = _bare(expected)
+        if not (0 <= index < len(text_words)) or _bare(text_words[index]) != want:
+            # Labels on basmala-prefixed text sit past the ayah start.
+            hits = [i for i, word in enumerate(text_words) if _bare(word) == want]
+            if not hits:
+                return None
+            index = min(hits, key=lambda i: abs(i - index))
+    return index if 0 <= index < n_phoneme_words else None
+
+
+def _acted_evidence(slips: list[tuple[tuple[int, int], object]], key: tuple[int, int], word: int | None, n_words: int) -> dict:
+    """What the free decode vs reference alignment shows at the labelled place."""
+    local = [slip for k, slip in slips if k == key]
+    if word is None:
+        covered: set[int] = set()
+        for slip in local:
+            if slip.kind == "omitted":
+                covered.update(range(slip.word_index, min(slip.word_end, n_words)))
+        frac = len(covered) / n_words if n_words else 0.0
+        return {"near": frac >= 0.5, "exact": frac >= 0.5, "omitted_frac": round(frac, 3)}
+    near = [slip for slip in local if slip.word_index - 1 <= word <= slip.word_end]
+    exact = [slip for slip in local if slip.word_index <= word < slip.word_end]
+    return {"near": bool(near), "exact": bool(exact), "kinds": sorted({slip.kind for slip in near})}
+
+
+def locate_acted(manifest: Path, audio_dir: Path, models: dict[str, Path], out: Path, threads: int) -> dict:
+    """Place each acted label on a phoneme-corpus word, with a time span.
+
+    The label gives the word; a forced alignment of the expected passage
+    gives its span (the slot where the word should be). Each model's free
+    decode, aligned against the reference, says whether there is an edit at
+    or next to that word (``confirmed``).
+    """
+    from shared.audio import load_audio
+    from shared.fbank import compute_fbank
+    from shared.phoneme_labels import PhonemeCorpus, load_tokens
+    from shared.quran_db import QuranDB
+    from shared.zipformer_score import StreamingZipformer, greedy_ids
+
+    loc = _locate_module()
+    tokens = load_tokens()
+    corpus = PhonemeCorpus(DEFAULT_CORPUS)
+    db = QuranDB()
+    texts = {(int(v["surah"]), int(v["ayah"])): (v.get("text_clean_no_bsm") or v["text_clean"]).split() for v in db.verses}
+    samples = [row for row in _samples(manifest) if row.get("use") == "acted"]
+    samples.sort(key=lambda row: row["id"])
+    sessions = {name: StreamingZipformer(str(path), threads=threads) for name, path in models.items()}
+    rows = []
+    for n, row in enumerate(samples, start=1):
+        label = row["mistake"]
+        key = (int(label["surah"]), int(label["ayah"]))
+        n_words = len(corpus.word_phonemes(*key))
+        word = None
+        if label["word"] is not None:
+            word = acted_word_index(label["word"], label.get("expected"), texts.get(key, []), n_words)
+        out_row = {
+            "id": row["id"],
+            "split": row.get("split"),
+            "label_kind": label["kind"],
+            "kind": ACTED_KIND[label["kind"]],
+            "surah": key[0],
+            "ayah": key[1],
+            "word_index": 0 if label["kind"] == "skip_ayah" else word,
+            "n_words": n_words,
+            "mapped": label["kind"] == "skip_ayah" or word is not None,
+            "duration_s": row.get("duration_s"),
+            "mechanism": row.get("mechanism"),
+        }
+        try:
+            wave = load_audio(str(audio_dir / row["file"]))
+            duration = len(wave) / 16000.0
+            feats = compute_fbank(wave, sr=16000)
+            words: list[str] = []
+            index_map: list[tuple[int, int, int]] = []
+            for verse in row["expected_verses"]:
+                vkey = (int(verse["surah"]), int(verse["ayah"]))
+                for i, phonemes in enumerate(corpus.word_phonemes(*vkey)):
+                    words.append(phonemes)
+                    index_map.append((vkey[0], vkey[1], i))
+            target = [i for i, (s, a, w) in enumerate(index_map) if (s, a) == key
+                      and (w == (word if word is not None else 0))]
+            spans = []
+            evidence = {}
+            for name, session in sessions.items():
+                lp = session.log_probs(feats)
+                hyp = greedy_ids(lp)
+                slips = []
+                for slip in loc.locate_clip(words, hyp, tokens):
+                    mapped = loc.ayah_local_slip(slip, index_map)
+                    if mapped is not None:
+                        slips.append(mapped)
+                evidence[name] = _acted_evidence(slips, key, None if label["kind"] == "skip_ayah" else word, n_words)
+                if target and out_row["mapped"]:
+                    try:
+                        frames, groups = loc.ref_frames_by_word(words, lp, tokens)
+                        span = loc.clamp_span(loc.span_seconds(list(frames), groups[target[0]]), duration) if frames else None
+                    except Exception:
+                        span = None
+                    if span:
+                        spans.append(span)
+                del lp
+            out_row["span_s"] = [round(min(s[0] for s in spans), 3), round(max(s[1] for s in spans), 3)] if spans else None
+            out_row["evidence"] = evidence
+            out_row["confirmed_any"] = out_row["mapped"] and any(e["near"] for e in evidence.values())
+            out_row["confirmed_all"] = out_row["mapped"] and all(e["near"] for e in evidence.values())
+            out_row["exact_any"] = out_row["mapped"] and any(e["exact"] for e in evidence.values())
+        except Exception as exc:
+            out_row["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        rows.append(out_row)
+        print(f"locate-acted {n}/{len(samples)} {out_row['kind']} mapped={out_row['mapped']} "
+              f"confirmed={out_row.get('confirmed_any')}", flush=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    summary = acted_locate_summary(rows)
+    out.with_name("acted_locate_summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2), flush=True)
+    return summary
+
+
+def acted_locate_summary(rows: list[dict]) -> dict:
+    """Aggregate localisation rates by label kind and split. No ids."""
+    out: dict[str, dict] = {}
+    for kind in sorted({r["label_kind"] for r in rows}) + ["all"]:
+        chosen = [r for r in rows if kind == "all" or r["label_kind"] == kind]
+        block = {}
+        for split in ("dev", "test", "all"):
+            part = [r for r in chosen if split == "all" or r.get("split") == split]
+            block[split] = {
+                "n": len(part),
+                "mapped": sum(1 for r in part if r.get("mapped")),
+                "span": sum(1 for r in part if r.get("span_s")),
+                "confirmed_any": sum(1 for r in part if r.get("confirmed_any")),
+                "confirmed_all": sum(1 for r in part if r.get("confirmed_all")),
+                "exact_any": sum(1 for r in part if r.get("exact_any")),
+                "errors": sum(1 for r in part if r.get("error")),
+            }
+        out[kind] = block
+    return out
+
+
 def _ok(rows: list[dict]) -> tuple[list[dict], int]:
     good = [row for row in rows if not row.get("error")]
     return good, len(rows) - len(good)
@@ -825,6 +994,13 @@ def main(argv: list[str] | None = None) -> None:
     loc_p.add_argument("--out", type=Path, default=DEFAULT_OUT / "help_located.jsonl")
     loc_p.add_argument("--threads", type=int, default=4)
 
+    act_p = sub.add_parser("locate-acted")
+    act_p.add_argument("--manifest", type=Path, default=Path("/tmp/help/manifest.json"))
+    act_p.add_argument("--audio-dir", type=Path, default=Path("/tmp/help"))
+    act_p.add_argument("--models", default="shipped=/tmp/models/shipped.onnx,a0w=/tmp/models/a0w-ep1-a0.5.onnx")
+    act_p.add_argument("--out", type=Path, default=DEFAULT_OUT / "acted_located.jsonl")
+    act_p.add_argument("--threads", type=int, default=4)
+
     run_p = sub.add_parser("run")
     run_p.add_argument("--model", type=Path, required=True)
     run_p.add_argument("--tag", required=True)
@@ -854,6 +1030,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "locate-help":
         locate_help(args.manifest, args.audio_dir, args.v3, args.a0w, args.out, args.threads)
         return
+    if args.cmd == "locate-acted":
+        models = dict(part.split("=", 1) for part in args.models.split(",") if part)
+        locate_acted(args.manifest, args.audio_dir, {k: Path(v) for k, v in models.items()}, args.out, args.threads)
+        return
     if args.cmd == "run":
         if args.trace:
             os.environ["ZIPFORMER_TRACE"] = "1"
@@ -868,6 +1048,7 @@ def main(argv: list[str] | None = None) -> None:
         builders = {
             "help-clean": lambda: help_clips(args.help_manifest, args.help_audio, "clean"),
             "help-slip": lambda: help_clips(args.help_manifest, args.help_audio, "slip"),
+            "help-acted": lambda: help_clips(args.help_manifest, args.help_audio, "acted"),
             "v1": lambda: v1_clips(args.v1),
             "tlog-dev": lambda: tlog_dev_clips(args.dev_ids, args.tlog_audio),
             "tlog-candidates": lambda: tlog_candidate_clips(load_jsonl(args.candidates), args.tlog_audio)[0],
