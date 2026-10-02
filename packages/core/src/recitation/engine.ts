@@ -2,6 +2,7 @@ import { BUFFER_CAP, DEFAULT_CONFIG, type EngineConfig } from "./config.js";
 import type { QuranCorpus } from "./corpus.js";
 import { expandTokens } from "./ctcDecoder.js";
 import type { QuranIndex } from "./search.js";
+import type { FramePosteriors } from "./posteriors.js";
 import { Tracker } from "./tracker.js";
 import { VerdictTracer } from "./verdicts.js";
 import type {
@@ -42,6 +43,7 @@ export class RecitationEngine {
   private prevSettled = false;
   private lastStruggleChars = 0;
   onBeforeRelocate: (() => void) | null = null;
+  private posteriors: FramePosteriors | null = null;
 
   constructor(corpus: QuranCorpus, index: QuranIndex, cfg: EngineConfig = DEFAULT_CONFIG) {
     this.corpus = corpus;
@@ -51,6 +53,12 @@ export class RecitationEngine {
 
   setHint(hint: SearchHint | null): void {
     this.hint = hint;
+  }
+
+  /** Frame posteriors for GOP scoring of verdicts (correction mode); null disables. */
+  setPosteriors(posteriors: FramePosteriors | null): void {
+    this.posteriors = posteriors;
+    if (this.tracer) this.tracer.posteriors = posteriors;
   }
 
   setStayOnSurah(stay: boolean): void {
@@ -125,6 +133,7 @@ export class RecitationEngine {
       : from;
     this.tracker = new Tracker(this.corpus, this.index.table, surah, wordIndex, this.cfg);
     this.tracer = new VerdictTracer(this.tracker, this.index.table, this.cfg);
+    this.tracer.posteriors = this.posteriors;
     this.state = "tracking";
     this.lostEmitted = false;
     this.completedEmitted = false;

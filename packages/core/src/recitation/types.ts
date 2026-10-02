@@ -31,6 +31,18 @@ export interface WordVerdict {
   vowelErrors: number;
   /** Min CTC margin over the mismatched heard vowels; 0 when none. */
   vowelMargin: number;
+  /** Correction mode only, interior words with both neighbours heard: per-token
+   * log-likelihood ratio of the best CTC path forced to the expected word vs the
+   * unconstrained best path over the word's acoustic window (<= 0; ~0 = fits). */
+  gop?: number;
+  /** Same ratio forcing the expected word twice (repetition hypothesis). */
+  gopTwice?: number;
+  /** Same ratio forcing silence/blank only (omission hypothesis). */
+  gopNone?: number;
+  /** Per-token gain of forcing the word twice before the next word vs once (> 0: repeated). */
+  repGain?: number;
+  /** GOP of the word + next word forced together over both their windows (~0: they fit together). */
+  pairGop?: number;
 }
 
 export interface SearchHint {

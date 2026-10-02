@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Correction-mode recall on real slips, at the same false-flag rate on clean recitation.
+
+- **`WordVerdict.gop` / `gopNone` / `gopTwice` / `repGain` / `pairGop`.** Goodness-of-pronunciation scores from the CTC posteriors (per-token log ratio of forcing the expected word against the unconstrained best path over its window). Correction mode only; set on interior words whose neighbours were heard. Optional, so tracking-mode verdicts are unchanged.
+- **GOP rule.** A word the aligner already marks `wrong` or `skipped` is flagged when its GOP is ≤ `gopFlag` (−3), it is the local minimum, and both neighbours fit (clear, or GOP ≥ `gopAnchor`, −2). Kind is `possible_omission` when silence explains the window better than the word, else `possible_substitution`. `ok`, `unsure` and `pending` words are never flagged by GOP.
+- **`CorrectionIssue.kind: "possible_repetition"`.** A word that fits once but gains ≥ `repetitionGain` (5 nats/token) from a second copy, with a clear left neighbour. A neighbour that also repeats vetoes it (a phrase restart is accepted practice). A retry that repeats the word again is not a correction.
+- **Partial omissions.** A `skipped` word with some heard audio (heard ratio ≤ `omissionMaxHeard`, default 1) counts as an omission. Before, only heard ratio 0 did.
+- **`CorrectionController.settle(verdicts, cursor)`.** When the tracker is dropped (`stop()`, surah completed, silent idle), the session checks the words `observe()` never saw with settled context once. Vowel flags stay observe-only. `settle: false` turns it off.
+- **`CorrectionThresholds`.** New optional `omissionMaxHeard`, `gopFlag`, `gopAnchor`, `settle`, `repetitionGain`. Missing fields take the defaults, so existing thresholds objects keep working.
+- Verified on real recordings only (no synthetic or acted mistakes). False flags per clean minute did not rise on any clean set. Numbers are in `lab/EXPERIMENTS.md`, "Correction rules v2 (real recordings)".
+- **Defaults re-tuned on acted recitation mistakes** (private set, speaker-disjoint dev/test; numbers in `lab/EXPERIMENTS.md`, "Correction rules on acted help mistakes"). The GOP rule is **off** by default (`gopFlag: -Infinity`): on clean takes it still raised false flags that no other rule did, and it added no recall on the shipped model. Opt in with `gopFlag: -5`. Its default gating is now wrong words only (`gopOnSkipped: false`), substitutions only (`gopOmission: false`), not inside `settle()` (`settleGop: false`), and `gopAnchor: -1`. `vowelWordMargin` goes from 0.5 to 0.8. On the shipped model, test F1 went from 0.150 to 0.259, with clean false flags no higher on any set.
+- **New GOP knobs:** `gopOnWrong`, `gopOnSkipped`, `gopOmission`, `gopSubstitution`, `gopNoneMargin`, `gopNoneMin`, `gopLocalMin`, `gopPersistFrames`, `settleGop`.
+- **`repetitionMode: 'off' | 'note' | 'flag'`** (default `note`). A single repeated word is a soft note: the session emits `{ type: "correction_note", issue }` (new `WorkerOutbound` member) and recitation is not interrupted. `CorrectionController.takeNotes()` drains them. `flag` keeps the old interrupting behaviour.
+
 ## 0.3.1
 
 Correction mode no longer stays silent when a whole ayah is missed.

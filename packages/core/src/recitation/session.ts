@@ -52,6 +52,7 @@ import {
 import DEFAULT_IO from "./zipformer-io.json" with { type: "json" };
 
 import { CorrectionController, type CorrectionAction, type RecitationMode } from "./correction.js";
+import { FramePosteriors } from "./posteriors.js";
 
 const TAIL_SECONDS = 2.0;
 /** Mean heard ratio over an unmatched ayah's words at or above which the gap
@@ -194,6 +195,7 @@ export class ZipformerSession {
   private readonly onEvent: ((msg: WorkerOutbound) => void) | null;
   private fbank = new KaldiFbank();
   private decoder = new GreedyCtcDecoder(TOKENS, BLANK_ID);
+  private readonly posteriors: FramePosteriors;
   private engine: RecitationEngine;
   private accumulated = new Map<string, AyahTally>();
   private emitted = new Set<string>();
@@ -227,6 +229,7 @@ export class ZipformerSession {
     this.gapMaxWords = opts.gapMaxWords ?? GAP_MAX_WORDS;
     this.onEvent = opts.onEvent ?? null;
     this.debugEnabled = opts.debug ?? false;
+    this.posteriors = new FramePosteriors(runner.io.vocabSize);
     this.corpus = new QuranCorpus(corpusJson);
     this.index = new QuranIndex(this.corpus, this.cfg);
     for (const s of this.corpus.surahs) {
@@ -332,6 +335,8 @@ export class ZipformerSession {
   setMode(mode: RecitationMode): WorkerOutbound[] {
     const out = this.correction.state.phase !== 'idle' ? this.correct('close') : [];
     this.correction.setMode(mode);
+    this.attachPosteriors(this.engine);
+    if (this.practiceEngine) this.attachPosteriors(this.practiceEngine);
     return out;
   }
 
@@ -342,6 +347,7 @@ export class ZipformerSession {
     if (state.phase === 'retrying') {
       this.practiceEngine = new RecitationEngine(this.corpus, this.index, this.cfg);
       this.practiceEngine.setStayOnSurah(true);
+      this.attachPosteriors(this.practiceEngine);
       this.practiceEngine.track(state.issue!.surah, state.issue!.ayah, 0);
     } else {
       this.practiceEngine = null;
@@ -386,6 +392,7 @@ export class ZipformerSession {
     if (flushed.length) {
       out.push(...this.consumeTokens(flushed));
     }
+    out.push(...this.settleCorrection());
 
     this.dumpTallies();
     const live = newlyEligibleAyahs(this.accumulated, this.emitted, this.minWordFraction);
@@ -446,13 +453,20 @@ export class ZipformerSession {
     engine.setStayOnSurah(this.stayOnSurah);
     engine.startSearch();
     engine.onBeforeRelocate = () => this.dumpTallies();
+    this.attachPosteriors(engine);
     return engine;
+  }
+
+  /** GOP scoring costs a few CTC Viterbi passes per word; only correction mode reads it. */
+  private attachPosteriors(engine: RecitationEngine): void {
+    engine.setPosteriors(this.correction.mode === "correction" ? this.posteriors : null);
   }
 
   private resetDecoder(): void {
     this.fbank.reset();
     this.decoder.reset();
     this.runner.reset();
+    this.posteriors.clear(0);
   }
 
   wordCount = (surah: number, ayah: number): number =>
@@ -485,6 +499,7 @@ export class ZipformerSession {
     if (!frames.length) return [];
     const { logProbs, frames: out } = await this.runner.accept(frames);
     if (out === 0) return [];
+    this.posteriors.push(logProbs, out, this.decoder.framesDecoded);
     const tokens = this.decoder.consume(logProbs, out, this.runner.io.vocabSize);
     return this.consumeTokens(tokens);
   }
@@ -498,8 +513,10 @@ export class ZipformerSession {
         ? this.decoder.framesDecoded - engine.tracker.heard[engine.tracker.heard.length - 1]!.frame >= this.cfg.settleFrames : false;
       if (engine.tracer && engine.tracker && !engine.tracker.lost
         && (engine.tracker.costRate(this.cfg.holdWindow) ?? 0) < this.cfg.holdRate) {
-        if (this.correction.observe(engine.tracer.verdicts(Boolean(settled)),
-          this.correction.state.resume!, this.decoder.framesDecoded)) out.push(this.correctionMessage());
+        const raised = this.correction.observe(engine.tracer.verdicts(Boolean(settled)),
+          this.correction.state.resume!, this.decoder.framesDecoded);
+        out.push(...this.noteMessages());
+        if (raised) out.push(this.correctionMessage());
       } else this.correction.clearEvidence();
       return out;
     }
@@ -513,7 +530,9 @@ export class ZipformerSession {
       && (tracker.costRate(this.cfg.holdWindow) ?? 0) < this.cfg.holdRate) {
       const last = tracker.heard[tracker.heard.length - 1];
       const settled = !!last && this.decoder.framesDecoded - last.frame >= this.cfg.settleFrames;
-      if (this.correction.observe(this.engine.tracer.verdicts(settled), this.lastCursor, this.decoder.framesDecoded)) {
+      const raised = this.correction.observe(this.engine.tracer.verdicts(settled), this.lastCursor, this.decoder.framesDecoded);
+      out.push(...this.noteMessages());
+      if (raised) {
         // Retain main-session coverage before a practice exit replaces its tracker.
         this.dumpTallies();
         out.push(this.correctionMessage());
@@ -575,6 +594,7 @@ export class ZipformerSession {
       }
       case "idle":
       case "completed": {
+        if (ev.type === "completed" || ev.reason === "silent") out.push(...this.settleCorrection());
         this.correction.clearEvidence();
         this.lastMatch = null;
         this.dumpTallies();
@@ -596,6 +616,21 @@ export class ZipformerSession {
       });
     }
     return out;
+  }
+
+  /** Correction mode: last word-level check before the main tracker is dropped. */
+  private settleCorrection(): WorkerOutbound[] {
+    const tracker = this.engine.tracer && this.engine.tracker;
+    if (this.practiceEngine || !tracker || tracker.lost || !this.lastCursor) return [];
+    const raised = this.correction.settle(this.engine.tracer!.verdicts(true), this.lastCursor);
+    const notes = this.noteMessages();
+    if (!raised) return notes;
+    this.dumpTallies();
+    return [...notes, this.correctionMessage()];
+  }
+
+  private noteMessages(): WorkerOutbound[] {
+    return this.correction.takeNotes().map(issue => ({ type: 'correction_note' as const, issue }));
   }
 
   private wordProgress(): WorkerOutbound {

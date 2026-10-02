@@ -15,7 +15,8 @@ import {
   ZipformerSession,
   createZipformerSession,
 } from "../../src/recitation/session";
-import { BLANK_ID, TOKENS, VOCAB_SIZE } from "../../src/recitation/tokens";
+import { encodePhonemes } from "../../src/recitation/posteriors";
+import { BLANK_ID, VOCAB_SIZE } from "../../src/recitation/tokens";
 import type { OrtSessionLike, TensorLike } from "../../src/recitation/zipformerRunner";
 import type { WorkerOutbound } from "../../src/types";
 import { findModelIo, requireCorpus } from "./paths";
@@ -29,18 +30,11 @@ const LOW = Math.log(0.001);
 const corpusJson = JSON.parse(readFileSync(requireCorpus(), "utf8"));
 const corpus = new QuranCorpus(corpusJson);
 
-const TOKEN_ID = new Map<string, number>();
-for (let id = 0; id < TOKENS.length; id++) {
-  const sym = TOKENS[id]!;
-  if (sym.length === 1 && !TOKEN_ID.has(sym)) TOKEN_ID.set(sym, id);
-}
-
+/** Greedy longest-match tokens, as the model was trained to emit them. */
 function tokenIds(phonemes: string): number[] {
-  return [...phonemes].map((ch) => {
-    const id = TOKEN_ID.get(ch);
-    if (id === undefined) throw new Error(`no CTC token for phoneme ${JSON.stringify(ch)}`);
-    return id;
-  });
+  const ids = encodePhonemes(phonemes);
+  if (!ids) throw new Error(`no CTC tokenization for ${JSON.stringify(phonemes)}`);
+  return ids;
 }
 
 class StubTensor implements TensorLike {
@@ -275,6 +269,27 @@ describe('live correction through the injected ONNX boundary', () => {
     const continued: WorkerOutbound[] = [];
     for (let i = 0; i < 20; i++) continued.push(...await session.feed(new Float32Array(CHUNK)));
     expect(continued.some(m => m.type === 'word_progress' && m.surah === 112 && m.ayah === 4)).toBe(true);
+  });
+});
+
+describe('GOP word scores', () => {
+  async function run(mode: 'tracking' | 'correction') {
+    const text = [1, 2, 3, 4].map(a => corpus.ayahPhonemes(112, a)).join('');
+    const ort = new ScriptedOrtSession(tokenIds(text));
+    const session = await ZipformerSession.create({ session: ort, Tensor: TensorCtor, corpus: corpusJson });
+    session.setMode(mode);
+    const seen: WorkerOutbound[] = [];
+    for (let i = 0; i < 60 && ort.pending > 0; i++) seen.push(...await session.feed(new Float32Array(CHUNK)));
+    return { session, seen };
+  }
+  it('scores interior words in correction mode only; a correct decode fits (~0)', async () => {
+    const tracking = await run('tracking');
+    expect(tracking.session.verdicts().some(v => v.gop !== undefined)).toBe(false);
+    const { session, seen } = await run('correction');
+    const scored = session.verdicts().filter(v => v.gop !== undefined);
+    expect(scored.length).toBeGreaterThan(5);
+    for (const v of scored) expect(v.gop).toBeGreaterThan(-0.5);
+    expect([...seen, ...await session.stop()].some(m => m.type === 'correction')).toBe(false);
   });
 });
 
