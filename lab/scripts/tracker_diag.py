@@ -8,10 +8,12 @@ Per label (word kinds), at the labelled word's forced-alignment span:
 - ``caught``: an issue hits the label (acted_eval.hits).
 - ``seen:<state>``: the word reached a controller verdict snapshot but no
   flag; the most "error-like" state it reached (wrong > skipped > unsure > ok).
-- not seen, by tracker state over the span: ``searching`` (no lock),
-  ``other_surah``, ``far`` (same surah, cursor more than one ayah away: a jump
-  to a similar passage), ``lost``, ``near`` (cursor on or next to the ayah but
-  the word never got a verdict).
+- not seen: ``no_lock`` (the take never locked), ``other_ayah`` (every lock
+  went to another ayah, usually a near-identical one), ``late_lock`` (locked
+  on the ayah only after the word was said); else by tracker state over the
+  span: ``searching``, ``other_surah``, ``far`` (same surah, cursor more than
+  one ayah away), ``lost``, ``near`` (cursor on or next to the ayah but the
+  word never got a verdict).
 
 skip_ayah labels: whether N+1 (the skipped ayah) was emitted as a verse,
 whether N+2 was emitted, and whether the ayah-gap rule raised.
@@ -54,6 +56,17 @@ def classify(label: dict, row: dict, ae) -> str:
         return "seen:pending"
     span = label.get("span_s") or [0, row.get("duration_s") or 0]
     lo, hi = float(span[0]), float(span[1]) + 1.0
+    events = row.get("events") or []
+    locks = [(e.get("t", 0.0), e.get("surah"), e.get("ayah")) for e in events if e.get("type") == "located"]
+    locks += [(e.get("t", 0.0), e["to"]["surah"], e["to"]["ayah"]) for e in events
+              if e.get("type") == "relocated" and isinstance(e.get("to"), dict)]
+    near = [lk for lk in locks if lk[1] == s and abs(int(lk[2] or 0) - a) <= 1]
+    if not locks:
+        return "no_lock"
+    if not near:
+        return "other_ayah"
+    if min(lk[0] for lk in near) > lo:
+        return "late_lock"
     diag = [d for d in row.get("diag") or [] if lo <= d[0] <= hi + 0.5] or [
         d for d in row.get("diag") or [] if d[0] >= lo][:2]
     if not diag:
