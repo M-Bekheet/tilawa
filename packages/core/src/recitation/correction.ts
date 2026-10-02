@@ -61,11 +61,14 @@ export interface CorrectionThresholds {
    * `correction_note`) and the reciter carries on. */
   repetitionMode?: 'off' | 'note' | 'flag';
 }
+/** GOP is off by default: on real clean takes it still raises false flags
+ * that the other rules do not. The other GOP fields are the gating to use with
+ * it (`gopFlag: -5`): wrong words only, substitutions only, outside settle. */
 export const DEFAULT_CORRECTION_THRESHOLDS: Required<CorrectionThresholds> = {
-  vowelMargin: 0.05, vowelWordMargin: 0.5, omissionMaxHeard: 1, gopFlag: -3, gopAnchor: -2, settle: true,
-  repetitionGain: 5, gopOnWrong: true, gopOnSkipped: true, gopOmission: true, gopSubstitution: true,
-  gopNoneMargin: 2, gopNoneMin: -3, gopLocalMin: true, gopPersistFrames: 12, settleGop: true,
-  repetitionMode: 'flag',
+  vowelMargin: 0.05, vowelWordMargin: 0.8, omissionMaxHeard: 1, gopFlag: -Infinity, gopAnchor: -1, settle: true,
+  repetitionGain: 5, gopOnWrong: true, gopOnSkipped: false, gopOmission: false, gopSubstitution: true,
+  gopNoneMargin: 2, gopNoneMin: -3, gopLocalMin: true, gopPersistFrames: 12, settleGop: false,
+  repetitionMode: 'note',
 };
 const PERSIST_FRAMES = 12;
 const withDefaults = (th: Partial<CorrectionThresholds>): Required<CorrectionThresholds> =>

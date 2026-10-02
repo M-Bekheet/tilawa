@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CorrectionController, possibleWordIssues } from '../../src/recitation/correction';
+import { CorrectionController, DEFAULT_CORRECTION_THRESHOLDS, possibleWordIssues, type CorrectionThresholds } from '../../src/recitation/correction';
 import type { WordVerdict } from '../../src/recitation/types';
 const word = (n: number, patch: Partial<WordVerdict> = {}): WordVerdict => ({ surah: 112, ayah: 3, word: n, wordIndex: 100 + n, state: 'ok', distance: 0, margin: .9, heardRatio: 1, vowelErrors: 0, vowelMargin: 0, ...patch });
 const correct = [word(0), word(1), word(2), word(3)];
@@ -7,6 +7,8 @@ const omission = [word(0), word(1, { state: 'skipped', distance: 1, heardRatio: 
 const substitution = [word(0), word(1, { state: 'wrong', distance: .8 }), word(2), word(3)];
 const vowel = [word(0), word(1, { distance: .02, vowelErrors: 1, vowelMargin: .8 }), word(2), word(3)];
 const cursor = { surah: 112, ayah: 3, word: 3 };
+// Rules v2 GOP shape (GOP is off by default).
+const V2_GOP: CorrectionThresholds = { ...DEFAULT_CORRECTION_THRESHOLDS, gopFlag: -3, gopAnchor: -2, gopOnSkipped: true, gopOmission: true, settleGop: true };
 function flag() {
   const c = new CorrectionController(); c.setMode('correction');
   expect(c.observe(omission, cursor, 30)).toBe(false);
@@ -32,26 +34,27 @@ describe('conservative word correction', () => {
     expect(possibleWordIssues([word(0, { margin: .2 }), partial[1]!, word(2)])).toEqual([]);
   });
   it('GOP rule: a disputed word that fits badly, between words that fit', () => {
+    const gp = (v: WordVerdict[], th: Partial<CorrectionThresholds> = {}) => possibleWordIssues(v, { ...V2_GOP, ...th });
     // Neighbours are not `clear` (low margin) but fit acoustically (GOP ~0).
     const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
     const bad = { state: 'wrong' as const, distance: .45, margin: .4, heardRatio: .8, gop: -6, gopNone: -9 };
-    expect(possibleWordIssues([fit(0), word(1, bad), fit(2)])[0]).toMatchObject({ word: 1, kind: 'possible_substitution' });
+    expect(gp([fit(0), word(1, bad), fit(2)])[0]).toMatchObject({ word: 1, kind: 'possible_substitution' });
     // Silence explains the window better than the expected word: omission.
-    expect(possibleWordIssues([fit(0), word(1, { ...bad, gopNone: -1 }), fit(2)])[0]).toMatchObject({ kind: 'possible_omission' });
-    expect(possibleWordIssues([fit(0), word(1, { ...bad, state: 'skipped', heardRatio: .2 }), fit(2)])[0]).toMatchObject({ kind: 'possible_omission' });
+    expect(gp([fit(0), word(1, { ...bad, gopNone: -1 }), fit(2)])[0]).toMatchObject({ kind: 'possible_omission' });
+    expect(gp([fit(0), word(1, { ...bad, state: 'skipped', heardRatio: .2 }), fit(2)])[0]).toMatchObject({ kind: 'possible_omission' });
     // GOP alone never flags a word the aligner accepts or is unsure about.
     for (const state of ['ok', 'unsure', 'pending'] as const) {
-      expect(possibleWordIssues([fit(0), word(1, { ...bad, state, gop: -15 }), fit(2)])).toEqual([]);
+      expect(gp([fit(0), word(1, { ...bad, state, gop: -15 }), fit(2)])).toEqual([]);
     }
     // Not low enough, not the local minimum, or a neighbour that does not fit.
-    expect(possibleWordIssues([fit(0), word(1, { ...bad, gop: -2.5 }), fit(2)])).toEqual([]);
-    expect(possibleWordIssues([fit(0), word(1, bad), word(2, { margin: .3, gop: -8 })])).toEqual([]);
-    expect(possibleWordIssues([fit(0), word(1, bad), word(2, { margin: .3, gop: -2.5 })])).toEqual([]);
-    expect(possibleWordIssues([fit(0), word(1, bad), word(2, { margin: .3 })])).toEqual([]);
+    expect(gp([fit(0), word(1, { ...bad, gop: -2.5 }), fit(2)])).toEqual([]);
+    expect(gp([fit(0), word(1, bad), word(2, { margin: .3, gop: -8 })])).toEqual([]);
+    expect(gp([fit(0), word(1, bad), word(2, { margin: .3, gop: -2.5 })])).toEqual([]);
+    expect(gp([fit(0), word(1, bad), word(2, { margin: .3 })])).toEqual([]);
     // Other ayah, disabled, or no GOP: the margin/distance rules only.
-    expect(possibleWordIssues([fit(0), word(1, bad), fit(2), word(3, { ayah: 4, word: 0 })].slice(0, 2))).toEqual([]);
-    expect(possibleWordIssues([fit(0), word(1, bad), fit(2)], { vowelMargin: .05, vowelWordMargin: .5, gopFlag: -Infinity })).toEqual([]);
-    expect(possibleWordIssues([word(0), word(1, { ...bad, gop: undefined }), word(2)])).toEqual([]);
+    expect(gp([fit(0), word(1, bad), fit(2), word(3, { ayah: 4, word: 0 })].slice(0, 2))).toEqual([]);
+    expect(gp([fit(0), word(1, bad), fit(2)], { vowelMargin: .05, vowelWordMargin: .5, gopFlag: -Infinity })).toEqual([]);
+    expect(gp([word(0), word(1, { ...bad, gop: undefined }), word(2)])).toEqual([]);
   });
   it('repetition: a word that fits once but gains from a second copy', () => {
     const rep = word(1, { gop: -.3, gopNone: -9, repGain: 7 });
@@ -70,22 +73,23 @@ describe('conservative word correction', () => {
     expect(possibleWordIssues(ctx({ ...rep, gop: undefined }))).toEqual([]);
   });
   it('GOP gating knobs: states, kinds, local minimum, omission margin', () => {
+    const gp = (v: WordVerdict[], th: Partial<CorrectionThresholds> = {}) => possibleWordIssues(v, { ...V2_GOP, ...th });
     const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
     const bad = { state: 'wrong' as const, distance: .45, margin: .4, heardRatio: .8, gop: -6, gopNone: -9 };
-    const base = { vowelMargin: .05, vowelWordMargin: .5, gopFlag: -3 };
+    const base = {};
     const sub = [fit(0), word(1, bad), fit(2)];
     const skip = [fit(0), word(1, { ...bad, state: 'skipped', heardRatio: .2 }), fit(2)];
-    expect(possibleWordIssues(sub, { ...base, gopOnWrong: false })).toEqual([]);
-    expect(possibleWordIssues(skip, { ...base, gopOnSkipped: false })).toEqual([]);
-    expect(possibleWordIssues(sub, { ...base, gopSubstitution: false })).toEqual([]);
-    expect(possibleWordIssues(skip, { ...base, gopOmission: false })).toEqual([]);
-    expect(possibleWordIssues(skip, { ...base, gopSubstitution: false })[0]).toMatchObject({ kind: 'possible_omission' });
+    expect(gp(sub, { ...base, gopOnWrong: false })).toEqual([]);
+    expect(gp(skip, { ...base, gopOnSkipped: false })).toEqual([]);
+    expect(gp(sub, { ...base, gopSubstitution: false })).toEqual([]);
+    expect(gp(skip, { ...base, gopOmission: false })).toEqual([]);
+    expect(gp(skip, { ...base, gopSubstitution: false })[0]).toMatchObject({ kind: 'possible_omission' });
     const worseRight = [fit(0), word(1, bad), word(2, { margin: .3, gop: -1.5, gopNone: -9 }), fit(3)];
-    expect(possibleWordIssues(worseRight, base)[0]).toMatchObject({ word: 1 });
+    expect(gp(worseRight, base)[0]).toMatchObject({ word: 1 });
     const silent = [fit(0), word(1, { ...bad, gopNone: -2 }), fit(2)];
-    expect(possibleWordIssues(silent, base)[0]).toMatchObject({ kind: 'possible_omission' });
-    expect(possibleWordIssues(silent, { ...base, gopNoneMargin: 5 })[0]).toMatchObject({ kind: 'possible_substitution' });
-    expect(possibleWordIssues(silent, { ...base, gopNoneMin: -1 })[0]).toMatchObject({ kind: 'possible_substitution' });
+    expect(gp(silent, base)[0]).toMatchObject({ kind: 'possible_omission' });
+    expect(gp(silent, { ...base, gopNoneMargin: 5 })[0]).toMatchObject({ kind: 'possible_substitution' });
+    expect(gp(silent, { ...base, gopNoneMin: -1 })[0]).toMatchObject({ kind: 'possible_substitution' });
   });
   it('GOP-only flags can need longer persistence, and can be kept out of settle()', () => {
     const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
@@ -99,6 +103,15 @@ describe('conservative word correction', () => {
     expect(s.settle(sub, cursor)).toBe(false);
     s.thresholds = { ...s.thresholds, settleGop: true };
     expect(s.settle(sub, cursor)).toBe(true);
+  });
+  it('defaults: GOP off, repetition is a note, vowel flags need a confident word', () => {
+    const fit = (n: number) => word(n, { margin: .3, gop: -.2, gopNone: -9 });
+    const bad = word(1, { state: 'wrong', distance: .45, margin: .4, heardRatio: .8, gop: -9, gopNone: -9 });
+    expect(possibleWordIssues([fit(0), bad, fit(2)])).toEqual([]);
+    expect(possibleWordIssues([fit(0), bad, fit(2)], { ...DEFAULT_CORRECTION_THRESHOLDS, gopFlag: -5 })[0])
+      .toMatchObject({ kind: 'possible_substitution' });
+    expect(DEFAULT_CORRECTION_THRESHOLDS.repetitionMode).toBe('note');
+    expect(possibleWordIssues([word(0), { ...vowel[1]!, margin: .7 }, word(2)])).toEqual([]);
   });
   it('repetition as a soft note never interrupts', () => {
     const rep = [word(0), word(1, { gop: -.3, repGain: 7 }), word(2), word(3)];
@@ -118,6 +131,7 @@ describe('conservative word correction', () => {
   it('does not accept a retry that repeats the word again', () => {
     const rep = [word(0), word(1, { gop: -.3, repGain: 7 }), word(2), word(3)];
     const c = new CorrectionController(); c.setMode('correction');
+    c.thresholds = { ...c.thresholds, repetitionMode: 'flag' };
     c.observe(rep, cursor, 30); expect(c.observe(rep, cursor, 42)).toBe(true);
     expect(c.state.issue).toMatchObject({ kind: 'possible_repetition', word: 1 });
     c.act('retry');
