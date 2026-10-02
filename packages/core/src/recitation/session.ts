@@ -230,7 +230,8 @@ export interface StructuralOptions {
    * the flags then come one per `correct()` call. `"pause"`: also each time a
    * pause closes a segment, so a flag can interrupt mid-recitation. A
    * similar-verse slot is judged only once a later ayah has been reached, and
-   * an ayah-order jump must hold over two pauses.
+   * an ayah-order jump must hold over two pauses with an ayah past the skipped
+   * one already located.
    */
   timing?: "stop" | "pause";
   /** The look-alike index. Defaults to the bundled `structural-index.json`,
@@ -822,7 +823,9 @@ export class ZipformerSession {
       st.aoLast = new Set(found.map((f) => ayahKey(f)));
       for (const f of found) {
         const key = ayahKey(f);
-        if (st.aoSeen.has(key) || (!st.final && !last.has(key))) continue;
+        // Pause timing: the jump must hold over two pauses and the tracker must have reached a later ayah.
+        if (st.aoSeen.has(key) || (!st.final && (!last.has(key)
+          || !verses.some(([s, a]) => s === f.surah && a > f.ayah)))) continue;
         st.aoSeen.add(key);
         if (blocked(f)) continue;
         st.skips.push({ surah: f.surah, ayah: f.ayah });
