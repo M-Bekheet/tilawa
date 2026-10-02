@@ -374,7 +374,16 @@ def tlog_candidate_clips(rows: list[dict], audio_dir: Path) -> tuple[list[dict],
 def audio_duration_s(path: str) -> float:
     import soundfile as sf
 
-    info = sf.info(path)
+    try:
+        info = sf.info(path)
+    except Exception:
+        import subprocess
+
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True, text=True, check=True,
+        )
+        return float(out.stdout.strip())
     if info.samplerate <= 0:
         raise ValueError(path)
     return float(info.frames) / float(info.samplerate)
@@ -1012,6 +1021,8 @@ def main(argv: list[str] | None = None) -> None:
     run_p.add_argument("--tlog-audio", type=Path, default=DEFAULT_OUT / "audio" / "tlog")
     run_p.add_argument("--dev-ids", type=Path, default=Path("/tmp/tlog_meta/dev_ids.txt"))
     run_p.add_argument("--candidates", type=Path, default=Path("/tmp/tlog_slips/tlog_candidates.jsonl"))
+    run_p.add_argument("--listen-ids", type=Path, default=Path("/tmp/tlog_meta/listen_ids.txt"),
+                       help="TLOG clip ids of the listening-check queues (set tlog-listen)")
     run_p.add_argument("--limit", type=int, default=0)
     run_p.add_argument("--fetch", action="store_true")
     run_p.add_argument("--part", choices=PARTS, default="all")
@@ -1051,12 +1062,14 @@ def main(argv: list[str] | None = None) -> None:
             "help-acted": lambda: help_clips(args.help_manifest, args.help_audio, "acted"),
             "v1": lambda: v1_clips(args.v1),
             "tlog-dev": lambda: tlog_dev_clips(args.dev_ids, args.tlog_audio),
+            "tlog-listen": lambda: tlog_dev_clips(args.listen_ids, args.tlog_audio),
             "tlog-candidates": lambda: tlog_candidate_clips(load_jsonl(args.candidates), args.tlog_audio)[0],
         }
         if args.fetch:
             ids = []
-            if "tlog-dev" in want:
-                ids.extend(clip["id"] for clip in builders["tlog-dev"]())
+            for name in ("tlog-dev", "tlog-listen"):
+                if name in want:
+                    ids.extend(clip["id"] for clip in builders[name]())
             if "tlog-candidates" in want:
                 ids.extend(clip["id"] for clip in builders["tlog-candidates"]())
             _fetch_missing(sorted(set(ids)), args.tlog_audio)
